@@ -192,7 +192,14 @@ def report_outliers(tr: Trace, n: int) -> None:
     med = pct(d, 50)
     worst = sorted(tr.decode, key=lambda e: -e["dur"])[:n]
 
+    has_subscopes = any(tr.by_token.get(e["args"]["tok"]) for e in worst)
+
     print(f"\nslowest {len(worst)} decode tokens (median is {med / 1000.0:.2f} ms)")
+    if not has_subscopes:
+        print("\n  This trace has no scopes nested inside the token slices, so the")
+        print("  cause column cannot be filled in. That is a property of the trace,")
+        print("  not of the tokens: re-run at a higher TOKENSCOPE_LEVEL, or with")
+        print("  more instrumentation sites enabled, to attribute the excess.")
     print(f"\n{'token':>6}  {'ms':>8}  {'x median':>9}  dominant excess")
     print("-" * 66)
     for e in worst:
@@ -211,10 +218,13 @@ def report_outliers(tr: Trace, n: int) -> None:
             for cat, dur in self_times(tr.by_token.get(other["args"]["tok"], [])):
                 base[cat].append(dur)
         excess = {c: v - pct(base.get(c, [0.0]), 50) for c, v in cats.items()}
-        cause = max(excess.items(), key=lambda kv: kv[1]) if excess else ("?", 0.0)
+        if excess:
+            cause = max(excess.items(), key=lambda kv: kv[1])
+            why = f"{cause[0]} (+{cause[1] / 1000.0:.2f} ms)"
+        else:
+            why = "unattributed (no nested scopes)"
 
-        print(f"{tok:>6}  {e['dur'] / 1000.0:8.2f}  {e['dur'] / med:8.2f}x  "
-              f"{cause[0]} (+{cause[1] / 1000.0:.2f} ms)")
+        print(f"{tok:>6}  {e['dur'] / 1000.0:8.2f}  {e['dur'] / med:8.2f}x  {why}")
 
 
 def report_diff(a: Trace, b: Trace) -> None:
