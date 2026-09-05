@@ -9,12 +9,19 @@ revised as the data improves.
 
 **Prerequisites before filing:**
 
-- [ ] Tier 2 working, so the issue can show a per-layer breakdown rather than
+- [x] Tier 2 working, so the issue can show a per-layer breakdown rather than
       "graph-compute: 99.6%"
-- [ ] Overhead measured at levels 2 and 3, not just level 1
+- [x] Overhead measured at levels 2 and 3, not just level 1
+- [x] Tested against a real quantized model, not only synthetic weights
+      (Qwen2.5-0.5B Q4_K_M, [`FINDINGS`](FINDINGS.md) F12)
 - [ ] At least one Perfetto screenshot
 - [ ] Tested on Linux/GCC as well as Windows/MSVC
-- [ ] Tested against a real quantized model, not only synthetic weights
+
+**The Linux gap is the one that should block filing.** Every number below comes
+from the non-OpenMP barrier path, and `GGML_USE_OPENMP` is the default on Linux
+and takes a *different* branch in `ggml_graph_compute`. Filing an issue whose
+central measurements a maintainer cannot reproduce on their own machine is
+worse than not filing.
 
 ---
 
@@ -46,19 +53,48 @@ something you'd want in-tree at all.
 Repo, with the full design docs and measured overhead:
 https://github.com/PS12007/tokenscope
 
-### Why
+### Why — four things it found
 
-The current timers give two aggregate scalars:
+Rather than argue that per-token profiling is useful in the abstract, here is
+what it actually turned up on CPU decode. All are reproducible from the repo;
+all are on one machine (i7-14700HX, Windows, MSVC) and say so.
+
+1. **~29% of decode barriers are paid for nodes only one thread worked on.**
+   Elementwise ops partition over rows (`dr = (nr + nth - 1)/nth`), and at batch
+   size 1 a hidden state is a single row — so `ir0 = ith >= 1 = ir1` and seven
+   of eight threads get an empty range, then hit `ggml_barrier` anyway. Confirmed
+   by the same nodes going to 7.7/8 busy threads during prefill.
+
+2. **Barrier wait halves when the cores are the same speed.** Twelve threads
+   unpinned across P- and E-cores: 13% per-thread compute spread, 21.2% of
+   worker time in `ggml_barrier`. Twelve threads pinned to twelve identical
+   E-cores: **2% spread, 11.1% barrier** — same model, same graph, same thread
+   count. Equal row counts to unequal cores is the mechanism. (Pinning is not
+   the fix; it costs 8-10% throughput. Proportional row assignment would be.)
+
+3. **Per-phase time tracks weight *bytes*, not parameter counts, and on a real
+   quantized model the difference matters.** On Qwen2.5-0.5B Q4_K_M — where
+   `output.weight` is Q8_0 while the rest is nearer 5.5 bits — predicting phase
+   time from bytes is accurate to 2.9 points and from parameters is wrong by
+   7.2. `lm_head` alone is **34% of decode** on that model.
+
+4. **A negative result, included because it corrected me.** I expected op fusion
+   to help: `GGML_CPU_DISABLE_FUSION=1` removes 49 of 461 barriers per token,
+   10.6% of them. Throughput change: none measurable, in three regimes including
+   one where barrier wait is 54% of thread time. The barriers a fusion removes
+   are the ones threads arrive at together.
+
+None of these are visible to the existing timers, which give two aggregate
+scalars:
 
 ```
 llama_perf_context_print: prompt eval time = ...
 llama_perf_context_print:        eval time = ...
 ```
 
-They can't answer "why did token 340 take 3× the median", "how much of decode
-is barrier wait rather than compute", or "did my change help, and where". For
-optimization work those are the questions, and today the answer usually comes
-from `perf`/VTune plus guesswork about which sample belongs to which token.
+In particular, without a work/wait split, barrier time is indistinguishable from
+compute, so "ffn: 69% across 8 threads" silently includes seven of them
+spinning.
 
 I also note the existing split is heuristic — `synchronize()` classifies by
 `n_queued_tokens == 1`, with the `FIXME` at `llama-context.cpp:714` noting it
@@ -71,7 +107,7 @@ functions named like they do work mostly emit nodes:
 
 - **host scopes** — RAII, in `llama-context.cpp`, around genuinely serial work
   (`batch-init`, `kv.slot-search`, `graph-build`, `set-inputs`,
-  `logits-readback`, …)
+  `logits-readback`, …), plus `sample` and `tok.encode`/`tok.decode`
 - **node scopes** — two scopes in `ggml_graph_compute_thread`, around
   `ggml_compute_forward` and `ggml_barrier`, giving per-node work and wait per
   worker thread
@@ -93,29 +129,44 @@ Design constraints, all enforced rather than intended:
 
 ### Cost
 
-<!-- REPLACE with levels 1/2/3 once measured; do not file with only level 1 -->
-
 Measured with interleaved arms and bootstrap CIs (`tools/bench_overhead.py`),
-24-layer model, 8 threads, MSVC Release:
+24-layer model, MSVC Release. Level 3 is the expensive mode — every node event
+on every thread.
 
 ```
+  8 threads
   arm                       median tok/s     IQR   overhead vs A
   --------------------------------------------------------------------
-  A: compiled out                  42.23    0.4%                  -
-  B: in, level 0                   42.19    0.8%    +0.11%  [-0.25, +0.76]
-  C1: active level 1               42.25    0.7%    -0.04%  [-0.48, +0.45]
+  A: compiled out                  43.16    2.0%                  -
+  B: in, level 0                   43.31    2.5%    -0.36%  [-2.27, +1.77]
+  C3: active level 3               43.11    1.2%    +0.12%  [-1.59, +1.43]
+
+  28 threads
+  C3: active level 3               36.50    3.0%    +0.66%  [-1.85, +4.18]
 ```
 
-Every interval contains zero, so the claim is "not distinguishable from zero at
-±0.5% on this system", not "0.11%".
+Every interval contains zero. **The harness refused to certify either
+measurement**, because this machine's baseline IQR is wider than the 2% effect
+being tested — so the honest claim is "not resolvable at ±2-4% here", not a
+number. The same machine on a quieter day resolved level 3 as +0.67% [+0.12,
++1.67] at 8 threads; its noise floor moved 5x between sessions on identical
+binaries, which is itself worth knowing before trusting anyone's sub-1%
+profiler-overhead claim.
+
+I flag this because a barrier makes the graph pay the `max` of per-thread
+overhead rather than the mean, so I'd expect overhead to grow with thread count.
+I could not detect that growth up to 28 threads, which is weaker than saying it
+does not happen.
 
 ### Size of the change
 
-Currently ~97 changed lines across 3 existing files
-(`ggml/CMakeLists.txt`, `ggml/src/CMakeLists.txt`, `src/llama-context.cpp`),
-plus one self-contained translation unit under `ggml/src/tokenscope/`.
+Currently 123 changed lines across 6 existing files (`ggml/CMakeLists.txt`,
+`ggml/src/CMakeLists.txt`, `ggml/src/ggml-cpu/ggml-cpu.c`,
+`src/llama-context.cpp`, `src/llama-sampler.cpp`, `src/llama-vocab.cpp`), plus
+one self-contained translation unit under `ggml/src/tokenscope/`.
 
-Tier 2 adds a handful of lines to `ggml-cpu.c`.
+The two lines in `ggml_graph_compute_thread` are the ones that need the most
+scrutiny; everything else is in cold code.
 
 ### Questions
 
@@ -141,11 +192,24 @@ existing conventions.
 ## Notes to self
 
 - Do not open this until Tier 2 works. "Here's a profiler that tells you 99.6%
-  of your time is in `graph_compute`" is not a compelling pitch.
+  of your time is in `graph_compute`" is not a compelling pitch. **(Done.)**
 - Lead with the question, not the patch. The first ask is "do you want this",
   not "please review this".
+- **Lead the body with findings, not architecture.** A maintainer's first
+  question is "what did this tell you that we didn't already know", and the
+  four-item list answers it before any design discussion starts. This is the
+  biggest change from the session-1 draft, which described the tool for four
+  paragraphs before showing anything it found.
+- Findings 1 and 2 are the ones that might interest a maintainer independently
+  of whether they want the tool. Keep them first, and keep the mechanism
+  (`dr = (nr + nth - 1)/nth`) visible, because it is checkable in ten seconds
+  by someone who knows the file.
+- **Keep the negative result (finding 4).** It is the cheapest possible signal
+  that the numbers are not being curated, and it costs three lines.
 - Question 3 is the one that decides everything. If the answer is no, the
   project stays out-of-tree and that is a perfectly good outcome — worth saying
   so in the thread rather than arguing.
-- Keep it short enough to read on a phone. The current draft is already near
-  the limit; the design docs are one link away for anyone who wants them.
+- Do not file without Linux. See the prerequisites note: the OpenMP path is the
+  default there and is a different branch from everything measured here.
+- Keep it short enough to read on a phone. The findings list is four bullets on
+  purpose; the design docs are one link away for anyone who wants them.
