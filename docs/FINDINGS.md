@@ -1317,6 +1317,37 @@ for: single-stream local inference -- `llama-cli` on a laptop, one user, one
 sequence -- which is a large share of how llama.cpp is actually run, and the
 exact case where nothing amortizes it.
 
+### What batching amortizes, and what it does not
+
+The same two level-3 traces give the whole phase mix, and the multipliers are
+more informative than the shares. Sixteen sequences means 16x the tokens:
+
+```
+  phase          np=1 %   np=16 %   np=1 ms   np=16 ms   work x
+  ffn             47.8%     58.4%      3.71      22.78     6.1x
+  lm_head         29.0%     21.5%      2.25       8.40     3.7x
+  barrier         13.6%      7.2%      1.05       2.79     2.7x
+  attn.qkv         5.1%      6.1%      0.40       2.40     6.0x
+  attn.score       1.1%      2.2%      0.09       0.87     9.8x
+  norm             0.2%      0.3%      0.01       0.11     9.1x
+```
+
+Nothing costs 16x. The weight-bound phases amortize hard, because a weight
+matrix is read **once per step** however many sequences ride along: `lm_head`
+does 16x the arithmetic for **3.7x** the time, and the FFN stack for 6.1x. The
+sequence-bound work does not amortize -- `attn.score` is 9.8x, because every
+sequence has its own KV and its own scores to compute.
+
+So batching does not just make decode faster, it **changes what decode is**.
+`lm_head`, the phase F12 called a first-class cost at 29%, falls to 21.5%
+purely because its weight read is now shared sixteen ways. Attention, 1.1% and
+ignorable at batch size 1, doubles its share and is the only thing on the list
+heading towards dominance as concurrency rises.
+
+This is F7's byte model holding in a third regime, and it is the cleanest
+statement of why the answer to "what should I optimize" depends on how the
+model is being served, not only on the model.
+
 ### The bug this workload found, which is worth more than the finding
 
 The first run at `-np 4` reported **zero decode tokens.** Everything was
