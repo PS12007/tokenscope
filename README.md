@@ -197,6 +197,22 @@ argued from the F32 numbers that a model reading fewer bytes per parameter
 should scale further, and [`F12`](docs/FINDINGS.md) measured it doing exactly
 that — 2.21× to 3.28×. The wall moved up. It did not move out.
 
+Across three models the answer to "where does decode time go" is a different
+phase every time:
+
+```
+model                 params      ffn  lm_head  barrier
+tiny   8L F32 synth     8.9 M   27.6%     0.9%    54.0%
+mid   24L F32 synth     220 M   70.1%     2.6%    10.1%
+Qwen2.5-0.5B Q4_K_M     630 M   49.2%    29.6%    11.3%
+```
+
+Barrier on the smallest, the FFN stack in the middle, and on a real 0.5B model
+the **output projection at 29.6%** — a 151,936-token vocabulary against
+`n_embd` 896, stored at higher precision than anything else in the file. There
+is no model-independent answer, which is the argument for measuring rather than
+reasoning ([`F13`](docs/FINDINGS.md)).
+
 `--outliers` ranks the slowest tokens and attributes each one's *excess over
 median* to a category — because on a slow token everything is large, and the
 question is which thing is large **for that token**. `--diff` compares two
@@ -338,7 +354,8 @@ Built in the open. `docs/` is the engineering log, in order — and
 - [x] [Barrier decomposition: imbalance vs release, and what it is worth](docs/FINDINGS.md)
 - [x] [Thread-count sweep, 1 to 28](docs/FINDINGS.md)
 - [x] [Sampling and tokenizer scopes](docs/FINDINGS.md) — `llama-cli`, not `llama-bench`
-- [ ] Perfetto screenshots + three-model decode table
+- [x] [Three-model decode table](docs/FINDINGS.md)
+- [ ] Perfetto screenshots
 - [x] [Real quantized model](docs/FINDINGS.md) — Qwen2.5-0.5B Q4_K_M
 - [ ] Linux/GCC
 - [ ] [Upstream issue](docs/03-upstream-issue-draft.md), then a PR

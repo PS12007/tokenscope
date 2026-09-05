@@ -848,6 +848,67 @@ problem — a cost of GQA that a wall-clock timer cannot see.
 
 ---
 
+---
+
+## F13 — Three models, three different answers to "where does decode time go"
+
+**Workload:** 6 threads, `TOKENSCOPE_LEVEL=3`, 6 decode tokens each, same
+machine and binary. Thread-time share per phase.
+
+```
+model                 params      ffn  attn.qkv  attn.out  lm_head  attn.score  barrier
+---------------------------------------------------------------------------------------
+tiny   8L F32 synth     8.9 M   27.6%     10.7%      3.2%     0.9%       2.7%     54.0%
+mid   24L F32 synth     220 M   70.1%     10.4%      6.0%     2.6%       0.7%     10.1%
+Qwen2.5-0.5B Q4_K_M     630 M   49.2%      5.3%      3.2%    29.6%       1.1%     11.3%
+```
+
+- `tiny`: 8 layers, `n_embd` 256, `n_ff` 1024, MHA. 761 tok/s.
+- `mid`: 24 layers, `n_embd` 768, `n_ff` 3072, 12 heads / 4 KV. 32.5 tok/s.
+- `Qwen2.5-0.5B`: 24 layers, `n_embd` 896, `n_ff` 4864, 14 heads / 2 KV,
+  vocab 151,936, Q4_K_M. 88.9 tok/s.
+
+Read the columns down rather than across. **The largest single consumer of
+decode is a different thing in each row:**
+
+- On `tiny` it is the **barrier** — 54%. The model is small enough that the
+  work between two rendezvous is smaller than the rendezvous. ~200 nodes per
+  token, six threads, and each node's arithmetic finishes before the
+  synchronization protecting it does. This is not llama.cpp being slow; it is a
+  graph executor being used far below the size it is designed for.
+- On `mid` it is the **FFN**, at 70%, with the barrier down to 10%. This is the
+  textbook weight-streaming picture that F7 modelled and F10 explained.
+- On `Qwen2.5-0.5B` it is the FFN *and* **`lm_head` at 29.6%**, because a
+  151,936-token vocabulary against `n_embd` 896 makes the output projection a
+  first-class cost (F12).
+
+So the honest general statement is that **there isn't one.** "Where does CPU
+decode time go" has no model-independent answer, and any advice of the form
+"optimize X for CPU inference" is implicitly quantified over a model shape that
+usually goes unstated.
+
+Two things are stable across all three:
+
+- **`attn.score` is 0.7-2.7%.** The actual attention computation — scores and
+  softmax — is nearly free at batch size 1 with a short context, on every model
+  measured. F7 said this and it now has three data points instead of one.
+- **`norm` never exceeds 0.4%** of thread time while being, per F9, one of the
+  larger sources of *barrier* time. The cheapest nodes stay the most expensive
+  rendezvous.
+
+### Caveats
+
+- Two of the three models are synthetic F32 with random weights. Weight values
+  do not affect timing on these kernels, but the *dtype mix* does, which is
+  exactly what makes the Qwen row different (F12).
+- 6 threads throughout. F10 shows the barrier column in particular is strongly
+  thread-count-dependent, so these are three points on one slice of a larger
+  surface, not three model summaries.
+- Single traces of 6 tokens each, so the small columns carry real noise. The
+  ordering of the large columns is far outside it.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:

@@ -732,19 +732,194 @@ advice.
 
 ---
 
-## NEEDS: three model sizes measured
+## READY NOW — first real quantized model (F12)
 
-### C0. The per-model table
+This retires the "synthetic weights" caveat that every earlier post had to
+carry. Post I1 after G1; it is the payoff to G1's closing caveat.
 
-> Decode time breakdown, three model sizes, same machine:
+### I1. Three predictions, tested (thread)
+
+**1/**
+> Every number I'd posted about llama.cpp came from synthetic F32 weights, and
+> every post said so.
 >
-> [TABLE]
+> Finally ran a real quantized model — Qwen2.5-0.5B Q4_K_M.
 >
-> [ONE SENTENCE ABOUT WHAT CHANGES WITH SIZE]
+> Three standing predictions. Two held. One held only in a form I hadn't been
+> using.
+
+**2/**
+> **Prediction 1.** I'd argued decode is bandwidth-bound, so a model reading
+> fewer bytes per parameter should scale to more threads.
+>
+> ```
+>        F32 synth      Q4_K_M real
+> thr    speedup        speedup
+>   2      1.73x          1.95x
+>   4      2.09x          2.86x
+>   6      2.21x          3.28x  <- peak, both
+>  28      1.94x          2.44x
+> ```
+>
+> Held.
+
+**3/**
+> But note what the prediction *didn't* say: the peak is still at six threads.
+>
+> The wall moved **up**, not **out**.
+>
+> More headroom per thread. Same number of useful threads.
+
+**4/**
+> **Prediction 2** is the one I got to be wrong about in an interesting way.
+>
+> I'd predicted phase time tracks *bytes of weights read*, then wrote "and for a
+> uniform dtype that's just parameter count."
+>
+> Then used parameter count for everything. Because on F32 they're identical.
+
+**5/**
+> A real Q4_K_M file is **not** uniform. llama.cpp quantizes tensors differently
+> by role.
+>
+> In this one the output projection is Q8_0 — 8.5 bits/weight — while everything
+> else sits near 5.5.
+>
+> So for the first time the two versions of my prediction disagree. And they can
+> be told apart.
+
+**6/**
+> ```
+> phase      bits/w  params%  bytes%  time%   err(param)  err(byte)
+> ffn          5.51    63.5%   55.2%  56.4%      -7.2       +1.2
+> lm_head      8.50    27.6%   36.9%  34.0%      +6.4       -2.9
+> attn.qkv     5.70     5.0%    4.5%   6.0%      +1.0       +1.5
+> attn.out     5.50     3.9%    3.4%   3.6%      -0.3       +0.2
+> ```
+>
+> Bytes: within 2.9 points. Parameters: off by 7.2.
+
+**7/**
+> And look at *how* it's wrong — ffn −7.2, lm_head +6.4. Equal and opposite.
+>
+> That's the signature of a share being moved from one phase to another by
+> nothing but dtype.
+>
+> The law survives. The shortcut doesn't. Read the tensor types, not the config.
+
+**8/**
+> **Prediction 3** I got backwards, and the finding now says so.
+>
+> I'd written that quantization should make my "tiny serial nodes" effect
+> *smaller*, since Q4 is more compute-bound.
+>
+> It got bigger. 0.32% → 0.74% of work; 14% → 19% of all barrier imbalance.
+
+**9/**
+> Obvious in hindsight. Those nodes are a fixed cost — a single-row elementwise
+> op doesn't care what dtype the matmuls are.
+>
+> Make the matmuls cheaper and the fixed cost becomes a *larger* share.
+>
+> I had the direction of the ratio backwards.
+
+**10/**
+> Bonus finding that only a real model could produce:
+>
+> **`lm_head` is 34% of decode time.**
+>
+> 152k vocabulary against n_embd 896 — the output projection is 28% of
+> everything streamed. And it's stored at the highest precision in the file.
+
+**11/**
+> Second bonus, this one about GQA.
+>
+> Qwen2.5-0.5B has 14 query heads and 2 KV heads. So K and V projections are
+> 128 wide against Q's 896.
+>
+> `Kcur` uses 2.5 of 6 threads. `Vcur` 3.0. The FFN matmuls use all 6.
+>
+> GQA shrinks your KV cache and narrows your matmuls.
+
+**12/**
+> Method, traces, every caveat: github.com/PS12007/tokenscope
+>
+> One model, one machine, 630M params. "Q4_K_M" is a recipe, not a dtype —
+> this file is 133 Q5_0 tensors, 121 F32, 13 Q8_0, 12 Q6_K, 12 Q4_K.
+>
+> Which is rather the point of finding #2.
 
 ---
 
-## NEEDS: a real quantized model, on Linux
+### I2. The standalone (best single post here)
+
+> "Q4_K_M" is not a dtype. It's a recipe.
+>
+> The Qwen2.5-0.5B Q4_K_M GGUF contains 133 Q5_0 tensors, 121 F32, 13 Q8_0, 12
+> Q6_K and 12 Q4_K.
+>
+> Its output projection is Q8_0 — the *least* compressed thing in the file, and
+> **34% of decode time.**
+>
+> Predicting performance from parameter counts misses this by 7 points. Bytes
+> get it to 3.
+
+---
+
+### I3. The being-wrong post
+
+> Wrote a caveat predicting my own finding would get smaller on a quantized
+> model.
+>
+> Measured it. Got bigger. 14% → 19%.
+>
+> Obvious afterwards: single-row elementwise ops are a fixed cost. Make the
+> matmuls cheaper and the fixed cost is a *larger* share, not a smaller one.
+>
+> The caveat now says it was backwards.
+
+---
+
+### I4. Practical, for people running small models
+
+> If you run a small model with a big vocabulary on CPU, check what your output
+> projection is quantized to.
+>
+> On Qwen2.5-0.5B Q4_K_M it's Q8_0 while the rest of the model is ~5.5 bits —
+> 28% of the parameters, 37% of the bytes, **34% of decode time**.
+>
+> Vocabulary doesn't shrink when your model does.
+
+---
+
+## READY NOW — three model sizes (F13)
+
+### C0. The per-model table
+
+> Decode time breakdown, three models, same machine, same binary:
+>
+> ```
+> model                 params     ffn   lm_head   barrier
+> tiny   8L F32         8.9 M    27.6%      0.9%     54.0%
+> mid   24L F32         220 M    70.1%      2.6%     10.1%
+> Qwen2.5-0.5B Q4_K_M   630 M    49.2%     29.6%     11.3%
+> ```
+>
+> The biggest consumer is a **different thing in every row.**
+>
+> "Where does CPU decode time go" has no model-independent answer.
+
+**follow-up**
+> The 54% on the tiny model isn't llama.cpp being slow. It's a graph executor
+> run far below its design size: ~200 nodes/token, and each node's arithmetic
+> finishes before the barrier protecting it does.
+>
+> Two things stayed stable across all three: attention *math* is 0.7-2.7%, and
+> `norm` never exceeds 0.4%.
+
+---
+
+## NEEDS: Linux  (the quantized-model half is done -- see F12 / the I-series)
 
 ### C1. The finding post (thread) — reserve for something better than B2
 
