@@ -224,7 +224,7 @@ Then drop `run.trace.json` onto [ui.perfetto.dev](https://ui.perfetto.dev).
 | `TOKENSCOPE_OUT` | — | trace path; flushed at exit. Unset ⇒ nothing written |
 | `TOKENSCOPE_BUDGET_MB` | `256` | total record budget across all threads |
 | `TOKENSCOPE_RING` | `0` | keep the *last* N events instead of the first (drops are still counted) |
-| `TOKENSCOPE_TOKENS` | all | capture window, e.g. `340-345` |
+| `TOKENSCOPE_TOKENS` | all | capture window, e.g. `340-345`. Token slices are still recorded for the whole run; only the scopes inside them are windowed. |
 
 ## How it is put together
 
@@ -258,7 +258,8 @@ mechanism, and the two overhead risks that a naive cost model misses).
 
 ## Status
 
-Built in the open. `docs/` is the engineering log, in order.
+Built in the open. `docs/` is the engineering log, in order — and
+[`docs/HANDOFF.md`](docs/HANDOFF.md) is the current state plus what comes next.
 
 - [x] Toolchain + repo bootstrap
 - [x] [Map of llama.cpp's inference path](docs/00-architecture-map.md)
@@ -282,7 +283,7 @@ src/tokenscope-ggml.h   the only part that knows about ggml, kept separate
 src/tokenscope.cpp      cold path: arena, interning, graph epochs, Chrome Trace emit
 src/ts_selftest.cpp     8-thread self-test, layout assertions, per-scope cost
 patches/                surgical edits to upstream llama.cpp, 3 files
-examples/               a committed reference trace, used by CI
+examples/               committed reference traces (level 1 and level 3), used by CI
 scripts/bootstrap.py    clone at the pin, copy sources, apply patches
 tools/trace_analyze.py  summary · per-token · outliers with cause · diff
 tools/bench_overhead.py interleaved A/B/C arms, medians, bootstrap CIs

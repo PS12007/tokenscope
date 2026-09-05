@@ -41,6 +41,7 @@ extern "C" {
 TS_API int      ts_g_level = TS_LEVEL_OFF;
 TS_API uint32_t ts_g_token = 0;
 TS_API uint16_t ts_g_graph = 0;
+TS_API int      ts_g_capture = 1;
 
 #ifdef _MSC_VER
 __declspec(thread) ts_buffer * ts_tls = nullptr;
@@ -316,6 +317,10 @@ extern "C" TS_API void ts_token_begin(int is_prefill, uint32_t n_tokens) {
     r.tok_ntok.push_back(n_tokens);
     r.tok_dur.push_back(0);
     ts_g_token = (uint32_t) (r.tok_t0.size() - 1);
+    // Decide the capture window ONCE per token; the hot path then reads a
+    // single already-hot int rather than re-deriving a range comparison
+    // several thousand times.
+    ts_g_capture = ts_token_selected();
 }
 
 extern "C" TS_API void ts_token_end(void) {

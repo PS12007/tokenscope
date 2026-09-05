@@ -132,6 +132,12 @@ TS_API extern int ts_g_level;        // enum ts_level; 0 disables everything
 TS_API extern uint32_t ts_g_token;   // current token ordinal
 TS_API extern uint16_t ts_g_graph;   // current graph epoch
 
+// Whether the CURRENT token is inside the TOKENSCOPE_TOKENS capture window.
+// Updated once per token in ts_token_begin, read on the hot path: one load and
+// a branch that predicts perfectly for the whole token. Gating per-event on a
+// range comparison would put two more loads in the node loop for no benefit.
+TS_API extern int ts_g_capture;
+
 extern
 #ifdef _MSC_VER
 __declspec(thread)
@@ -194,14 +200,15 @@ TS_API void ts_graph_end(void);
 // outside the node loop, so that level 2 never allocates mid-graph.
 TS_API void ts_thread_prepare(uint32_t n_nodes);
 
-// Selects whether the current token is in the capture window
-// (TOKENSCOPE_TOKENS=a-b). Cheap: one comparison against two globals.
+// True when the current token is inside the TOKENSCOPE_TOKENS window.
+// ts_token_begin already maintains ts_g_capture from this; exposed for tests.
 TS_API int ts_token_selected(void);
 
 // ---------------------------------------------------------------------------
 // The hot path.
 // ---------------------------------------------------------------------------
 TS_SINLINE struct ts_record * ts_reserve(void) {
+    if (TS_UNLIKELY(!ts_g_capture)) return 0;
     struct ts_buffer * b = ts_tls;
     if (TS_UNLIKELY(b == 0)) {
         b = ts_thread_init();
@@ -229,6 +236,7 @@ TS_SINLINE void ts_emit(uint64_t t0, uint64_t t1, uint32_t ref, uint8_t kind, ui
 // Level 2: accumulate into a fixed per-node array instead of appending.
 // One add, no growth, exact totals. docs/01 section 6.
 TS_SINLINE void ts_acc(uint32_t node_n, uint64_t dur, int is_wait) {
+    if (TS_UNLIKELY(!ts_g_capture)) return;
     struct ts_buffer * b = ts_tls;
     if (TS_UNLIKELY(b == 0 || node_n >= b->acc_n)) return;
     if (is_wait) b->acc_wait[node_n] += dur;

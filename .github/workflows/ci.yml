@@ -86,19 +86,30 @@ jobs:
           python - <<'PY'
           import sys
           sys.path.insert(0, "tools")
-          from trace_analyze import Trace, self_times
+          from trace_analyze import Trace, self_times, HOST_CATS
 
-          tr = Trace("examples/mid-24L-tg256.trace.json")
+          import glob
           bad = []
-          for t in tr.decode:
-              tok = t["args"]["tok"]
-              total = sum(d for _, d in self_times(tr.by_token.get(tok, [])))
-              if total > t["dur"] * 1.001:
-                  bad.append((tok, t["dur"], total))
+          n = 0
+          for path in sorted(glob.glob("examples/*.trace.json")):
+              tr = Trace(path)
+              n += len(tr.decode)
+              for t in tr.decode:
+                  tok = t["args"]["tok"]
+                  # Host scopes measure wall time on one thread; node scopes
+                  # measure thread time across N. Only the former can be
+                  # compared against the token slice. Mixing them is the exact
+                  # bug this check exists to catch (FINDINGS F5, and the 894%
+                  # report that followed it).
+                  evs = [e for e in tr.by_token.get(tok, [])
+                         if e.get("cat") in HOST_CATS]
+                  total = sum(d for _, d in self_times(evs))
+                  if total > t["dur"] * 1.001:
+                      bad.append((tok, t["dur"], total))
 
           for tok, slice_us, total in bad[:5]:
               print(f"token {tok}: slice {slice_us:.1f}us but self-times sum to {total:.1f}us")
           if bad:
               sys.exit(f"{len(bad)} token(s) over-attributed")
-          print(f"ok: {len(tr.decode)} tokens, none over-attributed")
+          print(f"ok: {n} tokens across all reference traces, none over-attributed")
           PY
