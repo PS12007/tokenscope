@@ -75,6 +75,7 @@ struct graph_info {
     std::vector<std::string> node_names;
     std::vector<std::string> node_ops;
     std::vector<std::string> node_cats;   // derived at flush, see derive_categories
+    std::vector<int16_t>     node_layer;  // -1 when the node belongs to no layer
 };
 
 struct registry {
@@ -390,6 +391,7 @@ struct out_event {
     const char *        cat;
     uint32_t    token;
     const char * op;
+    int16_t     layer;
     uint8_t     depth;
     uint8_t     ph_instant;
 };
@@ -422,6 +424,10 @@ void emit_event(std::string & out, bool & first, const out_event & e, int32_t pi
         out += ",\"op\":\"";
         out += e.op;
         out += "\"";
+    }
+    if (e.layer >= 0) {
+        out += ",\"L\":";
+        out += std::to_string((int) e.layer);
     }
     out += "}}";
 }
@@ -461,16 +467,37 @@ const char * category_for(const std::string & node_name) {
 // This is an inference, not a measurement, so the categories it produces are
 // prefixed "~" in the output. A reader should be able to tell at a glance which
 // numbers came from a name and which came from a guess about structure.
+// Parses the "-<layer>" suffix that graph_get_cb appends. Returns -1 if absent
+// or if the trailing token is not a plain integer, which is the case for the
+// auto-generated "node_<index>" names.
+int16_t layer_of(const std::string & nm) {
+    const size_t dash = nm.rfind('-');
+    if (dash == std::string::npos || dash + 1 >= nm.size()) return -1;
+    if (nm.compare(0, 5, "node_") == 0) return -1;
+    int v = 0;
+    for (size_t i = dash + 1; i < nm.size(); ++i) {
+        if (nm[i] < '0' || nm[i] > '9') return -1;
+        v = v * 10 + (nm[i] - '0');
+        if (v > 32767) return -1;
+    }
+    return (int16_t) v;
+}
+
 void derive_categories(graph_info & g) {
     g.node_cats.assign(g.n_nodes, "other");
+    g.node_layer.assign(g.n_nodes, -1);
 
     const char * phase = "other";
+    int16_t      layer = -1;
     for (uint32_t i = 0; i < g.n_nodes; ++i) {
         const std::string & nm = g.node_names[i];
         const char * named = category_for(nm);
 
         if (named) {
             g.node_cats[i] = named;
+            const int16_t l = layer_of(nm);
+            if (l >= 0) layer = l;
+            g.node_layer[i] = l;
             // advance the phase marker
             if      (nm.compare(0, 9, "attn_norm") == 0) phase = "~attn";
             else if (nm.compare(0, 8,  "attn_out") == 0) phase = "~post-attn";
@@ -482,8 +509,9 @@ void derive_categories(graph_info & g) {
             continue;
         }
 
-        // unnamed: inherit the current phase, and note the op so the reader can
-        // see what it actually was
+        // Unnamed nodes inherit both the phase and the layer of the last named
+        // marker before them in graph order. Same inference, same caveat.
+        g.node_layer[i] = layer;
         const std::string & op = g.node_ops[i];
         if (!op.empty() && (op == "SOFT_MAX" || op == "FLASH_ATTN_EXT")) {
             g.node_cats[i] = "attn.score";
@@ -545,6 +573,7 @@ extern "C" TS_API void ts_flush(const char * path) {
     for (size_t i = 0; i < r.tok_t0.size(); ++i) {
         if (r.tok_dur[i] == 0) continue;
         out_event e{};
+        e.layer  = -1;
         e.ts_us  = ts_ticks_to_us(r.tok_t0[i] - r.t_epoch);
         e.dur_us = ts_ticks_to_us(r.tok_dur[i]);
         e.tid    = -1;      // dedicated track above the workers
@@ -563,6 +592,7 @@ extern "C" TS_API void ts_flush(const char * path) {
             for (size_t i = 0; i < n; ++i) {
                 const ts_record & rec = c->recs[i];
                 out_event e{};
+                e.layer      = -1;
                 e.ts_us      = ts_ticks_to_us(rec.t0 - r.t_epoch);
                 e.dur_us     = ts_ticks_to_us(rec.dur);
                 e.tid        = st->buf.tid;
@@ -588,6 +618,8 @@ extern "C" TS_API void ts_flush(const char * path) {
                                      ? g->node_cats[rec.ref].c_str() : "other";
                         e.op   = rec.ref < g->node_ops.size()
                                      ? g->node_ops[rec.ref].c_str() : "";
+                        e.layer = rec.ref < g->node_layer.size()
+                                     ? g->node_layer[rec.ref] : -1;
                     } else {
                         e.name = &s_unknown;
                         e.cat  = "other";

@@ -7,6 +7,7 @@ A trace file alone is a toy. This is the part that makes it a tool.
     trace_analyze.py run.trace.json                  summary
     trace_analyze.py run.trace.json --tokens         per-token table
     trace_analyze.py run.trace.json --outliers 10    slowest tokens, with cause
+    trace_analyze.py run.trace.json --layers          per-layer thread time
     trace_analyze.py base.json --diff after.json     did my change help, and where
 
 Python standard library only. No dependencies, same as the C++ side.
@@ -308,6 +309,66 @@ def report_outliers(tr: Trace, n: int) -> None:
         print(f"{tok:>6}  {e['dur'] / 1000.0:8.2f}  {e['dur'] / med:8.2f}x  {why}")
 
 
+def report_layers(tr: Trace, top: int) -> None:
+    """Per-layer thread time. The layer index is carried in every node name
+    (`<role>-<layer>`), so this is a grouping, not an extra measurement."""
+    keep = {t["args"]["tok"] for t in tr.decode}
+    n_tok = max(1, len(tr.decode))
+
+    per_layer: dict[int, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    for tok, evs in tr.by_token.items():
+        if tok not in keep:
+            continue
+        for e in evs:
+            cat = e.get("cat", "other")
+            if cat in HOST_CATS:
+                continue
+            L = e.get("args", {}).get("L")
+            if L is None:
+                continue
+            per_layer[L][cat] += e.get("dur", 0.0)
+
+    if not per_layer:
+        print("\nno per-layer data in this trace.")
+        print("Layer indices come from graph node names, which only appear at")
+        print("TOKENSCOPE_LEVEL=2 or 3. Re-run at a higher level.")
+        return
+
+    cats = sorted({c for v in per_layer.values() for c in v},
+                  key=lambda c: -sum(v.get(c, 0.0) for v in per_layer.values()))[:top]
+
+    print(f"\nper-layer thread time, us/token ({n_tok} decode tokens)\n")
+    head = "  " + "layer".rjust(5) + "".join(c.rjust(12) for c in cats) + "total".rjust(12)
+    print(head)
+    print("  " + "-" * (len(head) - 2))
+
+    totals = []
+    for L in sorted(per_layer):
+        row = per_layer[L]
+        tot = sum(row.values()) / n_tok
+        totals.append((L, tot))
+        line = f"  {L:>5}"
+        for c in cats:
+            line += f"{row.get(c, 0.0) / n_tok:12.1f}"
+        line += f"{tot:12.1f}"
+        print(line)
+
+    # The point of a per-layer view is spotting the layer that is not like the
+    # others. Say it outright instead of leaving it in the table.
+    body = [(L, t) for L, t in totals if L >= 0]
+    if len(body) >= 3:
+        vals = sorted(t for _, t in body)
+        med = pct(vals, 50)
+        worst = max(body, key=lambda kv: kv[1])
+        best = min(body, key=lambda kv: kv[1])
+        print(f"\n  median layer {med:.1f} us/tok"
+              f"   slowest L{worst[0]} {worst[1]:.1f} ({worst[1] / med:.2f}x)"
+              f"   fastest L{best[0]} {best[1]:.1f} ({best[1] / med:.2f}x)")
+        if worst[1] / med < 1.10:
+            print("  Layers are uniform to within 10%, which is what an evenly")
+            print("  partitioned homogeneous stack should look like.")
+
+
 def report_diff(a: Trace, b: Trace) -> None:
     """The question during optimization work is always: did my change help,
     and where. Absolute totals answer neither if the runs differ in length."""
@@ -358,6 +419,8 @@ def main() -> int:
                     metavar="N", help="per-token table (default 40 rows)")
     ap.add_argument("--outliers", nargs="?", type=int, const=10, default=None,
                     metavar="N", help="slowest N tokens with attributed cause")
+    ap.add_argument("--layers", nargs="?", type=int, const=6, default=None,
+                    metavar="N", help="per-layer thread time, top N categories")
     args = ap.parse_args()
 
     try:
@@ -373,6 +436,8 @@ def main() -> int:
     report_summary(tr)
     if args.tokens is not None:
         report_tokens(tr, args.tokens)
+    if args.layers is not None:
+        report_layers(tr, args.layers)
     if args.outliers is not None:
         report_outliers(tr, args.outliers)
     print()
