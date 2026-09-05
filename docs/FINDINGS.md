@@ -214,7 +214,7 @@ per-node, per-thread arrival spread, which is in the level-3 trace and is not
 yet reduced into the report. That is the next analysis feature, not a claim to
 make now.
 
-**Answered in [F9](#f9--most-barrier-wait-is-arrival-imbalance-and-a-third-of-the-barriers-are-paid-for-nodes-that-only-one-thread-worked-on).**
+**Answered in [F9](#f9--most-barrier-wait-is-arrival-imbalance-and-a-third-of-the-barriers-are-paid-for-nodes-only-one-thread-worked-on).**
 Once the spread was reduced: 83.7% of the wait is arrival imbalance rather than
 release latency, and 29% of the barriers follow a node that only one thread
 worked on. The recoverable share is real but small -- an upper bound of 1.34% of
@@ -310,8 +310,7 @@ cannot tell a measurement from an inference, neither is worth much.
 
 ---
 
-## F9 — Most barrier wait is arrival imbalance, and a third of the barriers are
-## paid for nodes that only one thread worked on
+## F9 — Most barrier wait is arrival imbalance, and a third of the barriers are paid for nodes only one thread worked on
 
 **Workload:** same 24-layer synthetic F32 model, 8 threads, MSVC Release,
 `TOKENSCOPE_LEVEL=3`, two steady-state decode tokens
@@ -486,6 +485,135 @@ partitioning."*
 - llama.cpp is under active development and already fuses some op chains
   (`ggml_cpu_try_fuse_ops`); this measurement is against the pinned commit
   `4d91760` and says nothing about what a newer tree does.
+
+---
+
+---
+
+## F10 — Nothing beats 2.2×. Every thread past four turns into barrier wait.
+
+**Workload:** same 24-layer synthetic F32 model, `tg32`, Windows 11, MSVC
+Release, on an i7-14700HX (8 P-cores + 12 E-cores, 28 logical). Throughput
+from the **uninstrumented** build, `-r 5`. Structural columns from level-3
+traces of 6 decode tokens at each thread count.
+
+```
+ thr   tok/s  speedup  par.eff  barrier%  imbal%  thr-spread  serial imb%
+--------------------------------------------------------------------------
+   1   20.25    1.00x     100%      0.1%    0.0%          0%        0.0%
+   2   35.12    1.73x      87%      2.4%   64.2%          1%       12.5%
+   4   42.34    2.09x      52%      5.7%   66.6%          1%       15.5%
+   6   44.82    2.21x      37%      8.4%   65.3%          1%       16.3%
+   8   44.59    2.20x      28%     12.2%   71.5%          2%       10.1%
+  12   40.59    2.00x      17%     21.2%   77.3%         13%        8.5%
+  16   41.50    2.05x      13%     22.0%   73.8%         27%        7.4%
+  20   41.83    2.07x      10%     22.9%   69.7%         23%       15.3%
+  28   39.33    1.94x       7%     22.9%   56.1%         29%       15.2%
+```
+
+`barrier%` is the share of worker thread time spent in `ggml_barrier`.
+`imbal%` is the share of that wait caused by uneven arrival rather than
+release latency (F9). `thr-spread` is the gap between the busiest and
+idlest worker's compute time, as a percentage of the busiest.
+
+### The headline
+
+**No thread count on this machine beats 2.21×.** Four threads already reach
+2.09×. Everything after that buys at most 6% more throughput, and past six
+threads it buys *less than nothing* — 28 threads is 12% slower than 6 while
+occupying seven times the cores.
+
+Parallel efficiency falls from 100% to **7%**.
+
+### Where the thread time goes, which is the part a normal profiler hides
+
+Barrier wait rises monotonically with thread count — 0.1% → 12.2% at eight
+threads → 22.9% at twenty and beyond. By 12 threads, **more than a fifth of
+all worker CPU time is spinning in `ggml_thread_cpu_relax()`**.
+
+The causal direction matters, and it is the opposite of the tempting reading.
+The barrier is not what makes the extra threads useless. F7 established
+that decode on this model is almost purely weight-streaming: the time is memory
+traffic, not arithmetic. Once memory bandwidth is saturated — which happens
+somewhere around four threads — an additional thread cannot go faster, so it
+finishes its slice late or early relative to the others and the difference is
+paid at the next barrier.
+
+**The barrier is where wasted parallelism becomes visible, not the cause of
+it.** And that is exactly the point of the work/wait split: without it those
+threads are indistinguishable from threads doing arithmetic. A tool that
+reports "ffn: 69% across 8 threads" cannot tell you that a fifth of that number
+is spinning, and it is spinning *because you asked for too many threads.*
+
+### The thread-spread step at eight
+
+`thr-spread` is 0–2% for every thread count up to and including eight, then
+jumps to 13% at twelve and 23–29% above that.
+
+Eight is the P-core count on this CPU. Up to eight threads the scheduler has
+equivalent cores to hand out and ggml's even row split is a fair split. Past
+eight, threads land on cores of a different speed while ggml keeps handing out
+**equal numbers of rows**, so the slowest core sets the pace at every one of
+the ~412 barriers per token.
+
+**A prediction I made and did not confirm.** I expected the per-thread compute
+times to fall into two tight clusters, one per core type. They do not — at 16
+threads the distribution runs 30.0, 30.2, 30.5, 33.3, 33.7, 35.1, 37.2 … 44.9
+ms, continuously. So "even split across uneven cores" is consistent with the
+step at eight, but the clean bimodal signature that would prove it is absent.
+Thread pinning and per-core identification would settle it; neither is done
+here, and Windows is free to migrate threads mid-run. **Recorded as an
+unconfirmed mechanism with a confirmed symptom.**
+
+### Testing docs/01's overhead prediction — not confirmed
+
+[`docs/01`](01-design-scope-timing.md) section 8 predicts that profiler
+overhead should *compound* with thread count, because a barrier makes the graph
+pay the `max` of per-thread overhead rather than the mean, and lists
+pre-touching chunks and never allocating mid-graph as the mitigations.
+
+Measured with the interleaved A/B/C harness, `-n 14`, level 3:
+
+| threads | overhead vs compiled-out | baseline IQR |
+|---|---|---|
+| 8 | +0.12% [-1.59, +1.43] | 2.0% |
+| 28 | +0.66% [-1.85, +4.18] | 3.9% |
+
+Both confidence intervals span zero, and the harness **refused to certify
+either**, because this machine's baseline spread is wider than the effect being
+tested. So the prediction is neither confirmed nor refuted. What can honestly
+be said: if overhead compounds with thread count, it does not compound enough
+to resolve at 28 threads on this machine — which is a weaker claim than the
+mitigations working, and is the claim the data supports.
+
+### Caveats
+
+- **Synthetic F32 weights, and this finding is more sensitive to that than any
+  other in this file.** The whole result turns on the workload being
+  bandwidth-bound. A Q4_K_M model reads a quarter of the bytes per parameter
+  and should therefore scale to more threads before hitting the same wall. This
+  table is a statement about *this* workload's arithmetic intensity, not about
+  llama.cpp's threading in general.
+- One machine, one OS, hybrid core layout, no thread pinning.
+- Structural columns come from single traces of 6 tokens; the throughput column
+  is `-r 5` on the uninstrumented build. They are not the same runs, and the
+  throughput column is the one to quote.
+- `thr-spread` is measured per thread across a whole token, so it mixes core
+  speed with scheduling noise and with the near-serial nodes of F9.
+
+### Reproduce
+
+```bash
+# throughput column
+for T in 1 2 4 6 8 12 16 20 28; do
+  llama-bench -m mid.gguf -p 0 -n 32 -t $T -r 5
+done
+
+# structural columns
+TOKENSCOPE_LEVEL=3 TOKENSCOPE_TOKENS=8-13 TOKENSCOPE_OUT=t$T.json \
+  llama-bench -m mid.gguf -p 0 -n 20 -t $T -r 1 --no-warmup
+trace_analyze.py t$T.json --barriers
+```
 
 ---
 
