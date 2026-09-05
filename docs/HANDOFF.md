@@ -43,7 +43,7 @@ The short version:
 | Shared-library build untested | All measurements are `BUILD_SHARED_LIBS=OFF` |
 | Sampling / tokenizer scopes not written | `llama-bench` never exercises them; needs `llama-cli`, not currently built |
 | No Perfetto screenshot | Blocks the README and several posts |
-| No thread pinning | Would settle the mechanism F10 records as unconfirmed |
+| ~~No thread pinning~~ | **Done (F14).** Mechanism confirmed: homogeneous cores drop spread 13%->2% and halve barrier wait. Pinning is not the fix |
 | Upstream issue not filed | Draft ready at [`03`](03-upstream-issue-draft.md); F9 is the strongest material for it |
 
 ---
@@ -180,10 +180,12 @@ thread sweep is FINDINGS F10, and the barrier arrival spread is F9.
    [`00`](00-architecture-map.md) section 8). Needs `llama-cli`, which is not
    currently built -- add it to the build-ts-on target list.
 5. **Three-model decode table** for the README.
-6. **Thread pinning**, which would settle the mechanism F10 records as
-   unconfirmed: whether the per-thread spread above 8 threads really is the
-   even-row-split-across-uneven-cores story. `-C`/`--cpu-mask` on llama-bench,
-   or `SetThreadAffinityMask`. A cheap experiment with a clear yes/no.
+6. **Proportional row assignment**, which is what F14 ends up arguing for.
+   ggml's `dr = (nr + nth - 1)/nth` gives every thread the same row count, which
+   is optimal only when every core is equally fast. A prototype that weights the
+   split by measured per-thread throughput would test whether the barrier waste
+   F14 attributes to heterogeneity is actually recoverable. This is the largest
+   change this project has pointed at, and the best-supported.
 7. **Fusion experiment for F9.** F9 says the promising fix for the near-serial
    elementwise nodes is fusing them, not parallelizing them, and llama.cpp
    already has `ggml_cpu_try_fuse_ops`. Checking what it currently fuses on this
@@ -233,6 +235,8 @@ thread sweep is FINDINGS F10, and the barrier arrival spread is F9.
 | ...predicted from parameter counts | wrong by 7.2 points on the same model | [`FINDINGS`](FINDINGS.md) F12 |
 | Sampling + detokenization | 0.13% of a token | [`FINDINGS`](FINDINGS.md) F11 |
 | Parallel efficiency at 28 threads | 7% | [`FINDINGS`](FINDINGS.md) F10 |
+| P-core vs E-core, compute-bound | 2.88x (265.95 vs 92.39 tok/s) | [`FINDINGS`](FINDINGS.md) F14 |
+| Barrier wait, mixed vs homogeneous cores | 21.2% -> 11.1% at 12 threads | [`FINDINGS`](FINDINGS.md) F14 |
 | Host control-plane work | 0.4% of decode | [`FINDINGS`](FINDINGS.md) F1 |
 | Attention math (`attn.score`) | 0.7% of thread time | [`FINDINGS`](FINDINGS.md) F7 |
 | Phase time vs parameter count | within 1.5–8.6% over a 27× range — **F32 only**, see the F12 rows | [`FINDINGS`](FINDINGS.md) F7 |

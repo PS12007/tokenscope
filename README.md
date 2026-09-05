@@ -353,6 +353,7 @@ Built in the open. `docs/` is the engineering log, in order — and
 - [x] Tier 2: per-node work/wait split, per-layer breakdown
 - [x] [Barrier decomposition: imbalance vs release, and what it is worth](docs/FINDINGS.md)
 - [x] [Thread-count sweep, 1 to 28](docs/FINDINGS.md)
+- [x] [Thread pinning: core heterogeneity confirmed as the mechanism](docs/FINDINGS.md)
 - [x] [Sampling and tokenizer scopes](docs/FINDINGS.md) — `llama-cli`, not `llama-bench`
 - [x] [Three-model decode table](docs/FINDINGS.md)
 - [ ] Perfetto screenshots

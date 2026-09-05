@@ -565,8 +565,12 @@ eight, threads land on cores of a different speed while ggml keeps handing out
 **equal numbers of rows**, so the slowest core sets the pace at every one of
 the ~412 barriers per token.
 
-**A prediction I made and did not confirm.** I expected the per-thread compute
-times to fall into two tight clusters, one per core type. They do not — at 16
+**A prediction I made and did not confirm.** (**Now settled in F14** by
+pinning: twelve threads on twelve identical E-cores drop the spread from 13% to
+2% and halve barrier wait. The mechanism is confirmed; the paragraph below
+stands as written because the *evidence available at the time* did not support
+it.) I expected the per-thread compute times to fall into two tight clusters,
+one per core type. They do not — at 16
 threads the distribution runs 30.0, 30.2, 30.5, 33.3, 33.7, 35.1, 37.2 … 44.9
 ms, continuously. So "even split across uneven cores" is consistent with the
 step at eight, but the clean bimodal signature that would prove it is absent.
@@ -906,6 +910,123 @@ Two things are stable across all three:
   surface, not three model summaries.
 - Single traces of 6 tokens each, so the small columns carry real noise. The
   ordering of the large columns is far outside it.
+
+---
+
+---
+
+## F14 — Core heterogeneity is the mechanism. Pinning proves it and does not fix it.
+
+**Workload:** 24-layer F32 synthetic model, i7-14700HX (8 P-cores + 12 E-cores,
+28 logical), Windows 11. Throughput from the uninstrumented build, `-r 5`.
+Structure from level-3 traces of 6 decode tokens. Affinity via llama-bench
+`-C <hex> --cpu-strict 1`.
+
+F10 measured that per-thread compute spread is 0-2% up to eight threads and
+13-29% above, noted that eight is this CPU's P-core count, and then
+**deliberately declined to claim the mechanism** because the expected bimodal
+signature was absent. This is the experiment that settles it.
+
+### First: the cores really are that different
+
+Four threads, `pp128` (compute-bound, unlike decode):
+
+```
+  4 threads on P-cores  (mask 0x55)       265.95 ± 2.40 tok/s
+  4 threads on E-cores  (mask 0xf0000)     92.39 ± 0.89 tok/s
+  4 threads unpinned                      266.79 ± 4.98 tok/s
+```
+
+**P-cores are 2.88× faster than E-cores here**, and the unpinned scheduler
+picks P-cores, as it should. (This gap is invisible at one thread on *decode* —
+28.0 vs 28.2 tok/s — because single-thread decode is bandwidth-bound and both
+core types wait on the same memory. That near-miss is worth recording: the
+first version of this experiment used decode, found no difference, and would
+have concluded the mask was broken.)
+
+### The test: make the cores homogeneous and see if the spread goes away
+
+```
+case                       thr   spread   min ms   max ms   barrier%
+--------------------------------------------------------------------
+12 thr unpinned (mixed)     12      13%    112.3    129.6      21.2%
+12 thr E-cores only         12       2%    134.8    137.0      11.1%
+```
+
+Twelve threads on twelve **identical** E-cores: per-thread compute times run
+134.8, 134.9, 134.9, 135.0, 135.2, 135.3, 135.3, 135.4, 136.6, 136.9, 136.9,
+137.0 ms. The spread collapses from 13% to 2%, and **barrier wait halves, from
+21.2% to 11.1%**, with no change to the model, the graph, the thread count, or
+the code.
+
+**F10's mechanism is confirmed.** ggml gives every thread the same number of
+rows; when the cores behind those threads are not the same speed, the slowest
+one sets the pace at every one of the ~412 barriers per token. Equal work to
+unequal workers is the whole story.
+
+### And yet pinning makes it slower
+
+```
+  6 thr  unpinned                45.15 ± 0.53
+  8 thr  unpinned                43.60 ± 0.63
+ 12 thr  unpinned                40.89 ± 0.09
+  8 thr  P-cores only            39.21 ± 0.44      -10% vs unpinned
+ 12 thr  E-cores only            37.51 ± 3.15       -8% vs unpinned
+ 20 thr  P8 + E12                35.76 ± 1.09
+```
+
+Every pinned configuration is **worse** than letting the scheduler choose. The
+homogeneous E-core run halves its barrier waste and still loses, because twelve
+slow equal cores beat neither eight fast ones nor the scheduler's mix.
+
+That is the useful conclusion, and it is not the obvious one:
+
+**The waste is real, the mechanism is confirmed, and pinning is the wrong fix.**
+Removing heterogeneity by refusing to use the fast cores costs more than the
+heterogeneity did. What the measurement actually argues for is **proportional
+work assignment** — giving a P-core more rows than an E-core — rather than
+ggml's current
+
+```c
+const int dr = (nr + nth - 1)/nth;   // every thread gets the same count
+```
+
+which is optimal exactly when every worker is equally fast, and is a growing
+tax as consumer CPUs get less uniform. That would keep the fast cores *and*
+close the arrival gap. It is a much larger change than anything else this
+project has suggested, and it is the one the data points at.
+
+### An anomaly, unexplained
+
+Eight threads pinned to `0x5555` — intended as one thread per P-core — do
+**not** behave homogeneously. Across three runs, seven threads cluster tightly
+and exactly one is 12-20% slower:
+
+```
+  127 128 128 128 128 129 129 146
+  122 123 123 123 123 124 125 140
+  124 124 124 124 125 125 126 156
+```
+
+The slow thread is `tid 0` twice and `tid 7` once, so it is not simply the main
+thread doing host work between graphs. Candidate explanations not tested:
+hyperthread sibling collision from a wrong assumption about this CPU's logical
+numbering, or `--cpu-strict` assigning two threads to one bit. **Recorded rather
+than explained**, and it is why the confirmation above rests on the twelve-core
+E-only run, which is clean, rather than on this one.
+
+### Caveats
+
+- One machine, one OS, one hybrid layout. AMD CCD topologies and Apple's
+  P/E split will differ in ways this does not predict.
+- The mask-to-core mapping is assumed from the usual Windows enumeration
+  (P-core threads first, E-cores from logical 16), and the anomaly above is a
+  reason to hold that assumption loosely.
+- Throughput and structure come from different runs; the throughput column is
+  the one to quote.
+- Synthetic F32 weights. F12 showed the quantized model falls off *more*
+  steeply past the P-core count, which is consistent with this being the cause,
+  but that combination was not measured under pinning.
 
 ---
 
