@@ -239,6 +239,7 @@ where your time goes.
 | **No locks in the hot path** | Thread-local buffers, merged at flush. | ✅ |
 | **Deterministic, not sampled** | Explicitly placed scopes, so the trace is *interpretable* rather than statistical. | ✅ |
 | **Never silently drop data** | Bounded budget, loud drop counter in every trace's provenance record. | ✅ |
+| **Static builds only, for now** | The hot path reads a raw `__declspec(thread)` pointer, which MSVC refuses to `dllexport` (C2492). | ❌ `BUILD_SHARED_LIBS=ON` does not link — [F18](docs/FINDINGS.md) |
 
 ### Measured cost
 
