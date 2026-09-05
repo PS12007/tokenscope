@@ -39,7 +39,7 @@ The short version:
 | Gap | Why it matters |
 |---|---|
 | Linux / GCC never built or measured | Everything so far is MSVC on Windows, and F9/F10 both measured the non-OpenMP barrier path |
-| No real quantized model | All numbers are synthetic F32 weights, and F10's conclusion depends on that |
+| ~~No real quantized model~~ | **Done (F12).** Qwen2.5-0.5B Q4_K_M is in `models/`, gitignored. Largest real model measured is 630 M params |
 | Shared-library build untested | All measurements are `BUILD_SHARED_LIBS=OFF` |
 | Sampling / tokenizer scopes not written | `llama-bench` never exercises them; needs `llama-cli`, not currently built |
 | No Perfetto screenshot | Blocks the README and several posts |
@@ -160,13 +160,12 @@ already correct. It cost time this session.
 Items 1, 5 and 6 of the session-1 list are done: the push landed, the
 thread sweep is FINDINGS F10, and the barrier arrival spread is F9.
 
-1. **A real quantized model.** Every number in this repo is synthetic F32, and
-   F10 in particular *turns on* that fact: it concludes decode is
-   bandwidth-bound, so a Q4_K_M model reading a quarter of the bytes per
-   parameter should scale to more threads before hitting the same wall. That is
-   a sharp, falsifiable prediction and it is the single most valuable thing left
-   to test. Retry the Hugging Face download; the network here is intermittent
-   rather than blocked (section 2).
+1. **A larger real model.** F12 did the Q4_K_M test on Qwen2.5-0.5B and
+   confirmed F10's scaling prediction, but 630 M parameters is still small, and
+   two F12 results are size-dependent in opposite directions: `lm_head` is 34%
+   of decode here and shrinks fast with model size, while the bandwidth wall
+   should move as arithmetic intensity rises. A 7-8B Q4_K_M is the next real
+   test. The download works -- see section 2 for the retry rule.
 2. **Perfetto screenshot.** Open `examples/mid-24L-L3-tok10-11.trace.json` at
    [ui.perfetto.dev](https://ui.perfetto.dev), zoom to 2-3 tokens so both the
    per-node structure and the barrier gaps are visible, and put it at the top of
@@ -228,15 +227,22 @@ thread sweep is FINDINGS F10, and the barrier arrival spread is F9.
 | ...of which arrival imbalance | 83.7% (spin-up excluded) | [`FINDINGS`](FINDINGS.md) F9 |
 | Barriers behind single-threaded nodes | 120 of 412 per token | [`FINDINGS`](FINDINGS.md) F9 |
 | Upper bound on fixing that | 1.34% of graph wall time | [`FINDINGS`](FINDINGS.md) F9 |
-| Best speedup at any thread count | 2.21x, at 6 threads | [`FINDINGS`](FINDINGS.md) F10 |
+| Best speedup at any thread count | 2.21x F32 / 3.28x Q4_K_M, both at 6 threads | F10, F12 |
+| `lm_head` share, Qwen2.5-0.5B Q4_K_M | 34% of decode thread time | [`FINDINGS`](FINDINGS.md) F12 |
+| Phase time predicted from weight BYTES | within 2.9 points on a real quantized model | [`FINDINGS`](FINDINGS.md) F12 |
+| ...predicted from parameter counts | wrong by 7.2 points on the same model | [`FINDINGS`](FINDINGS.md) F12 |
+| Sampling + detokenization | 0.13% of a token | [`FINDINGS`](FINDINGS.md) F11 |
 | Parallel efficiency at 28 threads | 7% | [`FINDINGS`](FINDINGS.md) F10 |
 | Host control-plane work | 0.4% of decode | [`FINDINGS`](FINDINGS.md) F1 |
 | Attention math (`attn.score`) | 0.7% of thread time | [`FINDINGS`](FINDINGS.md) F7 |
-| Phase time vs parameter count | within 1.5–8.6% over a 27× range | [`FINDINGS`](FINDINGS.md) F7 |
+| Phase time vs parameter count | within 1.5–8.6% over a 27× range — **F32 only**, see the F12 rows | [`FINDINGS`](FINDINGS.md) F7 |
 
-Everything above is measured on **synthetic F32 weights**, MSVC Release,
-Windows 11, on an i7-14700HX (8 P-cores + 12 E-cores). Say so whenever quoting
-them. All of it is 8 threads except the F10 rows, which are the sweep itself --
-and the level-3 overhead figure is an 8-thread number too, which matters
-because docs/01 predicts it should move with thread count. At 28 threads it
-re-measured as +0.66% [-1.85, +4.18], which the harness declined to certify.
+Everything above is measured on **synthetic F32 weights unless the row names a
+real model**, MSVC Release, Windows 11, on an i7-14700HX (8 P-cores + 12
+E-cores). Say so whenever quoting them.
+
+All of it is 8 threads except the F10 and F12 rows, which are the sweeps
+themselves. The level-3 overhead figure is an 8-thread number too, which
+matters because docs/01 predicts it should move with thread count: at 28
+threads it re-measured as +0.66% [-1.85, +4.18], which the harness declined to
+certify.

@@ -260,6 +260,12 @@ Two conclusions, and the second matters more:
    accident. This is the strongest evidence so far that the per-phase numbers
    can be trusted.
 
+**Update (F12).** This law was later tested on a real Q4_K_M model, where
+bytes and parameter counts stop agreeing because tensors are quantized
+differently by role. The **byte** form held to within 2.9 points; the
+**parameter-count** form was wrong by 7.2. The shortcut used throughout this
+finding is safe only for a uniform dtype, and F12 says so in more detail.
+
 The +8.6% on `attn.qkv` is the residual worth noting rather than smoothing over:
 that bucket contains `Qcur`/`Kcur`/`Vcur`, which carry RoPE and the KV cache
 write on top of the projection matmul. Extra work beyond the weight read is
@@ -476,8 +482,11 @@ partitioning."*
 
 **Caveats:**
 
-- Synthetic F32 weights. Q4_K_M shifts the mix toward compute in the matmuls,
-  which would make the serial nodes a *smaller* share, not a larger one.
+- Synthetic F32 weights. **Retested on a real Q4_K_M model in F12, where the
+  effect is larger, not smaller: 0.74% of the work causing 19% of the
+  imbalance, against 0.32% and 14% here.** The prediction in this bullet was
+  backwards -- cheaper matmuls make the fixed-cost serial nodes a bigger
+  share, not a smaller one.
 - 8 threads on one machine. The waste from a serial node scales with thread
   count, so this is a floor for wider machines, not a ceiling.
 - Two decode tokens. The per-node structure is identical token to token, but
@@ -593,7 +602,9 @@ mitigations working, and is the claim the data supports.
   bandwidth-bound. A Q4_K_M model reads a quarter of the bytes per parameter
   and should therefore scale to more threads before hitting the same wall. This
   table is a statement about *this* workload's arithmetic intensity, not about
-  llama.cpp's threading in general.
+  llama.cpp's threading in general. **F12 tested that prediction on a real
+  quantized model and confirmed it: peak speedup rose from 2.21x to 3.28x. The
+  peak stayed at six threads.**
 - One machine, one OS, hybrid core layout, no thread pinning.
 - Structural columns come from single traces of 6 tokens; the throughput column
   is `-r 5` on the uninstrumented build. They are not the same runs, and the
@@ -696,10 +707,151 @@ path stays covered.
 
 ---
 
+---
+
+## F12 — The first real quantized model, and three standing predictions tested against it
+
+**Workload:** Qwen2.5-0.5B-Instruct **Q4_K_M** (the published GGUF: 24 layers,
+`n_embd` 896, `n_ff` 4864, 14 heads / 2 KV heads, **vocab 151,936**, 630 M
+params, 469 MiB on disk). Throughput from the uninstrumented build, `-r 10` for
+the headline points. Structural columns from level-3 traces of 6 decode tokens.
+
+Every finding before this one was measured on synthetic F32 weights, and each
+carried that as its first caveat. This is the model that tests whether they
+survive contact with a real one. **Two predictions held, one held only in its
+correct form, and the correct form is not the one the earlier finding leaned
+on.**
+
+### Prediction 1 (F10): a quantized model should scale to more threads. Confirmed.
+
+F10 concluded decode was bandwidth-bound and predicted that a model reading
+fewer bytes per parameter would scale further before hitting the same wall.
+
+```
+              synthetic F32 (220M)      Qwen2.5-0.5B Q4_K_M (630M)
+ thr   tok/s  speedup  par.eff      tok/s  speedup  par.eff
+   1   20.25    1.00x     100%      27.06    1.00x     100%
+   2   35.12    1.73x      87%      52.85    1.95x      98%
+   4   42.34    2.09x      52%      77.49    2.86x      72%
+   6   44.82    2.21x      37%      88.88    3.28x      55%
+   8   44.59    2.20x      28%      88.20    3.26x      41%
+  12   40.59    2.00x      17%      70.80    2.62x      22%
+  28   39.33    1.94x       7%      66.07    2.44x       9%
+```
+
+**Peak speedup rises from 2.21× to 3.28×**, and parallel efficiency is higher at
+every thread count up to the peak — 98% vs 87% at two threads, 72% vs 52% at
+four. The prediction was right.
+
+What the prediction did *not* say, and is worth recording: **the peak is still at
+six threads.** The wall moved up, not out. And the fall past eight threads is
+*steeper* on the quantized model (−18% by ten threads) than on the F32 one
+(−9% by twelve). That is consistent with the same core-heterogeneity story F10
+told: a more compute-bound workload is hurt more by slow cores, not less. It is
+consistent with, not evidence for — see F10's unconfirmed-mechanism note.
+
+### Prediction 2 (F7): phase time tracks weight bytes. Confirmed — and the parameter-count shortcut is now refuted.
+
+F7 predicted time per phase should be proportional to **bytes of weights read**,
+and added: "for a uniform dtype that is just parameter count." Every F7 number
+used the parameter-count form, because on an F32 model the two are the same
+thing.
+
+A real Q4_K_M file is *not* uniform. llama.cpp quantizes tensors differently by
+role, and in this file the output projection is **Q8_0 at 8.50 bits/weight while
+everything else sits near 5.5**. So the two forms of the prediction finally
+disagree, and can be told apart.
+
+```
+phase       bits/w  param share  byte share  time share  err(param)  err(byte)
+------------------------------------------------------------------------------
+ffn           5.51        63.5%       55.2%       56.4%       -7.2       +1.2
+lm_head       8.50        27.6%       36.9%       34.0%       +6.4       -2.9
+attn.qkv      5.70         5.0%        4.5%        6.0%       +1.0       +1.5
+attn.out      5.50         3.9%        3.4%        3.6%       -0.3       +0.2
+
+max error predicting time from parameters: 7.2 points
+max error predicting time from bytes:      2.9 points
+```
+
+**Bytes win, and they win exactly where the two disagree.** The parameter-count
+form is wrong by 7.2 points on `ffn` and 6.4 on `lm_head` — in opposite
+directions, which is the signature of a share being moved from one to the other
+by nothing but dtype. The byte form holds to within 2.9 points across a 16×
+range.
+
+So F7's law survives, and F7's *convenience* does not. Anyone reusing that
+result on a quantized model must read the tensor types, not the config.
+
+### The finding that only a real model could produce: `lm_head` is a third of decode
+
+On the synthetic model `lm_head` was 2.6% of thread time and easy to ignore.
+Here it is **34%**, second only to the entire FFN stack across all 24 layers.
+
+Two things compound:
+
+- **Vocabulary 151,936 against `n_embd` 896.** The output projection is
+  136 M parameters — 28% of everything streamed at decode — in a model whose
+  every other matrix is sized for a 0.5B model.
+- **It is the least compressed tensor in the file.** Q8_0, while the FFN it
+  competes with is Q5_0/Q4_K/Q6_K. It is 27.6% of the parameters and 36.9% of
+  the bytes.
+
+The practical reading, stated as an arithmetic consequence rather than a
+recommendation: requantizing that one tensor from Q8_0 to ~5.5 bits would remove
+roughly 35% of its bytes and, if the byte law holds, about **12% of decode
+time** — from a single tensor. Whether that is a good trade is a quality
+question this project has not measured and is not qualified to answer; output
+layers are quantized conservatively for a reason.
+
+The general point stands on its own: **on small models with large vocabularies,
+the output projection is a first-class cost, and per-tensor quantization choices
+are visible in the profile.**
+
+### Prediction 3 (F9): the near-serial elementwise nodes. Confirmed, and worse.
+
+```
+node          work    imbalance    n   threads busy (of 6)
+ffn_swiglu   531.2 us    1.92 ms  144       1.0
+l_out        253.5 us    1.03 ms  144       1.0
+attn_norm    328.6 us    1.01 ms  144       1.1
+ffn_norm     299.5 us   545.2 us  144       1.0
+ffn_inp      243.5 us   420.1 us  144       1.0
+```
+
+Eleven node types cost more in waiting than in their own work: **0.74% of the
+work causing 19% of all imbalance**, against 0.32% and 14% on the synthetic
+model. The mechanism is dtype-independent, as it should be — a single row is a
+single row whatever it is quantized to — and its relative cost grows as the
+matmuls around it get cheaper.
+
+**A new one, specific to GQA.** `Kcur` uses 2.5 of 6 threads and `Vcur` 3.0,
+where `Qcur` uses 4.0 and the FFN matmuls use all 6. Qwen2.5-0.5B has 14 query
+heads and **2** KV heads, so the K and V projections produce 128-wide outputs
+against 896 for Q. They are too narrow to fill the pool. Grouped-query attention
+shrinks the KV cache, and the same narrowing shows up here as a partitioning
+problem — a cost of GQA that a wall-clock timer cannot see.
+
+### Caveats
+
+- One model, one quantization, one machine. "Q4_K_M" is a recipe, not a dtype;
+  this file's actual mix is 133 Q5_0 tensors, 121 F32, 13 Q8_0, 12 Q6_K, 12
+  Q4_K. Another Q4_K_M export may differ, which is itself the point of this
+  finding.
+- 630 M parameters is still small. The bandwidth/compute balance shifts again at
+  7B, and the `lm_head` share in particular shrinks fast as models grow, since
+  vocabulary is fixed while everything else scales.
+- Byte counts come from the GGUF tensor table via `gguf-py` and are what is
+  *stored*, not what is *fetched* — they ignore cache reuse, which at batch
+  size 1 with a single sequence is close to nil for weights but not exactly nil.
+- Structural columns are single traces of 6 tokens; throughput is `-r 10`.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
 
-- real quantized models — everything above is synthetic F32 weights
+- larger real models — the biggest measured is 630 M parameters (F12)
 - context-shift behaviour, i.e. the case where `kv.update` should be expensive
 - concurrent sequences / server workload

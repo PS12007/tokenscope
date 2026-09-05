@@ -172,27 +172,30 @@ is fusing the elementwise chain rather than parallelizing it
 Sweeping thread count turns that into advice you can act on today:
 
 ```
- thr   tok/s  speedup  par.eff  barrier%
-   1   20.25    1.00x     100%      0.1%
-   4   42.34    2.09x      52%      5.7%
-   6   44.82    2.21x      37%      8.4%   <- peak
-   8   44.59    2.20x      28%     12.2%
-  16   41.50    2.05x      13%     22.0%
-  28   39.33    1.94x       7%     22.9%
+              synthetic F32 (220M)       Qwen2.5-0.5B Q4_K_M (630M)
+ thr   tok/s  speedup  par.eff       tok/s  speedup  par.eff
+   1   20.25    1.00x     100%       27.06    1.00x     100%
+   4   42.34    2.09x      52%       77.49    2.86x      72%
+   6   44.82    2.21x      37%       88.88    3.28x      55%   <- peak, both
+   8   44.59    2.20x      28%       88.20    3.26x      41%
+  16   41.50    2.05x      13%       68.91    2.55x      16%
+  28   39.33    1.94x       7%       66.07    2.44x       9%
 ```
 
-**Nothing beats 2.2×**, four threads already reach 2.09×, and 28 threads is
-12% *slower* than six while occupying seven times the cores. Barrier wait rises
-monotonically to 22.9%. The barrier is where the wasted parallelism becomes
-visible rather than where it is created — decode here is weight-streaming, so
-once bandwidth saturates around four threads the extra threads cannot go
-faster and the difference is paid at the next rendezvous.
+**Nothing beats 2.2× on the F32 model and 3.3× on the quantized one.** Four
+threads already reach most of it; 28 threads is *slower* than six on both,
+while occupying seven times the cores. Parallel efficiency ends at 7-9%.
 
-That last clause is also the caveat: this table is a statement about *this
-workload's* arithmetic intensity, not about llama.cpp's threading in general.
-These are synthetic F32 weights, and a Q4\_K\_M model reads roughly a quarter
-of the bytes per parameter, so it should scale further before hitting the same
-wall. Full numbers, method and caveats in [`F10`](docs/FINDINGS.md).
+The barrier is where the wasted parallelism becomes visible rather than where
+it is created — decode is weight-streaming, so once memory bandwidth saturates
+the extra threads cannot go faster, and the difference is paid at the next
+rendezvous. Barrier wait rises monotonically with thread count, to 22.9% of
+worker time on the F32 model and 42.5% on the quantized one.
+
+The two columns are also a prediction and its test: [`F10`](docs/FINDINGS.md)
+argued from the F32 numbers that a model reading fewer bytes per parameter
+should scale further, and [`F12`](docs/FINDINGS.md) measured it doing exactly
+that — 2.21× to 3.28×. The wall moved up. It did not move out.
 
 `--outliers` ranks the slowest tokens and attributes each one's *excess over
 median* to a category — because on a slow token everything is large, and the
@@ -336,7 +339,8 @@ Built in the open. `docs/` is the engineering log, in order — and
 - [x] [Thread-count sweep, 1 to 28](docs/FINDINGS.md)
 - [x] [Sampling and tokenizer scopes](docs/FINDINGS.md) — `llama-cli`, not `llama-bench`
 - [ ] Perfetto screenshots + three-model decode table
-- [ ] Real quantized models, and Linux/GCC
+- [x] [Real quantized model](docs/FINDINGS.md) — Qwen2.5-0.5B Q4_K_M
+- [ ] Linux/GCC
 - [ ] [Upstream issue](docs/03-upstream-issue-draft.md), then a PR
 
 ## Repository layout
