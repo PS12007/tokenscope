@@ -21,10 +21,12 @@ models/
 *.bin
 *.safetensors
 
-# traces (can be large); keep curated ones under examples/
+# traces (can be large); curated reference traces under examples/ ARE tracked --
+# CI analyzes them, and the README quotes their output.
 traces/
 *.trace.json
 *.trace.json.gz
+!examples/*.trace.json
 
 # python
 __pycache__/
