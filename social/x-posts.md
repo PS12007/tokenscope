@@ -896,6 +896,113 @@ carry. Post I1 after G1; it is the payoff to G1's closing caveat.
 
 ---
 
+## READY NOW — concurrent sequences, and my own boundary bug (F17)
+
+### M1. The thread
+
+**1/**
+> Ran my llama.cpp profiler against batched decoding for the first time — 16
+> concurrent sequences.
+>
+> It reported **zero decode tokens.**
+>
+> Everything was classified as prompt processing. The bug is one I'd spent a
+> finding criticizing llama.cpp for.
+
+**2/**
+> My prefill/decode boundary was:
+>
+> ```c
+> n_tokens > 1   // prompt if more than one token
+> ```
+>
+> A batched generation step submits **one token per sequence.** So with 16
+> sequences, `n_tokens` is 16, and every generation step looks like a prompt.
+
+**3/**
+> I had written a whole finding about llama.cpp's own version of this — the
+> maintainer FIXME saying its prefill/decode split misattributes when a caller
+> doesn't synchronize per token.
+>
+> I quoted it approvingly. Then shipped the same class of bug.
+
+**4/**
+> And no workload I'd ever run could have caught it. Every trace in the repo was
+> single-sequence.
+>
+> The heuristic was correct for every case it had ever met, which is not the
+> same as being tested.
+
+**5/**
+> My first fix was also wrong. `n_tokens > n_seqs` handles batched decode —
+> then gets the *shared prompt* backwards.
+>
+> With a shared prompt, 4 prompt tokens each belong to 16 sequences. `4 > 16` is
+> false. Now the prompt is "decode."
+>
+> Fixed one direction, broke the other.
+
+**6/**
+> The right quantity is neither. It's **the most tokens the batch submits for
+> any one sequence:**
+>
+> - generation step, any -np → 1 → decode ✓
+> - prompt, one sequence → N → prefill ✓
+> - prompt shared across sequences → N → prefill ✓
+>
+> Correct in all three.
+
+**7/**
+> The actual finding, since I was there anyway.
+>
+> I'd predicted `find_slot` "stops being a rounding error" with many concurrent
+> sequences. It grows 1.7× from 1 to 16 —
+>
+> from 0.89 µs to 1.55 µs, on a step that costs **60,570 µs.**
+
+**8/**
+> 0.0026% of a decode step at 16 sequences.
+>
+> Directionally right. Three orders of magnitude short of the claim.
+>
+> That's both of my KV cache predictions tested now. Both wrong.
+
+**9/**
+> Incidental, and the nicest number here: **16 concurrent sequences give 3.06×
+> aggregate throughput.**
+>
+> Which is the right shape for a weight-streaming workload — the weights get
+> read once per step no matter how many sequences ride along.
+>
+> github.com/PS12007/tokenscope
+
+---
+
+### M2. The standalone
+
+> Wrote a finding criticizing llama.cpp's prefill/decode heuristic for
+> misattributing in a case its authors flagged with a FIXME.
+>
+> Then ran my own profiler on batched decoding for the first time and got **zero
+> decode tokens**, for the same reason.
+>
+> Every trace I'd ever taken was single-sequence. The heuristic had never been
+> tested, only agreed with.
+
+---
+
+### M3. For the testing crowd
+
+> A heuristic that has only met one case has not been tested. It has been agreed
+> with.
+>
+> Mine was correct for every workload I had ever run, and wrong for the first
+> new one. Then my *fix* was correct for the new one and wrong for the old one.
+>
+> Two cases is where the actual constraint becomes visible.
+
+---
+
 ## READY NOW — the KV predictions, one right one wrong (F16)
 
 ### L1. The thread
