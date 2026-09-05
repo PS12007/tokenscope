@@ -53,7 +53,7 @@ The short version:
 |---|---|
 | Linux / GCC never built or measured | Everything so far is MSVC on Windows, and F9/F10 both measured the non-OpenMP barrier path |
 | ~~No real quantized model~~ | **Done (F12).** Qwen2.5-0.5B Q4_K_M is in `models/`, gitignored. Largest real model measured is 630 M params |
-| Shared-library build untested | All measurements are `BUILD_SHARED_LIBS=OFF` |
+| **Shared-library build is BROKEN** | **Not untested any more (F18): `ggml-cpu.dll` fails to link on `ts_tls`, and MSVC forbids `dllexport` on a `__declspec(thread)` variable (C2492). Blocks in-tree adoption; two candidate fixes in F18** |
 | ~~Sampling / tokenizer scopes not written~~ | **Done (F11).** `llama-cli` is now built in `build-ts-on`. Sampling + detokenization are 0.13% of a token |
 | ~~Context-shift behaviour~~ | **Done (F16).** 4 spikes in 699 tokens at `-c 256`, 1.13-1.34x median |
 | Concurrent sequences / server workload | The last untested prediction in F2, and F16 says it is still plausible: the head-pointer trick that makes `find_slot` O(1) is much weaker with many streams |
@@ -274,7 +274,15 @@ model. What is left, in the order I would do it:
 6. **File the upstream issue.** Draft at [`03`](03-upstream-issue-draft.md),
    rewritten in session 2 to lead with findings rather than architecture. Do not
    file before item 1.
-7. Shared-library build (`BUILD_SHARED_LIBS=ON`), never tested.
+7. **Fix the shared-library build (F18).** It does not link, and this is a
+   blocker for upstreaming rather than a nice-to-have, since llama.cpp ships
+   shared libraries. MSVC forbids `dllexport` on `__declspec(thread)` (C2492),
+   so the raw-TLS design and the exported-registry design are incompatible as
+   written. F18 lays out two fixes; the per-DLL-TLS-with-shared-registry one
+   keeps the hot path intact and is the one I would try. **Re-measure level 3
+   overhead after, whichever is chosen** -- both touch the node loop's hot path.
+   Check the GCC/Linux behaviour at the same time (item 1); ELF may not have
+   this restriction at all.
 
 ---
 

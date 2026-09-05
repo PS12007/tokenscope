@@ -1336,6 +1336,102 @@ with.
 
 ---
 
+---
+
+## F18 — The shared-library build does not link, and MSVC says the obvious fix is illegal
+
+**Configuration:** `-DBUILD_SHARED_LIBS=ON -DGGML_TOKENSCOPE=ON`, MSVC 19.44,
+Visual Studio generator. Every other measurement in this repo is
+`BUILD_SHARED_LIBS=OFF`, which the gap list has flagged since session 1.
+
+It does not build:
+
+```
+ggml-cpu.c.obj : error LNK2001: unresolved external symbol ts_tls
+ggml-cpu.dll   : fatal error LNK1120: 1 unresolved externals
+```
+
+With shared libraries, `ggml-cpu` is its own DLL. `ts_tls` — the thread-local
+pointer to the current thread's record buffer, read on the hot path by every
+node scope — is declared `extern __declspec(thread)` **without** `TS_API`, while
+every plain global next to it (`ts_g_level`, `ts_g_token`, `ts_g_capture`) has
+it. So `ggml-cpu` references a symbol nothing exports.
+
+### The obvious fix is not available
+
+Adding `TS_API` to the two thread-locals is a three-line change. MSVC rejects it
+outright:
+
+```
+tokenscope.h(162): error C2492: 'ts_depth': data with thread storage
+                   duration may not have dll interface
+tokenscope.cpp(47): error C2492: 'ts_tls': ...
+```
+
+**A `__declspec(thread)` variable cannot be `dllexport`ed in MSVC.** Not
+"should not" — the compiler refuses. So this is not an oversight that a missing
+annotation explains; it is a genuine incompatibility between two decisions the
+design made independently:
+
+- [`docs/01`](01-design-scope-timing.md) chose a raw `__declspec(thread)`
+  pointer with a constant initializer *specifically* to avoid MSVC's
+  `__dyn_tls_on_demand_init` guard on every access ("The Windows TLS trap").
+  That decision is correct and measured.
+- The registry is exported across DLL boundaries so that `ggml-cpu` and `llama`
+  share one instance.
+
+The first requires the TLS variable to be raw. The second requires it to cross a
+DLL boundary. On MSVC those cannot both hold for the same variable.
+
+### The two ways out, neither implemented
+
+1. **An exported accessor.** `TS_API ts_buffer * ts_get_tls(void)`, with the TLS
+   variable private to the translation unit. Correct and simple, and puts a
+   non-inlinable cross-DLL call on the hottest path in the project — the one
+   `docs/01` went out of its way to keep to a single load. It would need
+   re-measuring at level 3, where it is executed twice per node per thread.
+2. **Per-DLL TLS, shared registry.** `ts_tls` is only a cache; the buffer it
+   points at is owned by the registry. So each consumer could compile its own
+   copy of the TLS variable and call the *exported* `ts_thread_init()` to obtain
+   a registry-owned buffer. Flush walks the registry, so events recorded through
+   either copy are found. This keeps the hot path exactly as it is and moves the
+   cost to thread setup, which is the right place for it.
+
+Option 2 looks right and is more invasive than anything that should be attempted
+without a benchmark to check it against.
+
+### Why this matters more than a build-flag footnote
+
+The upstream draft ([`03`](03-upstream-issue-draft.md)) asks, as its second
+question:
+
+> is `ggml-base` the right home for the shared registry? It needs to be visible
+> from both `ggml-cpu` and `llama`, and **I'd rather not force
+> `BUILD_SHARED_LIBS=OFF` on anyone.**
+
+That question was asked speculatively. It now has an answer, and the answer is
+that the current design *does* force `BUILD_SHARED_LIBS=OFF`. llama.cpp ships
+shared libraries, so this is a blocker for in-tree adoption rather than a
+nice-to-have — and it should be in the issue as a known limitation with the two
+options above, not discovered by a maintainer.
+
+**No measurement in this repo is invalidated**; they were all static builds and
+all say so. What changes is the scope of the claim: tokenscope currently works
+in static builds, and the gap list's "shared-library build untested" was
+understating it. It is not untested any more. It is broken, for a reason worth
+writing down.
+
+### Caveats
+
+- MSVC only. The `__thread` path on GCC/Clang with
+  `__attribute__((visibility("default")))` may well work, since ELF handles
+  thread-local symbols across shared objects differently from PE/COFF. **Untested
+  — this is another thing the Linux gap is hiding.**
+- The Visual Studio generator defaults `--build` to Debug; the link failure
+  reproduces under both Debug and `--config Release`.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:

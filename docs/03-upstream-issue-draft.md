@@ -16,6 +16,8 @@ revised as the data improves.
       (Qwen2.5-0.5B Q4_K_M, [`FINDINGS`](FINDINGS.md) F12)
 - [ ] At least one Perfetto screenshot
 - [ ] Tested on Linux/GCC as well as Windows/MSVC
+- [ ] `BUILD_SHARED_LIBS=ON` linking (F18: currently broken, and llama.cpp ships
+      shared libraries, so this is a blocker rather than a nice-to-have)
 
 **The Linux gap is the one that should block filing.** Every number below comes
 from the non-OpenMP barrier path, and `GGML_USE_OPENMP` is the default on Linux
@@ -172,9 +174,15 @@ scrutiny; everything else is in cold code.
 
 1. Is optional profiling instrumentation something you'd want in-tree, or is
    this better as an out-of-tree patch set that people apply themselves?
-2. If in-tree: is `ggml-base` the right home for the shared registry? It needs
-   to be visible from both `ggml-cpu` and `llama`, and I'd rather not force
-   `BUILD_SHARED_LIBS=OFF` on anyone.
+2. **Known limitation, and I'd value guidance here.** `BUILD_SHARED_LIBS=ON`
+   currently does not link: `ggml-cpu.dll` needs `ts_tls`, the thread-local
+   buffer pointer read on the hot path, and MSVC refuses to `dllexport` a
+   `__declspec(thread)` variable at all (C2492). The two fixes I can see are an
+   exported accessor, which puts a cross-DLL call on the hottest path in the
+   project, or giving each consumer its own TLS variable pointing at
+   registry-owned buffers, which keeps the hot path intact and moves the cost to
+   thread setup. I lean towards the second. Is `ggml-base` the right home for
+   the shared registry at all, or is there a convention here I should follow?
 3. Would you want the node-level scopes in `ggml_graph_compute_thread` at all?
    That's the hottest loop in the project and I understand the reluctance —
    though when compiled out there is nothing there, and I have the numbers for
