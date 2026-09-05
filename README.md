@@ -165,9 +165,16 @@ arithmetic: 0.32% of the work causing 14% of all the imbalance.
 That is a mechanism, so it makes a prediction: the same nodes should
 parallelize normally when there *are* many rows. Prefill is that workload, and
 they do — 1.4 busy threads becomes 7.7. The upper bound on fixing it is a
-deliberately unflattering **1.34% of graph wall time**, and the promising route
-is fusing the elementwise chain rather than parallelizing it
-([`F9`](docs/FINDINGS.md)).
+deliberately unflattering **1.34% of graph wall time** ([`F9`](docs/FINDINGS.md)).
+
+F9 also guessed at a fix — fuse the elementwise chain so it pays one barrier
+instead of five — and [`F15`](docs/FINDINGS.md) tested that guess and killed
+it. ggml already fuses exactly this kind of chain, removing 49 of 461 barriers
+per token; turning that fusion off changes throughput by nothing measurable,
+even on a model where barrier wait is 54% of thread time. The barriers a fusion
+removes are the ones threads arrive at together. **Barrier count and barrier
+cost are different quantities**, and the waiting that has real wall-clock cost
+is somewhere else — see the thread sweep below.
 
 Sweeping thread count turns that into advice you can act on today:
 

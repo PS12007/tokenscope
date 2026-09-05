@@ -395,6 +395,10 @@ post F1 standalone — it works either way, but the sequence is the story.**
 > The fix isn't "parallelize them". It's **fuse them** — pay one barrier
 > instead of five.
 
+*(⚠ This beat is now known to be wrong — see K1. Either cut beat 11 and end
+the thread at 12, or post K1 as the follow-up. Do not post it as it stands
+without one of those.)*
+
 **12/**
 > The thread-time number (11.2%) is the flattering one. The wall-time number
 > (1.34%, optimistic) is the true one.
@@ -889,6 +893,122 @@ carry. Post I1 after G1; it is the payoff to G1's closing caveat.
 > 28% of the parameters, 37% of the bytes, **34% of decode time**.
 >
 > Vocabulary doesn't shrink when your model does.
+
+---
+
+## READY NOW — the retraction (F15)
+
+Post after F1, which is where the recommendation being retracted was made. This
+is the strongest post in the file for credibility, and the weakest for reach.
+Post it anyway.
+
+### K1. The retraction thread
+
+**1/**
+> A while back I posted a finding about llama.cpp: tiny elementwise ops run on
+> 1.4 of 8 threads and cost more in other threads' waiting than in their own
+> work.
+>
+> I ended it with a recommended fix: **fuse them.**
+>
+> I finally tested that. It's wrong.
+
+**2/**
+> Turns out ggml already fuses exactly the chain I was talking about —
+> `RMS_NORM` + `MUL` — and exposes an env var to turn it off.
+>
+> So the value of fusion isn't a matter of opinion. You can just measure it.
+
+**3/**
+> What that one fusion removes:
+>
+> ```
+>                  barriers/token   barrier % of thread time
+> fusion on             412                  6.8%
+> fusion off            461                  8.5%
+> ```
+>
+> **49 barriers per token. 10.6% of every rendezvous in the graph.**
+
+**4/**
+> Throughput effect:
+>
+> ```
+> 24L, 6 thr  (barrier 7%)    44.86  vs  44.89
+> 24L, 20 thr (barrier 23%)   41.89  vs  41.74
+> tiny, 6 thr (barrier 54%)   1861.9 vs 1865.3
+> ```
+>
+> Nothing. Not even consistent in sign.
+
+**5/**
+> Including on a model where **54% of all worker thread time is barrier wait.**
+>
+> If removing 10% of the barriers were going to help anywhere, it was there.
+
+**6/**
+> The reason was in my own table and I misread it.
+>
+> A barrier costs what the *arrival spread* costs. Threads arrive at a norm
+> together, because the node before it is tiny.
+>
+> ffn_swiglu: 1.75 ms of imbalance.
+> ffn_out: **10.19 ms.**
+
+**7/**
+> I'd found the nodes with the worst waiting-to-work *ratio* and treated them as
+> the nodes with the most waiting.
+>
+> They're not. They're cheap nodes with cheap barriers. The expensive waiting is
+> at the big matmuls, where threads genuinely do arrive at different times.
+
+**8/**
+> Which lands on the thing I measured separately: those threads arrive at
+> different times because ggml gives every thread the same number of rows, and
+> my P-cores are 2.88× faster than my E-cores.
+>
+> Right symptom. Wrong node. Wrong fix.
+
+**9/**
+> The keepable lesson:
+>
+> **Barrier count and barrier cost are different quantities.**
+>
+> A profiler that reports the first invites you to optimize the second by proxy.
+> I did exactly that, in public, with numbers.
+
+**10/**
+> The finding still stands — those nodes really are single-threaded, and it
+> reproduces on a real quantized model.
+>
+> The *fix* I proposed doesn't. Both now say so in the same file, next to each
+> other.
+>
+> github.com/PS12007/tokenscope
+
+---
+
+### K2. The standalone
+
+> Removed 10.6% of the barriers from llama.cpp's compute graph.
+>
+> Throughput change: none. Including on a model where barrier wait is 54% of
+> worker thread time.
+>
+> Barrier *count* and barrier *cost* are different quantities. The ones you can
+> cheaply remove are the ones nobody was waiting at.
+
+---
+
+### K3. For the "post your negative results" crowd
+
+> Recommended a fix in public. Tested it later. It does nothing.
+>
+> Wrote that up as its own finding, and edited the original to say so at the
+> point where the recommendation is — not in a footnote somewhere else.
+>
+> The measurement was right. The advice was wrong. Those are separable and both
+> worth publishing.
 
 ---
 
