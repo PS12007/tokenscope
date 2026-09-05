@@ -367,7 +367,13 @@ def report_barriers(tr: "Trace", top: int) -> None:
     FINDINGS F6 measured that 11.2% of worker thread time is barrier wait and
     deliberately declined to say how much of it was recoverable. This is the
     measurement that answers that question."""
-    _, node, n_threads = tr.split_totals()
+    # A prefill-only trace (llama-bench -p N) has no decode slices, and the
+    # graph there is the same graph with more rows per tensor -- which is
+    # exactly the comparison F9 rests on. So fall back to prefill rather
+    # than reporting nothing.
+    slices = tr.decode if tr.decode else tr.prefill
+    kind = "decode" if tr.decode else "prefill"
+    _, node, n_threads = tr.split_totals(only_decode=bool(tr.decode))
     if not any(k == "barrier" for k in node):
         print("\n  no barrier scopes in this trace (needs TOKENSCOPE_LEVEL=3).")
         return
@@ -379,7 +385,7 @@ def report_barriers(tr: "Trace", top: int) -> None:
     n_bar = 0
     toks = []
 
-    for t in tr.decode:
+    for t in slices:
         tok = t["args"]["tok"]
         for nd, ba in _barrier_groups(tr, tok, n_threads):
             n_bar += 1
@@ -424,8 +430,8 @@ def report_barriers(tr: "Trace", top: int) -> None:
 
     over = tot_wait - tot_imb
     plural = "" if len(toks) == 1 else "s"
-    print("\n  barrier decomposition -- {} threads, {} barriers over {} decode"
-          " token{}\n".format(n_threads, n_bar, len(toks), plural))
+    print("\n  barrier decomposition -- {} threads, {} barriers over {} {}"
+          " token{}\n".format(n_threads, n_bar, len(toks), kind, plural))
     print("  total barrier wait   {}   thread-time".format(fmt_us(tot_wait)))
     print("    arrival imbalance  {}   {:5.1f}%   threads idle, waiting for the"
           " last".format(fmt_us(tot_imb), 100.0 * tot_imb / tot_wait))
