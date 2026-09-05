@@ -1253,9 +1253,93 @@ compromise, and the architecture map now says what it actually covers.
 
 ---
 
+---
+
+## F17 — Concurrent sequences: F2's last prediction also fails, and the workload broke tokenscope's own prefill/decode boundary
+
+**Workload:** Qwen2.5-0.5B Q4_K_M, `llama-batched -np {1,4,16} -kvu`, 96 tokens
+per sequence, 6 threads, `TOKENSCOPE_LEVEL=1`, 92 decode steps each.
+
+F2 made two predictions about `find_slot`. F16 killed the first (occupancy).
+This is the second: *"with many concurrent sequences […] this is the host-side
+cost that stops being a rounding error."* F16 explicitly left it open, and
+argued it was the more likely of the two to hold, because the per-stream head
+pointer that makes `find_slot` O(1) should weaken when many streams compete.
+
+```
+  np  ms/step    tok/s  vs np=1  find-slot  slot-search  graph-compute
+   1    11.58     86.4    1.00x     0.89 us     37.75 us      11.42 ms
+   4    20.18    198.2    2.29x     0.93 us     44.86 us      19.86 ms
+  16    60.57    264.2    3.06x     1.55 us     61.07 us      59.65 ms
+```
+
+`find_slot` does grow — **1.7× from one sequence to sixteen** — so the
+directional half of the prediction is right. But it grows from 0.89 µs to 1.55
+µs on a step that costs 60,570 µs. It is **0.0026% of a decode step at 16
+concurrent sequences.** It does not stop being a rounding error; it is not
+within three orders of magnitude of stopping.
+
+Both of F2's predictions are now tested and both fail. What survives is the
+observation that started it — `kv.slot-search` is the largest *host-side* cost —
+and F16 already showed that number is 97% batch splitting.
+
+**The incidental result:** batching 16 sequences gives **3.06× aggregate
+throughput**, which is the expected shape for a weight-streaming workload (F7,
+F10) — the weights are read once per step regardless of how many sequences ride
+along. It is 3.06× and not 16× because a 16-sequence step still costs 5.2× a
+one-sequence step; the per-sequence attention and the wider matmuls are real.
+
+### The bug this workload found, which is worth more than the finding
+
+The first run at `-np 4` reported **zero decode tokens.** Everything was
+classified as prefill.
+
+`TS_TOKEN_SCOPE` drew the boundary as `batch_inp.n_tokens > 1`. A batched
+generation step submits **one token per sequence**, so `n_tokens` is 4 or 16 and
+every generation step looked like a prompt.
+
+This is precisely the failure [F4](#f4--where-you-draw-the-boundary-changes-the-number-by-3) describes, and the same class as the
+maintainer `FIXME` at `llama-context.cpp:714` that this project quoted
+approvingly about llama.cpp's own heuristic. **tokenscope had shipped the same
+bug it was built to criticize**, and no single-sequence workload could reveal
+it — every trace in this repo before today was `-np 1`.
+
+The first fix was also wrong. `n_tokens > n_seqs` handles batched decode, then
+gets the *shared prompt* backwards: with `-kvu`, four prompt tokens each belong
+to sixteen sequences, so `4 > 16` is false and the prompt was classified as
+decode. Fixing one direction broke the other.
+
+The correct quantity is neither. It is the **maximum number of tokens the batch
+submits for any one sequence**:
+
+- generation step, any `-np` → 1 per sequence → decode ✓
+- prompt, single sequence → N → prefill ✓
+- prompt shared across sequences → N per sequence → prefill ✓
+
+Verified on all four: `-np 1/4/16` now each report 92 decode + 1 prefill, and
+single-sequence `llama-bench pp64 tg16` still reports 16 decode + 1 prefill.
+
+**The lesson is about coverage, not arithmetic.** The boundary was correct for
+every workload that had ever been run, and wrong for the first new one. A
+heuristic that has only met one case has not been tested; it has been agreed
+with.
+
+### Caveats
+
+- One model, one machine, up to 16 sequences with a shared prompt and `-kvu`
+  (unified KV). Separate per-sequence prompts, or non-unified KV, exercise
+  `find_slot` differently and are untested.
+- 96 tokens per sequence is short; a long multi-sequence run in a nearly-full
+  shared cache combines both of F2's conditions and is still untested.
+- `llama-batched` is an example program, not a server. Real serving adds arrival
+  and eviction patterns that nothing here models.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
 
 - larger real models — the biggest measured is 630 M parameters (F12)
-- concurrent sequences / server workload
+- server workloads with real arrival and eviction patterns (F17 covers
+  `llama-batched` only, up to 16 sequences)

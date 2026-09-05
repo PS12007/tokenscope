@@ -40,7 +40,7 @@ inline. The upstream draft was rewritten to lead with findings.
 - Zero-overhead-when-off verified against the symbol table.
 - CI for three platforms, including the over-attribution regression check.
 
-**The upstream patch is 123 changed lines across 6 files.** F9 and F10 needed
+**The upstream patch is 174 changed lines across 7 files.** F9 and F10 needed
 no new instrumentation at all -- only analysis of traces the existing scopes
 already produced. The growth from 104/4 is the sampling and tokenizer scopes,
 which `llama-bench` never reaches.
@@ -329,7 +329,7 @@ Added by session 2, in rough order of how much time they would have saved:
 
 | Claim | Value | Source |
 |---|---|---|
-| Upstream patch size | 130 lines, 7 files | `patches/01-instrument.patch` |
+| Upstream patch size | 174 lines, 7 files | `patches/01-instrument.patch` |
 | Per-scope cost | 52.8 ns (2 clock reads + 1 store) | `ts_selftest` |
 | Level 3 overhead | +0.67% [+0.12, +1.67] | [`02`](02-overhead-methodology.md) |
 | Zero-overhead-when-off | 0 symbols, 864-byte archive | [`02`](02-overhead-methodology.md) §2 |
@@ -344,7 +344,8 @@ Added by session 2, in rough order of how much time they would have saved:
 | ...predicted from parameter counts | wrong by 7.2 points on the same model | [`FINDINGS`](FINDINGS.md) F12 |
 | Sampling + detokenization | 0.13% of a token | [`FINDINGS`](FINDINGS.md) F11 |
 | Context shift, `-c 256` | 4 spikes in 699 tokens, 1.13-1.34x median | [`FINDINGS`](FINDINGS.md) F16 |
-| KV cell search (`find_slot`) | 1.17 us/token, and *falls* as the cache fills | [`FINDINGS`](FINDINGS.md) F16 |
+| KV cell search (`find_slot`) | 1.17 us/token, *falls* as the cache fills, 1.55 us at 16 sequences | F16, F17 |
+| Batching 16 sequences | 3.06x aggregate throughput | [`FINDINGS`](FINDINGS.md) F17 |
 | Parallel efficiency at 28 threads | 7% | [`FINDINGS`](FINDINGS.md) F10 |
 | P-core vs E-core, compute-bound | 2.88x (265.95 vs 92.39 tok/s) | [`FINDINGS`](FINDINGS.md) F14 |
 | Barrier wait, mixed vs homogeneous cores | 21.2% -> 11.1% at 12 threads | [`FINDINGS`](FINDINGS.md) F14 |

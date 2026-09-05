@@ -78,19 +78,24 @@ index 87a329f..5e8e645 100644
      }
  
 diff --git a/src/llama-context.cpp b/src/llama-context.cpp
-index c1ef12f..827308d 100644
+index c1ef12f..813324c 100644
 --- a/src/llama-context.cpp
 +++ b/src/llama-context.cpp
-@@ -4,6 +4,8 @@
+@@ -4,6 +4,13 @@
  #include "llama-arch.h"
  #include "llama-graph.h"
  #include "llama-impl.h"
 +#include "tokenscope.h"
 +#include "tokenscope-ggml.h"
++
++#ifdef TOKENSCOPE_ENABLED
++#include <map>   // ts_batch_max_tokens_per_seq, below
++#endif
++
  #include "llama-batch.h"
  #include "llama-io.h"
  #include "llama-memory.h"
-@@ -1364,7 +1366,10 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
+@@ -1364,7 +1371,10 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
  
          //const auto t_start_us = ggml_time_us();
  
@@ -102,7 +107,7 @@ index c1ef12f..827308d 100644
  
          //LLAMA_LOG_INFO("graph build time: %.3f ms\n", (ggml_time_us() - t_start_us)/1000.0);
  
-@@ -1374,10 +1379,13 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
+@@ -1374,10 +1384,13 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
              return nullptr;
          }
  
@@ -120,7 +125,7 @@ index c1ef12f..827308d 100644
          }
      }
  
-@@ -1386,12 +1394,20 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
+@@ -1386,12 +1399,20 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
          //const auto t_start_us = ggml_time_us();
  
          // FIXME this call causes a crash if any model inputs were not used in the graph and were therefore not allocated
@@ -142,19 +147,59 @@ index c1ef12f..827308d 100644
      if (status != GGML_STATUS_SUCCESS) {
          LLAMA_LOG_ERROR("%s: failed to compute graph, compute status: %d\n", __func__, status);
          ret = status;
-@@ -1642,6 +1658,11 @@ static bool needs_raw_logits(const llama_ubatch & ubatch, const std::map<llama_s
+@@ -1641,7 +1662,51 @@ static bool needs_raw_logits(const llama_ubatch & ubatch, const std::map<llama_s
+     return false; // all sequences use backend sampling
  }
  
++#ifdef TOKENSCOPE_ENABLED
++// tokenscope: the largest number of tokens this batch submits for any single
++// sequence. That, not the raw token count, is what separates prefill from
++// decode:
++//
++//   - a generation step submits one token per sequence -> 1, whatever n_tokens
++//     is, so batched decode is not mistaken for prefill
++//   - a prompt submits many tokens for a sequence -> >1, including the case
++//     where several sequences share one prompt, which n_tokens > n_seqs gets
++//     backwards
++//
++// "n_tokens > 1" fails the first case and "n_tokens > n_seqs" fails the second;
++// both were observed. This is the same class of error as the n_queued_tokens
++// FIXME in synchronize(). Runs once per decode call, not per token.
++static uint32_t ts_batch_max_tokens_per_seq(const llama_batch & b) {
++    if (b.n_tokens <= 0) {
++        return 0;
++    }
++    if (!b.seq_id || !b.n_seq_id) {
++        return (uint32_t) b.n_tokens;   // no sequence info: one sequence
++    }
++    std::map<llama_seq_id, uint32_t> per_seq;
++    for (int32_t i = 0; i < b.n_tokens; ++i) {
++        if (!b.seq_id[i]) {
++            continue;
++        }
++        for (int32_t j = 0; j < b.n_seq_id[i]; ++j) {
++            per_seq[b.seq_id[i][j]]++;
++        }
++    }
++    uint32_t mx = 0;
++    for (const auto & kv : per_seq) {
++        mx = std::max(mx, kv.second);
++    }
++    return mx ? mx : (uint32_t) b.n_tokens;
++}
++#endif // TOKENSCOPE_ENABLED
++
  int llama_context::decode(const llama_batch & batch_inp) {
 +    // tokenscope: draw the prefill/decode boundary explicitly here, rather than
 +    // inheriting the n_queued_tokens heuristic in synchronize(). RAII so that
 +    // every early return below still closes the slice.
-+    TS_TOKEN_SCOPE(batch_inp.n_tokens > 1, (uint32_t) batch_inp.n_tokens);
++    TS_TOKEN_SCOPE(ts_batch_max_tokens_per_seq(batch_inp) > 1,
++                   (uint32_t) batch_inp.n_tokens);
 +
      // MTP hook batches carry both token (next-token id) and embd (h_nextn row),
      // so accept either present rather than requiring exactly one.
      GGML_ASSERT(batch_inp.token || batch_inp.embd);
-@@ -1702,9 +1723,12 @@ int llama_context::decode(const llama_batch & batch_inp) {
+@@ -1702,9 +1767,12 @@ int llama_context::decode(const llama_batch & batch_inp) {
          }
      }
  
@@ -170,7 +215,7 @@ index c1ef12f..827308d 100644
      }
  
      const uint32_t n_tokens_all  = balloc->get_n_tokens();
-@@ -1737,17 +1761,29 @@ int llama_context::decode(const llama_batch & batch_inp) {
+@@ -1737,17 +1805,29 @@ int llama_context::decode(const llama_batch & batch_inp) {
  
      output_swaps.clear();
  
@@ -203,7 +248,7 @@ index c1ef12f..827308d 100644
          if (!mctx) {
              return -2;
          }
-@@ -1790,10 +1826,14 @@ int llama_context::decode(const llama_batch & batch_inp) {
+@@ -1790,10 +1870,14 @@ int llama_context::decode(const llama_batch & batch_inp) {
      }
  
      // reserve output buffer
@@ -222,7 +267,7 @@ index c1ef12f..827308d 100644
  
      // start a new sampling transaction for this logical batch
      for (const auto & entry : sampling.samplers) {
-@@ -1824,7 +1864,11 @@ int llama_context::decode(const llama_batch & batch_inp) {
+@@ -1824,7 +1908,11 @@ int llama_context::decode(const llama_batch & batch_inp) {
  
          ggml_status status;
  
@@ -235,7 +280,7 @@ index c1ef12f..827308d 100644
  
          if (!res) {
              // the last ubatch failed or was aborted -> remove all positions of that ubatch from the memory module
-@@ -1879,6 +1923,7 @@ int llama_context::decode(const llama_batch & batch_inp) {
+@@ -1879,6 +1967,7 @@ int llama_context::decode(const llama_batch & batch_inp) {
              float * logits_out = logits.data + n_outputs_prev*n_vocab;
  
              if (n_outputs) {

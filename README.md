@@ -364,6 +364,7 @@ Built in the open. `docs/` is the engineering log, in order — and
 - [x] [Sampling and tokenizer scopes](docs/FINDINGS.md) — `llama-cli`, not `llama-bench`
 - [x] [Three-model decode table](docs/FINDINGS.md)
 - [x] [Context shift and the KV cell search](docs/FINDINGS.md)
+- [x] [Concurrent sequences, 1 to 16](docs/FINDINGS.md)
 - [ ] Perfetto screenshots
 - [x] [Real quantized model](docs/FINDINGS.md) — Qwen2.5-0.5B Q4_K_M
 - [ ] Linux/GCC
