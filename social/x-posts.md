@@ -896,6 +896,120 @@ carry. Post I1 after G1; it is the payoff to G1's closing caveat.
 
 ---
 
+## READY NOW — the KV predictions, one right one wrong (F16)
+
+### L1. The thread
+
+**1/**
+> Months ago I wrote down two predictions about llama.cpp's KV cache, before I
+> had any way to test them.
+>
+> Finally ran the experiment. One was right. The other was wrong for two
+> different reasons, and the second reason is a lesson about profilers.
+
+**2/**
+> **Prediction 1: context shift should be expensive when it fires.**
+>
+> Ran 700 tokens in a 256-token context so it fires repeatedly:
+>
+> ```
+> token 218   13.34 ms  (1.15x median)  kv.update 1.72 ms
+> token 345   15.54 ms  (1.34x median)  kv.update 1.80 ms
+> token 472   13.48 ms  (1.16x median)  kv.update 1.99 ms
+> token 599   13.13 ms  (1.13x median)  kv.update 1.62 ms
+> ```
+>
+> Four spikes, evenly spaced 127 apart. Right.
+
+**3/**
+> That's the first genuinely *periodic* per-token cost I've found — the "why did
+> token 340 stall" shape the whole tool was built for.
+>
+> Also: it's 13-34% over median, not 3×. Confirmed and small are allowed to be
+> the same answer.
+
+**4/**
+> **Prediction 2: `find_slot` is a linear scan, so it should get slower as the
+> cache fills.**
+>
+> Held a 256-cell cache at capacity for 500 tokens:
+>
+> ```
+> quarter 1: 1.59 us/tok
+> quarter 2: 1.20
+> quarter 3: 0.95
+> quarter 4: 0.94
+> ```
+>
+> It got 40% *faster*.
+
+**5/**
+> Because it isn't a scan from zero. It keeps a rotating head pointer, so in
+> single-sequence decode the cell it wants is the next one after the last one it
+> took.
+>
+> Amortized O(1). I'd described an algorithm llama.cpp doesn't use.
+
+**6/**
+> Now the part worth your time.
+>
+> I'd quoted that cost as **56 µs/token**. The real cell search is **1.17
+> µs/token**.
+>
+> The other 97% was batch splitting.
+
+**7/**
+> My scope was called `kv.slot-search`. It wrapped `memory->init_batch(...)` —
+> which splits the batch into ubatches *and then* calls `find_slot`.
+>
+> I named it after the interesting half and measured both. Then reasoned about
+> the number as if the name were true.
+
+**8/**
+> **A scope's name is a claim about what it measures.** It is exactly as
+> checkable as any other claim, and I never checked it.
+>
+> Fixed by adding the nested scope — which had been listed in my own
+> architecture map since day one and never implemented.
+
+**9/**
+> ```
+> kv.slot-search   42.59 us/tok   (batch splitting)
+> kv.find-slot      1.17 us/tok   (the actual search)
+> ```
+>
+> Both findings now carry the correction next to the original prediction, not in
+> a footnote three findings later.
+>
+> github.com/PS12007/tokenscope
+
+---
+
+### L2. The standalone (the strongest lesson here)
+
+> Had a profiler scope named `kv.slot-search`. Quoted its cost. Built a
+> prediction on it.
+>
+> It wrapped a function that splits batches and *then* searches. The search was
+> **2.7%** of the number.
+>
+> A scope's name is a claim about what it measures. Mine was wrong for months
+> and nothing complained.
+
+---
+
+### L3. The prediction-registry one
+
+> Best habit I've picked up on this project: writing predictions into the
+> findings file *before* I can test them, with a note saying so.
+>
+> Today one was confirmed and one was wrong.
+>
+> Without the timestamped version I'd have quietly remembered predicting
+> whichever one turned out right.
+
+---
+
 ## READY NOW — the retraction (F15)
 
 Post after F1, which is where the recommendation being retracted was made. This
