@@ -892,6 +892,142 @@ carry. Post I1 after G1; it is the payoff to G1's closing caveat.
 
 ---
 
+## READY NOW — thread pinning settles it (F14)
+
+Post after G1/G3, which set up the unconfirmed mechanism this pays off.
+
+### J1. The payoff thread
+
+**1/**
+> Earlier I posted that llama.cpp CPU decode wastes a growing share of thread
+> time at barriers, guessed it was P-cores and E-cores being handed equal work,
+> and said I couldn't prove it.
+>
+> Proved it. The fix I expected turns out to be the wrong fix.
+
+**2/**
+> The test: take the heterogeneity away and see if the waste follows.
+>
+> 12 threads, unpinned, mixed cores → **13% spread, 21.2% barrier**
+> 12 threads pinned to 12 identical E-cores → **2% spread, 11.1% barrier**
+>
+> Same model. Same graph. Same thread count. Same code.
+
+**3/**
+> The per-thread compute times on twelve identical cores:
+>
+> ```
+> 134.8 134.9 134.9 135.0 135.2 135.3
+> 135.3 135.4 136.6 136.9 136.9 137.0
+> ```
+>
+> That's what "equal work to equal workers" looks like. Barrier waste halves.
+
+**4/**
+> So the mechanism is confirmed. ggml splits work by rows:
+>
+> ```c
+> const int dr = (nr + nth - 1)/nth;   // same count for every thread
+> ```
+>
+> Optimal when every worker is equally fast. On this chip P-cores are **2.88×**
+> faster than E-cores.
+
+**5/**
+> Now the part I got wrong.
+>
+> ```
+>  6 thr unpinned          45.15 tok/s
+>  8 thr unpinned          43.60
+> 12 thr unpinned          40.89
+>  8 thr P-cores only      39.21   -10%
+> 12 thr E-cores only      37.51    -8%
+> ```
+>
+> **Every pinned config is slower than letting the scheduler choose.**
+
+**6/**
+> Including the homogeneous one that halves its own barrier waste.
+>
+> Twelve slow equal cores beat neither eight fast ones nor the scheduler's mix.
+>
+> Removing the heterogeneity costs more than the heterogeneity did.
+
+**7/**
+> So: the waste is real. The mechanism is confirmed. And pinning — the obvious
+> remedy, the one I set out to validate — makes things worse.
+>
+> What the data actually argues for is **proportional** row assignment. Give a
+> P-core more rows than an E-core. Keep the fast cores *and* close the gap.
+
+**8/**
+> Near-miss worth confessing. My first version of this experiment pinned single
+> threads and compared decode:
+>
+> P-core: 28.0 tok/s. E-core: 28.2 tok/s.
+>
+> Which reads exactly like a broken CPU mask. I nearly threw the experiment out.
+
+**9/**
+> Decode is memory-bound. Both core types sit waiting on the same DRAM, so the
+> core doesn't matter.
+>
+> Ran the same masks on *prefill*, which is compute-bound: **265.95 vs 92.39.**
+>
+> The mask had been working the entire time. I'd picked a workload that couldn't
+> see the thing I was measuring.
+
+**10/**
+> Also recorded, not explained: 8 threads pinned to what should be 8 distinct
+> P-cores leave exactly one thread 12-20% slower, across three runs, and it's
+> not consistently the main thread.
+>
+> So the confirmation rests on the clean 12-core run, and the writeup says so.
+>
+> github.com/PS12007/tokenscope
+
+---
+
+### J2. The standalone
+
+> llama.cpp splits graph work by rows: every thread gets the same number.
+>
+> That's optimal when every core is the same speed. On a modern hybrid CPU my
+> P-cores are **2.88× faster** than my E-cores.
+>
+> Pin 12 threads to 12 *identical* cores and barrier waste halves — 21.2% →
+> 11.1%.
+>
+> Equal work to unequal workers is the whole bug.
+
+---
+
+### J3. The one that saves someone an afternoon
+
+> "Pin your threads to P-cores" is advice I've seen a lot and just measured.
+>
+> 8 threads on P-cores: 39.21 tok/s
+> 8 threads unpinned:   43.60 tok/s
+>
+> The scheduler beat me by 10%. It beat me at 12 threads too.
+>
+> Pinning fixed the imbalance I was chasing and lost more than it saved.
+
+---
+
+### J4. The methodology one (pairs with F4/G4)
+
+> Measured P-core vs E-core on llama.cpp decode: 28.0 vs 28.2 tok/s. Concluded
+> my CPU affinity mask was broken.
+>
+> It wasn't. Decode is memory-bound — both core types wait on the same DRAM.
+>
+> Same masks on compute-bound prefill: 265.95 vs 92.39. **2.88×.**
+>
+> A null result is also a claim about your workload.
+
+---
+
 ## READY NOW — three model sizes (F13)
 
 ### C0. The per-model table
