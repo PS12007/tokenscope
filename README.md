@@ -7,11 +7,12 @@
 </p>
 
 <p align="center">
+  <a href=".github/workflows/ci.yml"><img alt="ci" src="https://github.com/PS12007/tokenscope/actions/workflows/ci.yml/badge.svg"></a>
   <a href="#status"><img alt="status" src="https://img.shields.io/badge/status-work%20in%20progress-orange"></a>
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-blue"></a>
   <img alt="c++17" src="https://img.shields.io/badge/C%2B%2B-17-informational">
   <img alt="deps" src="https://img.shields.io/badge/runtime%20deps-none-success">
-  <img alt="patch size" src="https://img.shields.io/badge/upstream%20patch-24%20lines-success">
+  <img alt="patch size" src="https://img.shields.io/badge/upstream%20patch-3%20files-success">
 </p>
 
 ---
@@ -56,7 +57,7 @@ No tool needs modifying. Set two environment variables:
 $ TOKENSCOPE_LEVEL=1 TOKENSCOPE_OUT=run.trace.json \
     llama-bench -m model.gguf -p 512 -n 256 -t 8
 
-tokenscope: wrote run.trace.json (30192 bytes, 259 tokens, 0 dropped)
+tokenscope: wrote run.trace.json (316763 bytes, 259 tokens, 1 threads, 0 dropped)
 ```
 
 Then ask it questions:
@@ -65,14 +66,37 @@ Then ask it questions:
 $ python tools/trace_analyze.py run.trace.json
 
 === run.trace.json ===
-    clock=steady_clock  level=1  threads=8  dropped=0
+    clock=steady_clock  level=1  threads=1  dropped=0
 
-prefill: 2 batch(es), 1654.5 ms
+prefill: 2 batch(es), 1681.4 ms
 
-decode: 257 tokens, 6068.8 ms total, 23.61 ms/tok (42.3 tok/s)
+decode: 257 tokens, 6182.7 ms total, 24.06 ms/tok (41.6 tok/s)
 
-  p50  23.46 ms   p95  25.72 ms   p99  27.39 ms   max  29.67 ms
+  category                 total       %      per-tok
+  --------------------------------------------------
+  graph-compute       6157.54 ms   99.6%     23.959 ms
+  kv.slot-search        14.35 ms    0.2%      0.056 ms
+  ubatch                 2.64 ms    0.0%      0.010 ms
+  batch-init             2.39 ms    0.0%      0.009 ms
+  set-inputs             1.32 ms    0.0%      0.005 ms
+  logits-readback        1.08 ms    0.0%      0.004 ms
+  output-reserve        365.3 us    0.0%      0.001 ms
+  kv.update             275.4 us    0.0%      0.001 ms
+  graph-build           206.4 us    0.0%      0.001 ms
+  graph-alloc           137.7 us    0.0%      0.001 ms
+  sched-reserve          55.3 us    0.0%      0.000 ms
+
+  100.0% of decode wall time is attributed to a scope.
+
+  p50  23.92 ms   p95  26.25 ms   p99  28.75 ms   max  33.05 ms
 ```
+
+That first row is a finding, not a formality: **host-side control-plane work is
+0.4% of decode.** The stall hypotheses this project was pitched on — KV
+reallocation, logits buffer reserve, graph rebuild — are each instrumented, and
+each is a rounding error on a steady-state generation loop. `graph-build` totals
+206 µs across 257 tokens, which says llama.cpp's graph reuse essentially never
+misses. More in [`docs/FINDINGS.md`](docs/FINDINGS.md).
 
 `--outliers` ranks the slowest tokens and attributes each one's *excess over
 median* to a category — because on a slow token everything is large, and the
@@ -195,19 +219,23 @@ Built in the open. `docs/` is the engineering log, in order.
 - [x] Core mechanism + self-test + zero-overhead-when-off proof
 - [x] PoC: prefill/decode split, end-to-end, on a real build
 - [x] [Overhead measured for level 1](docs/02-overhead-methodology.md)
-- [ ] Tier 1: full host instrumentation (KV, sampling, tokenizer)
-- [ ] Tier 2: per-node work/wait, per-layer breakdown
+- [x] Tier 1: host instrumentation across `decode` and `process_ubatch`
+- [x] [First findings from real traces](docs/FINDINGS.md)
+- [ ] Tier 2: per-node work/wait split, per-layer breakdown
+- [ ] Sampling and tokenizer scopes (`llama-bench` never exercises them)
 - [ ] Perfetto screenshots + three-model decode table
-- [ ] [Findings from real traces](docs/FINDINGS.md)
-- [ ] Upstream issue, then a PR
+- [ ] Real quantized models, and Linux/GCC
+- [ ] [Upstream issue](docs/03-upstream-issue-draft.md), then a PR
 
 ## Repository layout
 
 ```
 src/tokenscope.h        the mechanism: record, buffer, macros — header-only hot path
+src/tokenscope-ggml.h   the only part that knows about ggml, kept separate
 src/tokenscope.cpp      cold path: arena, interning, graph epochs, Chrome Trace emit
 src/ts_selftest.cpp     8-thread self-test, layout assertions, per-scope cost
-patches/                24 lines of surgical edits to upstream llama.cpp
+patches/                surgical edits to upstream llama.cpp, 3 files
+examples/               a committed reference trace, used by CI
 scripts/bootstrap.py    clone at the pin, copy sources, apply patches
 tools/trace_analyze.py  summary · per-token · outliers with cause · diff
 tools/bench_overhead.py interleaved A/B/C arms, medians, bootstrap CIs

@@ -1,0 +1,104 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # The mechanism, on its own, on three platforms. No llama.cpp, no model,
+  # no network: the core is dependency-free and the tests should prove it.
+  core:
+    name: core (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: configure (instrumentation ON)
+        run: cmake -S . -B build-on -DCMAKE_BUILD_TYPE=Release -DTOKENSCOPE_ENABLED=ON
+
+      - name: build (ON)
+        run: cmake --build build-on --config Release
+
+      - name: self-test
+        run: ctest --test-dir build-on -C Release --output-on-failure
+
+      - name: configure (instrumentation OFF)
+        run: cmake -S . -B build-off -DCMAKE_BUILD_TYPE=Release -DTOKENSCOPE_ENABLED=OFF
+
+      - name: build (OFF)
+        run: cmake --build build-off --config Release
+
+      # "Zero overhead when disabled" cannot be proven with a benchmark -- you
+      # cannot demonstrate an absence statistically. It can be proven with a
+      # symbol table. See docs/02 section 2.
+      - name: verify the OFF build contains no tokenscope symbols
+        shell: bash
+        run: |
+          set -euo pipefail
+          lib=$(find build-off -name 'tokenscope.lib' -o -name 'libtokenscope.a' | head -1)
+          echo "inspecting $lib"
+          if command -v nm >/dev/null 2>&1; then
+            n=$(nm -g "$lib" 2>/dev/null | grep -c ' T .*ts_' || true)
+          else
+            n=$(powershell -Command "dumpbin /symbols '$lib' | Select-String 'External.*ts_' | Measure-Object | % Count")
+          fi
+          echo "tokenscope symbols in OFF build: $n"
+          test "$n" -eq 0
+
+      - name: report sizes
+        shell: bash
+        run: |
+          find build-on build-off \( -name 'tokenscope.lib' -o -name 'libtokenscope.a' \) \
+            -exec ls -l {} \;
+
+  # The Python side has no dependencies either, so it gets checked without any.
+  tools:
+    name: analysis tools
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: compile-check every script
+        run: python -m compileall -q tools scripts
+
+      - name: analyze a committed reference trace
+        run: |
+          python tools/trace_analyze.py examples/mid-24L-tg256.trace.json
+          python tools/trace_analyze.py examples/mid-24L-tg256.trace.json --outliers 5
+          python tools/trace_analyze.py examples/mid-24L-tg256.trace.json \
+            --diff examples/mid-24L-tg256.trace.json
+
+      # Attributed self-time must not exceed the wall time it is drawn from.
+      # This is the check that caught the scope-misparenting bug in docs/FINDINGS
+      # F5, so it runs on every commit rather than living in someone's memory.
+      - name: attribution must not exceed 100%
+        run: |
+          python - <<'PY'
+          import sys
+          sys.path.insert(0, "tools")
+          from trace_analyze import Trace, self_times
+
+          tr = Trace("examples/mid-24L-tg256.trace.json")
+          bad = []
+          for t in tr.decode:
+              tok = t["args"]["tok"]
+              total = sum(d for _, d in self_times(tr.by_token.get(tok, [])))
+              if total > t["dur"] * 1.001:
+                  bad.append((tok, t["dur"], total))
+
+          for tok, slice_us, total in bad[:5]:
+              print(f"token {tok}: slice {slice_us:.1f}us but self-times sum to {total:.1f}us")
+          if bad:
+              sys.exit(f"{len(bad)} token(s) over-attributed")
+          print(f"ok: {len(tr.decode)} tokens, none over-attributed")
+          PY
