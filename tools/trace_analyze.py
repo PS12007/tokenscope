@@ -8,6 +8,7 @@ A trace file alone is a toy. This is the part that makes it a tool.
     trace_analyze.py run.trace.json --tokens         per-token table
     trace_analyze.py run.trace.json --outliers 10    slowest tokens, with cause
     trace_analyze.py run.trace.json --layers          per-layer thread time
+    trace_analyze.py run.trace.json --barriers        barrier wait: imbalance vs release
     trace_analyze.py base.json --diff after.json     did my change help, and where
 
 Python standard library only. No dependencies, same as the C++ side.
@@ -309,6 +310,191 @@ def report_outliers(tr: Trace, n: int) -> None:
         print(f"{tok:>6}  {e['dur'] / 1000.0:8.2f}  {e['dur'] / med:8.2f}x  {why}")
 
 
+# ---------------------------------------------------------------------------
+# barrier decomposition
+# ---------------------------------------------------------------------------
+
+# On every worker thread a node scope and the barrier that follows it strictly
+# alternate, and every thread walks the same node list in the same order. So
+# the k-th barrier on each thread is the *same* barrier and the k-th node is
+# the same node. Attribution here is exact, not inferred -- and the checks in
+# _barrier_groups refuse the analysis rather than guess if that ever stops
+# holding.
+
+def _node_base(name: str) -> str:
+    """Strip the trailing layer index that graph_get_cb appends."""
+    head, sep, tail = name.rpartition("-")
+    return head if sep and tail.isdigit() else name
+
+
+def _barrier_groups(tr: "Trace", tok: int, n_threads: int):
+    """Yield (nodes, barriers) per barrier for one token, each a list indexed
+    by thread. Yields nothing at all if the trace lacks the strict
+    node/barrier alternation this analysis depends on."""
+    per = defaultdict(list)
+    for e in tr.by_token.get(tok, []):
+        if e.get("tid", -1) >= 0 and e.get("cat") not in HOST_CATS:
+            per[e["tid"]].append(e)
+    if len(per) != n_threads:
+        return
+    for tid in per:
+        per[tid].sort(key=lambda e: e["ts"])
+
+    nodes, bars = {}, {}
+    for tid, evs in per.items():
+        nodes[tid] = [e for e in evs if e.get("cat") != "barrier"]
+        bars[tid] = [e for e in evs if e.get("cat") == "barrier"]
+        # strict alternation: node, barrier, node, ..., ending on a node
+        if len(nodes[tid]) != len(bars[tid]) + 1:
+            return
+
+    tids = sorted(per)
+    ref = [e["name"] for e in nodes[tids[0]]]
+    for t in tids:
+        # if the threads disagree on the node list, "barrier k" is not one
+        # barrier and every number below would be nonsense
+        if [e["name"] for e in nodes[t]] != ref:
+            return
+
+    for k in range(len(bars[tids[0]])):
+        yield [nodes[t][k] for t in tids], [bars[t][k] for t in tids]
+
+
+def report_barriers(tr: "Trace", top: int) -> None:
+    """Split barrier wait into the part caused by threads arriving at
+    different times and the part spent after the last one arrived.
+
+    FINDINGS F6 measured that 11.2% of worker thread time is barrier wait and
+    deliberately declined to say how much of it was recoverable. This is the
+    measurement that answers that question."""
+    _, node, n_threads = tr.split_totals()
+    if not any(k == "barrier" for k in node):
+        print("\n  no barrier scopes in this trace (needs TOKENSCOPE_LEVEL=3).")
+        return
+
+    tot_wait = tot_imb = 0.0
+    by_cat = defaultdict(lambda: [0.0, 0.0, 0, 0])    # work, imbal, n, serial
+    by_node = defaultdict(lambda: [0.0, 0.0, 0, 0.0])  # work, imbal, n, active
+    biggest = (0.0, None)
+    n_bar = 0
+    toks = []
+
+    for t in tr.decode:
+        tok = t["args"]["tok"]
+        for nd, ba in _barrier_groups(tr, tok, n_threads):
+            n_bar += 1
+            if tok not in toks:
+                toks.append(tok)
+
+            arrive = [e["ts"] for e in ba]
+            last = max(arrive)
+            wait = sum(e.get("dur", 0.0) for e in ba)
+            # every thread that arrived before the last one was idle for the
+            # difference; that idleness is what better partitioning could buy
+            imb = sum(last - a for a in arrive)
+            tot_wait += wait
+            tot_imb += imb
+            if wait - imb > biggest[0]:
+                biggest = (wait - imb, (tok, nd[0]["name"]))
+
+            durs = [e.get("dur", 0.0) for e in nd]
+            mx = max(durs)
+            # a thread counts as busy if it took a real share of the busiest
+            active = sum(1 for d in durs if d > 0.25 * mx and d > 0.5)
+            work = sum(durs)
+
+            c = by_cat[nd[0].get("cat", "other")]
+            c[0] += work
+            c[1] += imb
+            c[2] += 1
+            if active * 4 <= n_threads:
+                c[3] += 1
+
+            b = by_node[_node_base(nd[0]["name"])]
+            b[0] += work
+            b[1] += imb
+            b[2] += 1
+            b[3] += active
+
+    if not n_bar:
+        print("\n  barrier scopes are present, but node and barrier scopes do not")
+        print("  strictly alternate on every thread, so barriers cannot be matched")
+        print("  across threads. No decomposition is reported rather than a guess.")
+        return
+
+    over = tot_wait - tot_imb
+    plural = "" if len(toks) == 1 else "s"
+    print("\n  barrier decomposition -- {} threads, {} barriers over {} decode"
+          " token{}\n".format(n_threads, n_bar, len(toks), plural))
+    print("  total barrier wait   {}   thread-time".format(fmt_us(tot_wait)))
+    print("    arrival imbalance  {}   {:5.1f}%   threads idle, waiting for the"
+          " last".format(fmt_us(tot_imb), 100.0 * tot_imb / tot_wait))
+    print("    after last arrival {}   {:5.1f}%   release latency and spin-up"
+          .format(fmt_us(over), 100.0 * over / tot_wait))
+
+    if biggest[1] and over > 0 and biggest[0] > 0.25 * over:
+        tok, nm = biggest[1]
+        print("\n  A single barrier accounts for {} of the after-arrival time:"
+              " token {},".format(fmt_us(biggest[0]), tok))
+        print("  before \"{}\". On the first traced token that is thread-pool"
+              " spin-up,".format(nm))
+        print("  not a property of the graph. Excluding it, the split is")
+        rest = tot_wait - biggest[0]
+        print("  {:.1f}% imbalance / {:.1f}% release latency."
+              .format(100.0 * tot_imb / rest,
+                      100.0 * (over - biggest[0]) / rest))
+
+    print("\n  imbalance by phase\n")
+    print("  {:<14}{:>11}{:>12}{:>11}{:>7}{:>8}".format(
+        "category", "work", "imbalance", "wait/work", "nodes", "serial"))
+    print("  " + "-" * 63)
+    for cat, (w, i, n, sr) in sorted(by_cat.items(), key=lambda kv: -kv[1][1]):
+        ratio = "{:8.0f}%".format(100.0 * i / w) if w > 1e-9 else "       --"
+        print("  {:<14}{:>11}{:>12}{:>11}{:>7}{:>8}".format(
+            cat, fmt_us(w), fmt_us(i), ratio, n, sr))
+
+    # The headline. Nodes whose barrier costs more than their own arithmetic
+    # are not a partitioning problem you can tune away -- they are work that
+    # does not divide, followed by a barrier that is paid anyway.
+    tot_work = sum(w for w, _, _, _ in by_node.values())
+    cheap = {k: v for k, v in by_node.items() if v[1] > v[0]}
+    cheap_i = sum(v[1] for v in cheap.values())
+    cheap_w = sum(v[0] for v in cheap.values())
+    if cheap and tot_work > 0:
+        names = sorted(cheap, key=lambda k: -cheap[k][1])[:6]
+        print("\n  {} node types cost more in other threads' waiting"
+              " than in their own work:".format(len(cheap)))
+        print("  " + ", ".join(names) + ".")
+        print("  Together {} of compute causes {} of waiting -- {:.0f}% of"
+              " all imbalance".format(fmt_us(cheap_w), fmt_us(cheap_i),
+                                      100.0 * cheap_i / tot_imb))
+        print("  from {:.2f}% of the work.".format(100.0 * cheap_w / tot_work))
+
+    print("\n  worst nodes by imbalance\n")
+    print("  {:<16}{:>11}{:>12}{:>6}{:>14}".format(
+        "node", "work", "imbalance", "n", "threads busy"))
+    print("  " + "-" * 61)
+    for nm, (w, i, n, act) in sorted(by_node.items(), key=lambda kv: -kv[1][1])[:top]:
+        print("  {:<16}{:>11}{:>12}{:>6}{:>13.1f}".format(
+            nm, fmt_us(w), fmt_us(i), n, act / n))
+    print("\n  \"threads busy\" counts threads taking more than 25% of the busiest")
+    print("  thread's time on that node. A value near 1 means the node is")
+    print("  effectively serial and the other threads pay a barrier for nothing.")
+
+    # Cross-check. tot_wait is summed from barriers matched across threads;
+    # node["barrier"] is summed independently by split_totals over every
+    # barrier event in the trace. If the two disagree, some barrier was not
+    # matched and every percentage above is computed on a subset.
+    claimed = node.get("barrier", 0.0)
+    if claimed > 0:
+        miss = abs(claimed - tot_wait) / claimed
+        if miss > 0.005:
+            print("\n  WARNING: matched {} of {} of barrier wait"
+                  " ({:.1f}% unmatched)."
+                  .format(fmt_us(tot_wait), fmt_us(claimed), 100.0 * miss))
+            print("  The decomposition above covers only the matched part.")
+
+
 def report_layers(tr: Trace, top: int) -> None:
     """Per-layer thread time. The layer index is carried in every node name
     (`<role>-<layer>`), so this is a grouping, not an extra measurement."""
@@ -421,6 +607,9 @@ def main() -> int:
                     metavar="N", help="slowest N tokens with attributed cause")
     ap.add_argument("--layers", nargs="?", type=int, const=6, default=None,
                     metavar="N", help="per-layer thread time, top N categories")
+    ap.add_argument("--barriers", nargs="?", type=int, const=12, default=None,
+                    metavar="N", help="barrier wait split into imbalance vs"
+                                      " release, worst N nodes")
     args = ap.parse_args()
 
     try:
@@ -438,6 +627,8 @@ def main() -> int:
         report_tokens(tr, args.tokens)
     if args.layers is not None:
         report_layers(tr, args.layers)
+    if args.barriers is not None:
+        report_barriers(tr, args.barriers)
     if args.outliers is not None:
         report_outliers(tr, args.outliers)
     print()
