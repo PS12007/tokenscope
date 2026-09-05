@@ -23,6 +23,7 @@
 #define TS_SCOPE_L(name, layer)         do {} while (0)
 #define TS_TOKEN_BEGIN(kind, ntok)      do {} while (0)
 #define TS_TOKEN_END()                  do {} while (0)
+#define TS_TOKEN_SCOPE(is_prefill, n)   do {} while (0)
 #define TS_MARK(name)                   do {} while (0)
 #define TS_GRAPH_BEGIN(g, nn)           do {} while (0)
 #define TS_GRAPH_END()                  do {} while (0)
@@ -240,6 +241,18 @@ private:
     uint64_t m_t0;
 };
 
+// A token (or prefill batch) boundary. RAII because llama_context::decode has
+// a dozen early returns and a missed end would silently corrupt the timeline.
+class token_scope {
+public:
+    TS_INLINE token_scope(int is_prefill, uint32_t n_tokens) {
+        ts_token_begin(is_prefill, n_tokens);
+    }
+    TS_INLINE ~token_scope() { ts_token_end(); }
+    token_scope(const token_scope &) = delete;
+    token_scope & operator=(const token_scope &) = delete;
+};
+
 } // namespace tokenscope
 
 #define TS_CAT_(a, b) a##b
@@ -251,6 +264,9 @@ private:
     tokenscope::scope TS_CAT(ts_sc_, __LINE__)(TS_CAT(ts_id_, __LINE__))
 
 #define TS_SCOPE_L(name, layer) TS_SCOPE(name)   // layer folded into ref later
+
+#define TS_TOKEN_SCOPE(is_prefill, ntok)                                      \
+    tokenscope::token_scope TS_CAT(ts_tok_, __LINE__)((is_prefill), (ntok))
 
 #endif // __cplusplus
 

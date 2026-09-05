@@ -196,6 +196,18 @@ extern "C" TS_API void ts_init_from_env(void) {
         r.budget_bytes = (size_t) (mb > 0 ? mb : 256) << 20;
         r.ring = std::atoi(env_or("TOKENSCOPE_RING", "0")) != 0;
 
+        // Flush at exit if an output path was given. This is what lets
+        // tokenscope instrument llama.cpp without any tool -- llama-bench,
+        // llama-cli, llama-server -- needing a single line changed.
+        const char * out = env_or("TOKENSCOPE_OUT", "");
+        if (*out && ts_g_level != TS_LEVEL_OFF) {
+            static std::string s_out;
+            s_out = out;
+            std::atexit([] {
+                if (ts_g_level != TS_LEVEL_OFF) ts_flush(s_out.c_str());
+            });
+        }
+
         const char * win = env_or("TOKENSCOPE_TOKENS", "");
         if (*win) {
             unsigned lo = 0, hi = 0;

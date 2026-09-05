@@ -1,0 +1,64 @@
+diff --git a/ggml/CMakeLists.txt b/ggml/CMakeLists.txt
+index d76ed8a..0338de4 100644
+--- a/ggml/CMakeLists.txt
++++ b/ggml/CMakeLists.txt
+@@ -122,6 +122,8 @@ endif()
+ option(GGML_STATIC "ggml: static link libraries"                     OFF)
+ option(GGML_NATIVE "ggml: optimize the build for the current system" ${GGML_NATIVE_DEFAULT})
+ option(GGML_LTO    "ggml: enable link time optimization"             OFF)
++option(GGML_TOKENSCOPE "ggml: build with tokenscope per-token profiling" OFF)
++option(GGML_TOKENSCOPE_TSC "ggml: tokenscope uses rdtsc instead of steady_clock" OFF)
+ option(GGML_CCACHE "ggml: use ccache if available"                   ON)
+ 
+ # debug
+diff --git a/ggml/src/CMakeLists.txt b/ggml/src/CMakeLists.txt
+index 9477320..d28d3ce 100644
+--- a/ggml/src/CMakeLists.txt
++++ b/ggml/src/CMakeLists.txt
+@@ -216,6 +216,22 @@ set_target_properties(ggml-base PROPERTIES
+ configure_file(ggml-version.h.in ${CMAKE_CURRENT_BINARY_DIR}/ggml-version.h @ONLY)
+ 
+ target_include_directories(ggml-base PRIVATE . ${CMAKE_CURRENT_BINARY_DIR})
++
++# tokenscope: per-token inference profiler. https://github.com/PS12007/tokenscope
++# Lives in ggml-base so that instrumentation in ggml-cpu and in libllama
++# resolve to a single registry rather than one copy per shared library.
++if (GGML_TOKENSCOPE)
++    target_sources(ggml-base PRIVATE tokenscope/tokenscope.cpp)
++    target_compile_definitions(ggml-base PUBLIC TOKENSCOPE_ENABLED)
++    if (GGML_TOKENSCOPE_TSC)
++        target_compile_definitions(ggml-base PUBLIC TOKENSCOPE_TSC)
++    endif()
++    if (NOT BUILD_SHARED_LIBS)
++        target_compile_definitions(ggml-base PUBLIC TOKENSCOPE_STATIC)
++    endif()
++endif()
++target_include_directories(ggml-base PUBLIC
++    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/tokenscope>)
+ if (GGML_BACKEND_DL)
+     target_compile_definitions(ggml-base PUBLIC GGML_BACKEND_DL)
+ endif()
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index c1ef12f..6e5c5e9 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -4,6 +4,7 @@
+ #include "llama-arch.h"
+ #include "llama-graph.h"
+ #include "llama-impl.h"
++#include "tokenscope.h"
+ #include "llama-batch.h"
+ #include "llama-io.h"
+ #include "llama-memory.h"
+@@ -1642,6 +1643,11 @@ static bool needs_raw_logits(const llama_ubatch & ubatch, const std::map<llama_s
+ }
+ 
+ int llama_context::decode(const llama_batch & batch_inp) {
++    // tokenscope: draw the prefill/decode boundary explicitly here, rather than
++    // inheriting the n_queued_tokens heuristic in synchronize(). RAII so that
++    // every early return below still closes the slice.
++    TS_TOKEN_SCOPE(batch_inp.n_tokens > 1, (uint32_t) batch_inp.n_tokens);
++
+     // MTP hook batches carry both token (next-token id) and embd (h_nextn row),
+     // so accept either present rather than requiring exactly one.
+     GGML_ASSERT(batch_inp.token || batch_inp.embd);
