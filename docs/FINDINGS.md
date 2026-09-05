@@ -497,7 +497,10 @@ partitioning."*
 
 - Synthetic F32 weights. **Retested on a real Q4_K_M model in F12, where the
   effect is larger, not smaller: 0.74% of the work causing 19% of the
-  imbalance, against 0.32% and 14% here.** The prediction in this bullet was
+  imbalance, against 0.32% and 14% here.** And **F17 shows it disappears
+  entirely under batched decode** -- 1.0 of 6 busy threads becomes 6.0 at
+  `-np 16` -- so this is a batch-size-1 finding, which is to say a
+  single-user-local-inference finding. The prediction in this bullet was
   backwards -- cheaper matmuls make the fixed-cost serial nodes a bigger
   share, not a smaller one.
 - 8 threads on one machine. The waste from a serial node scales with thread
@@ -1288,6 +1291,31 @@ throughput**, which is the expected shape for a weight-streaming workload (F7,
 F10) — the weights are read once per step regardless of how many sequences ride
 along. It is 3.06× and not 16× because a 16-sequence step still costs 5.2× a
 one-sequence step; the per-sequence attention and the wider matmuls are real.
+
+### Batching dissolves the F9 problem entirely
+
+F9 found that the single-row elementwise nodes run on one thread at batch size
+1, and confirmed the mechanism by showing they parallelize during prefill,
+where there are many rows. Concurrent decode is the third case: `n_seqs` rows
+instead of one, on the *decode* path.
+
+```
+  level 3, 6 threads, 4 decode steps each
+
+  np=1    barrier 13.6%   busy threads: ffn_swiglu 1.0  l_out 1.0  attn_norm 1.0
+                                        ffn_norm 1.0    ffn_inp 1.0
+  np=16   barrier  7.2%   busy threads: ffn_swiglu 6.0  l_out 5.8  attn_norm 6.0
+                                        ffn_norm 6.0    ffn_inp 5.9
+```
+
+Every one of them goes from **1.0 of 6 threads to essentially all 6**, and
+barrier wait **halves**, 13.6% to 7.2%, on the same model and thread count.
+
+So F9 is precisely a batch-size-1 problem, and anyone already serving
+concurrent requests has it fixed for free. That also narrows who the finding is
+for: single-stream local inference -- `llama-cli` on a laptop, one user, one
+sequence -- which is a large share of how llama.cpp is actually run, and the
+exact case where nothing amortizes it.
 
 ### The bug this workload found, which is worth more than the finding
 
