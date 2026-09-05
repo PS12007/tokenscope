@@ -174,14 +174,144 @@ Two things worth keeping from this:
 
 ---
 
+## F6 — 11.2% of worker thread time is barrier wait, not compute
+
+**Workload:** same 24-layer model, 8 threads, `tg32`, `TOKENSCOPE_LEVEL=3`.
+
+```
+  graph nodes -- thread time across 8 workers (6160.1 ms busy of 6200.9 ms available)
+
+  category                 total       %      per-tok
+  --------------------------------------------------
+  ffn                 4249.84 ms   69.0%    128.783 ms
+  barrier              692.53 ms   11.2%     20.986 ms
+  attn.qkv             640.73 ms   10.4%     19.416 ms
+  attn.out             359.43 ms    5.8%     10.892 ms
+  lm_head              160.83 ms    2.6%      4.874 ms
+  attn.score            42.35 ms    0.7%      1.283 ms
+  norm                   6.54 ms    0.1%      0.198 ms
+  attn.kv_rw             4.10 ms    0.1%      0.124 ms
+  residual               3.05 ms    0.0%      0.092 ms
+
+  11.2% of worker thread time is barrier wait, not compute.
+  99.3% of available thread time is inside a node scope.
+```
+
+`ggml_barrier` runs after **every node** — roughly 700 barriers per token here,
+on each of 8 threads. One eighth of the total CPU budget is spent spinning in
+`ggml_thread_cpu_relax()` rather than doing arithmetic.
+
+This is the number the project was built to produce, and it is invisible to
+every aggregate timer: without a work/wait split, those 692 ms are
+indistinguishable from compute, and "attention took X across 8 threads" silently
+includes seven of them waiting.
+
+**What it does not yet say.** 11.2% is not automatically 11.2% of recoverable
+time. Some of it is unavoidable: the graph has real serial dependencies, and a
+barrier after a node whose work genuinely cannot be split is not waste. Telling
+"structurally required wait" from "wait caused by bad partitioning" needs the
+per-node, per-thread arrival spread, which is in the level-3 trace and is not
+yet reduced into the report. That is the next analysis feature, not a claim to
+make now.
+
+---
+
+## F7 — Phase times track parameter counts to within a few percent, which
+## validates both the workload model and the tool
+
+This one is a check I expected to fail, and it did not.
+
+If decode is bandwidth-bound on streaming weights — the standard mental model
+for single-token CPU inference — then time per phase should be proportional to
+**bytes of weights read**, and for a uniform dtype that is just parameter count.
+The model's dimensions are known exactly, so this is a falsifiable prediction
+rather than a story.
+
+Predicting every phase from the FFN measurement alone:
+
+```
+phase             params   pred ms   meas ms    delta
+ffn          169,869,312    4249.8   4249.84    +0.0%   (reference)
+attn.qkv      23,592,960     590.3    640.73    +8.6%
+attn.out      14,155,776     354.2    359.43    +1.5%
+lm_head        6,291,456     157.4    160.83    +2.2%
+```
+
+Three independent phases, spanning a **27× range** in weight volume, predicted
+from parameter counts to within 1.5–8.6%.
+
+Two conclusions, and the second matters more:
+
+1. **Decode on this model is almost purely weight-streaming.** The arithmetic is
+   free; the time is the memory traffic. `attn.score` — the actual attention
+   computation, scores and softmax — is **0.7%**. At batch size 1 with a short
+   context there is essentially nothing there. Anyone optimizing attention math
+   for CPU decode is optimizing 0.7% of the workload.
+
+2. **The tool is measuring what it says it is measuring.** A profiler that
+   misattributed nodes to phases, or double-counted across threads, or drifted
+   its clock, would not reproduce a 27× spread to within a few percent by
+   accident. This is the strongest evidence so far that the per-phase numbers
+   can be trusted.
+
+The +8.6% on `attn.qkv` is the residual worth noting rather than smoothing over:
+that bucket contains `Qcur`/`Kcur`/`Vcur`, which carry RoPE and the KV cache
+write on top of the projection matmul. Extra work beyond the weight read is
+exactly what should make it the one phase that overshoots.
+
+---
+
+## F8 — About 15% of ggml graph nodes have no meaningful name, and on this model
+## they are the attention core
+
+`graph_get_cb` names tensors `<role>-<layer>`, which docs/00 identified as the
+mechanism that makes per-layer attribution nearly free. That is true for the
+tensors it names. It does not name all of them.
+
+The first Tier 2 trace, by raw node name:
+
+```
+ffn_out        2434.4 ms   n=6720
+ffn_gate       2395.7 ms   n=6720
+ffn_up         2392.6 ms   n=6720
+Qcur            652.4 ms   n=13440
+attn_out        629.2 ms   n=6720
+...
+node_21           8.2 ms   n=280
+node_579          7.7 ms   n=280
+node_300          7.7 ms   n=280       <- ~200 of these
+```
+
+`node_<index>` is ggml's automatic fallback name. There is no `kq` or `kqv` node
+at all: the attention core is entirely unnamed, which is the phase a per-layer
+profiler most needs to report.
+
+Resolved two ways, in order of confidence:
+
+1. **Op type.** `ts_graph_set_node` was already registering `ggml_op_name(node->op)`
+   and the emitter was ignoring it. `SOFT_MAX` and `FLASH_ATTN_EXT` → `attn.score`,
+   `ROPE` → `rope`, `SET_ROWS`/`CPY`/`CONT` → `attn.kv_rw`. This is a fact about
+   the node, not a guess.
+2. **Graph position.** Anything still unresolved inherits the phase of the last
+   named marker before it in graph order. This is an *inference*, so those
+   categories are prefixed `~` in the output and the report says so explicitly.
+
+After the op mapping, the inferred bucket is **0.008 ms/token** — essentially
+nothing needs guessing. But the `~` prefix stays, because the moment a reader
+cannot tell a measurement from an inference, neither is worth much.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
 
-- per-layer and per-phase breakdown (needs Tier 2)
-- work vs barrier-wait split (needs Tier 2)
+- **per-layer** breakdown. Tier 2 gives per-*phase*; the layer index is in every
+  node name and is not yet reduced into the report.
+- whether the 11.2% barrier wait is structurally required or recoverable
+  (needs per-node arrival spread, see F6)
+- levels 2 and 3 overhead
 - real quantized models — everything above is synthetic F32 weights
 - context-shift behaviour, i.e. the case where `kv.update` should be expensive
 - concurrent sequences / server workload
 - sampling and tokenization, which `llama-bench` never exercises
-- levels 2 and 3 overhead
