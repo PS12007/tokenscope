@@ -67,6 +67,11 @@ extern "C" {
 #  define TS_UNLIKELY(x) __builtin_expect(!!(x), 0)
 #endif
 
+// Free functions in this header are included from ggml-cpu.c, which is C, so
+// they must be `static inline` -- a bare `inline` in C99 needs an external
+// definition somewhere. Member functions must NOT be static, hence two macros.
+#define TS_SINLINE static TS_INLINE
+
 // ---------------------------------------------------------------------------
 // Record kinds
 // ---------------------------------------------------------------------------
@@ -156,13 +161,13 @@ TS_API double   ts_ticks_to_us(uint64_t t); // resolved at flush, not on the hot
 #if defined(TOKENSCOPE_TSC) && (defined(__x86_64__) || defined(_M_X64))
 #  if defined(_MSC_VER)
 #    include <intrin.h>
-TS_INLINE uint64_t ts_now(void) { return __rdtsc(); }
+TS_SINLINE uint64_t ts_now(void) { return __rdtsc(); }
 #  else
 #    include <x86intrin.h>
-TS_INLINE uint64_t ts_now(void) { return __builtin_ia32_rdtsc(); }
+TS_SINLINE uint64_t ts_now(void) { return __builtin_ia32_rdtsc(); }
 #  endif
 #else
-TS_INLINE uint64_t ts_now(void) { return ts_now_slow(); }
+TS_SINLINE uint64_t ts_now(void) { return ts_now_slow(); }
 #endif
 
 // ---------------------------------------------------------------------------
@@ -196,7 +201,7 @@ TS_API int ts_token_selected(void);
 // ---------------------------------------------------------------------------
 // The hot path.
 // ---------------------------------------------------------------------------
-TS_INLINE struct ts_record * ts_reserve(void) {
+TS_SINLINE struct ts_record * ts_reserve(void) {
     struct ts_buffer * b = ts_tls;
     if (TS_UNLIKELY(b == 0)) {
         b = ts_thread_init();
@@ -208,7 +213,7 @@ TS_INLINE struct ts_record * ts_reserve(void) {
     return &b->data[b->n++];
 }
 
-TS_INLINE void ts_emit(uint64_t t0, uint64_t t1, uint32_t ref, uint8_t kind, uint8_t depth) {
+TS_SINLINE void ts_emit(uint64_t t0, uint64_t t1, uint32_t ref, uint8_t kind, uint8_t depth) {
     struct ts_record * r = ts_reserve();
     if (TS_UNLIKELY(r == 0)) return;
     const uint64_t d = t1 - t0;
@@ -223,7 +228,7 @@ TS_INLINE void ts_emit(uint64_t t0, uint64_t t1, uint32_t ref, uint8_t kind, uin
 
 // Level 2: accumulate into a fixed per-node array instead of appending.
 // One add, no growth, exact totals. docs/01 section 6.
-TS_INLINE void ts_acc(uint32_t node_n, uint64_t dur, int is_wait) {
+TS_SINLINE void ts_acc(uint32_t node_n, uint64_t dur, int is_wait) {
     struct ts_buffer * b = ts_tls;
     if (TS_UNLIKELY(b == 0 || node_n >= b->acc_n)) return;
     if (is_wait) b->acc_wait[node_n] += dur;

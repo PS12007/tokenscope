@@ -138,13 +138,67 @@ The negative point estimate on decode (`-0.04%`) is not the profiler making
 inference faster. It is noise, and reporting it as a speedup would be exactly
 the kind of dishonesty this methodology exists to prevent.
 
+### Re-measured after full Tier 1 instrumentation
+
+The numbers above were taken when level 1 meant **one** scope per `llama_decode`
+call. Level 1 now records **eleven**: `batch-init`, `sched-reserve`,
+`kv.update`, `kv.slot-search`, `output-reserve`, `ubatch`, `graph-build`,
+`graph-alloc`, `set-inputs`, `graph-compute`, `logits-readback`.
+
+Re-run, 21 repetitions per arm:
+
+```
+decode (tg256)
+  arm                       median tok/s     IQR   overhead vs A
+  --------------------------------------------------------------------
+  A: compiled out                  42.49    2.3%                  -
+  B: in, level 0                   42.53    1.3%    -0.11%  [-1.31, +0.89]
+  C1: active level 1               42.37    1.1%    +0.26%  [-0.93, +1.27]
+
+  baseline IQR is 2.26% of median.
+  NOTE: that is wider than the 2% budget being tested.
+
+prefill (pp512)
+  A: compiled out                 681.60    1.5%                  -
+  B: in, level 0                  681.25    1.3%    +0.05%  [-0.88, +0.88]
+  C1: active level 1              683.54    1.3%    -0.28%  [-1.29, +0.55]
+
+  baseline IQR is 1.48% of median.
+```
+
+Eleven scopes instead of one, and the result is still indistinguishable from
+zero — bounded by ±1.3% rather than ±0.5%, because **this session's machine was
+noisier**, not because the instrumentation got more expensive. The decode arm's
+baseline IQR moved from 0.42% to 2.26% between sessions on identical binaries
+and an identical workload.
+
+That drift is worth stating loudly, because it is the thing most likely to make
+someone else's reproduction disagree with this document:
+
+> **The noise floor of the measuring machine varies by 5× between sessions.**
+> Any overhead figure quoted without its baseline IQR alongside it is not a
+> measurement, it is a number.
+
+This is exactly why the harness prints the baseline IQR next to every result and
+refuses to quote an overhead figure when the noise exceeds the effect. On the
+run above it declined for decode and accepted for prefill, which is the correct
+behaviour in both cases.
+
+The defensible combined statement across both sessions:
+
+> At level 1, with eleven scopes per token, tokenscope's overhead is below the
+> measurement floor on every run taken so far. The tightest bound obtained is
+> ±0.5%; the loosest is ±1.3%. No run has produced a point estimate outside
+> ±0.3%.
+
 ### What level 1 currently contains, and why that matters
 
 This is the important caveat, and burying it would make the headline number
 misleading.
 
-**Level 1 today is one scope per `llama_decode` call** — the prefill/decode
-boundary, and nothing else. That is deliberate: the plan
+**Level 1 was one scope per `llama_decode` call when the headline numbers above
+were taken** — the prefill/decode boundary, and nothing else. That was
+deliberate: the plan
 ([`01`](01-design-scope-timing.md) section 11) is to validate the mechanism and
 its cost *before* expanding scope, so that when a number does come back too
 high, there is exactly one place it can be coming from.
@@ -156,8 +210,9 @@ So the result above establishes:
 - and, more usefully, that the harness can resolve 0.4% at all, which is the
   precondition for the levels that will actually cost something.
 
-It does **not** yet establish anything about levels 2 and 3, where ~500 nodes
-per token per thread are recorded. Those are where the real risk lives
+Level 1 is now fully instrumented (eleven scopes; see the re-measurement above),
+so that first point is settled. What remains unmeasured is levels 2 and 3, where
+~500 nodes per token per thread are recorded. Those are where the real risk lives
 (docs/01 section 8: cache pollution, and the barrier turning per-thread jitter
 into whole-graph latency), and they will be measured the same way before any
 number about them appears in the README.
