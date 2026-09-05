@@ -177,6 +177,10 @@ Repo: https://github.com/PS12007/tokenscope
 > dependencies. Separating "required" from "bad partitioning" needs per-node
 > arrival spread, which I have in the trace and haven't reduced yet.
 
+*(That reduction is done — see the F-series below. If you post B1 now, F1 is
+the follow-up thread, and the honest answer is that most of it is imbalance
+and very little of it is recoverable.)*
+
 ---
 
 ### B2. The validation post — my favourite result
@@ -266,6 +270,192 @@ Repo: https://github.com/PS12007/tokenscope
 
 > **Note to self:** needs an actual screenshot. Zoom to 2-3 tokens so the
 > per-node structure and the barrier gaps are both visible.
+
+---
+
+## READY NOW — barrier decomposition (F9)
+
+These discharge the promise made in B1's follow-up. **Post B1 before these, or
+post F1 standalone — it works either way, but the sequence is the story.**
+
+### F1. The payoff thread — strongest thing in this file
+
+**1/**
+> Earlier I posted that 11.2% of llama.cpp's worker thread time is spent
+> spinning at a barrier, and said I couldn't yet tell you how much of that was
+> recoverable.
+>
+> Now I can. It's less than you'd hope, and the reason is more interesting than
+> the number.
+
+**2/**
+> First: what kind of waiting is it?
+>
+> ```
+> barrier wait, steady state    41.33 ms
+>   arrival imbalance           34.59 ms   83.7%
+>   release latency              6.74 ms   16.3%
+> ```
+>
+> (Total is 62.31 ms; 20.98 of it is one barrier — the thread pool spinning up
+> on the first traced token. Excluded, because it isn't a property of the graph.)
+>
+> 83.7% is threads that finished early, standing around waiting for a straggler.
+> That's a partitioning problem, not a serial dependency.
+
+**3/**
+> So which nodes make the other threads wait?
+>
+> Not the big matmuls. They use all 8 threads and leak 4-9% to skew — normal.
+>
+> It's these:
+>
+> ```
+> node          work      imbalance   threads busy
+> ffn_swiglu   267.0 us     1.75 ms       1.8
+> l_out        204.3 us     1.30 ms       2.0
+> attn_norm    211.9 us    657.9 us       1.8
+> ffn_norm     184.4 us    386.1 us       1.4
+> ```
+
+**4/**
+> Read that column again. **1.4 to 2.0 threads busy, out of 8.**
+>
+> Ten node types cost more in other threads' waiting than in their own
+> arithmetic. Together: 0.32% of the work, 14% of all the imbalance.
+>
+> The cheapest nodes in the graph are the most expensive barriers.
+
+**5/**
+> The mechanism is four lines of ggml, and it's not a bug — it's a default
+> meeting an edge case.
+>
+> ```c
+> const int nr  = ggml_nrows(src0);
+> const int dr  = (nr + nth - 1)/nth;
+> const int ir0 = dr*ith;
+> const int ir1 = MIN(ir0 + dr, nr);
+> ```
+>
+> Elementwise ops split over rows.
+
+**6/**
+> At batch size 1, a hidden state is **one row**.
+>
+> nr=1, nth=8 → dr=1 → thread 0 gets [0,1). Every other thread gets
+> ir0 = ith ≥ 1 = ir1. An empty range.
+>
+> One thread works. Seven fall straight through to the barrier.
+
+**7/**
+> `n_tasks` doesn't save them. It's read only by `ggml_graph_plan`, for
+> work-buffer sizing. It never gates dispatch.
+>
+> All 8 threads enter every node. All 8 pay the barrier after it. 412 barriers
+> per token, 120 of them for nodes only one thread worked on.
+
+**8/**
+> Here's the part that makes it a measurement instead of a story.
+>
+> If the cause is really nrows==1, the same nodes should parallelize fine when
+> there are many rows. That's falsifiable. Prefill is exactly that workload.
+
+**9/**
+> Same model, same 8 threads, decode vs pp64:
+>
+> ```
+> node          decode busy   pp64 busy
+> ffn_swiglu        1.79        7.67
+> l_out             2.04        7.88
+> attn_norm         1.75        8.00
+> ffn_norm          1.44        7.71
+> ffn_out           8.00        8.00   <- already parallel, doesn't move
+> ```
+>
+> Confirmed.
+
+**10/**
+> So what's it worth? Here's where I have to argue against my own headline.
+>
+> ```
+> graph wall time                 25.207 ms/tok
+> near-serial nodes                0.385 ms/tok
+> perfect 8-way parallelization
+>   would save                     0.337 ms/tok  = 1.34%
+> ```
+>
+> **1.34%. And that's an upper bound that won't be reached.**
+
+**11/**
+> These tensors are 1×768. Three microseconds of work.
+>
+> Split that eight ways and each thread has less work than the barrier that
+> follows it. You'd spend more on dispatch than you'd save.
+>
+> The fix isn't "parallelize them". It's **fuse them** — pay one barrier
+> instead of five.
+
+**12/**
+> The thread-time number (11.2%) is the flattering one. The wall-time number
+> (1.34%, optimistic) is the true one.
+>
+> A profiler that only reports the first would have me writing a patch that
+> makes things slower.
+>
+> Method + traces: github.com/PS12007/tokenscope
+
+---
+
+### F2. The standalone version (single post)
+
+> Profiled llama.cpp CPU decode per graph node, per thread.
+>
+> The nodes that waste the most time aren't the matmuls. They're the tiny
+> elementwise ops — swiglu, residual add, rmsnorm.
+>
+> They run on **1.4 of 8 threads**, because at batch size 1 a hidden state is
+> one row, and ggml splits work by rows.
+>
+> 0.32% of the work. 14% of all the barrier waiting.
+
+---
+
+### F3. The honesty post — companion to A5
+
+> Found a real inefficiency in llama.cpp: 29% of decode barriers are paid for
+> nodes only one thread worked on.
+>
+> Thread-time cost: sounds huge.
+> Wall-clock upper bound: **1.34%**.
+>
+> Posting the second number, because the first one would have had me optimizing
+> something that can't move.
+
+---
+
+### F4. For the "measure, don't guess" crowd
+
+> My profiler said tiny elementwise ops were serialized at batch size 1.
+>
+> Instead of shipping that, I turned it into a prediction: if the cause is
+> nrows==1, they should parallelize during prefill, where nrows = n_tokens.
+>
+> Ran it. 1.4 busy threads → 7.7.
+>
+> A finding you can't falsify is a story.
+
+---
+
+### F5. The tooling detail (niche, but the tool people will like it)
+
+> Nice property of instrumenting a graph executor: node scopes and barrier
+> scopes strictly alternate on every thread, and every thread walks the same
+> node list in the same order.
+>
+> So the k-th barrier on thread 3 *is* the k-th barrier on thread 6. Attribution
+> is exact, not inferred.
+>
+> The analyzer refuses to report anything if that ever stops holding.
 
 ---
 
