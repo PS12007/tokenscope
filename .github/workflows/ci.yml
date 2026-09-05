@@ -81,6 +81,77 @@ jobs:
       # Attributed self-time must not exceed the wall time it is drawn from.
       # This is the check that caught the scope-misparenting bug in docs/FINDINGS
       # F5, so it runs on every commit rather than living in someone's memory.
+      # The barrier decomposition must account for every barrier event it was
+      # given. tot_wait is summed from barriers matched across threads;
+      # split_totals sums the same events independently. If they diverge, some
+      # barrier went unmatched and every percentage in the report is computed
+      # on a subset -- so the report warns, and CI treats that warning as a
+      # failure rather than trusting anyone to read it.
+      - name: barrier decomposition must match every barrier
+        run: |
+          python - <<'PY'
+          import glob, io, subprocess, sys
+          bad = []
+          for path in sorted(glob.glob("examples/*.trace.json")):
+              out = subprocess.run([sys.executable, "tools/trace_analyze.py",
+                                    path, "--barriers"],
+                                   capture_output=True, text=True, check=True).stdout
+              if "WARNING: matched" in out:
+                  bad.append(path)
+              print(f"{path}: {'UNMATCHED BARRIERS' if path in bad else 'ok'}")
+          if bad:
+              sys.exit(f"unmatched barriers in: {', '.join(bad)}")
+          PY
+
+      # FINDINGS F9 as a regression test. At batch size 1 a hidden state is one
+      # row, so ggml's row split leaves the elementwise nodes on a single
+      # thread; during prefill the same nodes have many rows and parallelize.
+      # Both halves are asserted, because the second is what makes the first a
+      # mechanism rather than an observation.
+      - name: F9 - elementwise nodes are serial in decode, parallel in prefill
+        run: |
+          python - <<'PY'
+          import sys, collections
+          sys.path.insert(0, "tools")
+          from trace_analyze import Trace, _barrier_groups, _node_base, HOST_CATS
+
+          SERIAL = {"ffn_swiglu", "l_out", "attn_norm", "ffn_norm", "ffn_inp"}
+
+          def busy(path):
+              tr = Trace(path)
+              _, _, nw = tr.split_totals(only_decode=bool(tr.decode))
+              slices = tr.decode if tr.decode else tr.prefill
+              agg = collections.defaultdict(lambda: [0, 0.0])
+              for t in slices:
+                  for nd, _ in _barrier_groups(tr, t["args"]["tok"], nw):
+                      durs = [e.get("dur", 0.0) for e in nd]
+                      mx = max(durs)
+                      active = sum(1 for d in durs if d > 0.25 * mx and d > 0.5)
+                      a = agg[_node_base(nd[0]["name"])]
+                      a[0] += 1
+                      a[1] += active
+              return {k: v[1] / v[0] for k, v in agg.items() if k in SERIAL}, nw
+
+          dec, nw_d = busy("examples/mid-24L-L3-tok10-11.trace.json")
+          pre, nw_p = busy("examples/mid-24L-L3-pp64.trace.json")
+          assert dec and pre, "reference traces lost their node scopes"
+
+          fail = []
+          for node in sorted(SERIAL):
+              d, p = dec.get(node), pre.get(node)
+              if d is None or p is None:
+                  fail.append(f"{node}: missing (decode={d}, prefill={p})")
+                  continue
+              print(f"{node:<12} decode {d:.2f}/{nw_d}   prefill {p:.2f}/{nw_p}")
+              if d > 2.5:
+                  fail.append(f"{node}: decode uses {d:.2f} threads, expected <= 2.5")
+              if p < 6.0:
+                  fail.append(f"{node}: prefill uses {p:.2f} threads, expected >= 6.0")
+          if fail:
+              sys.exit("F9 no longer holds:\n  " + "\n  ".join(fail))
+          print("ok: F9 holds -- serial at batch size 1, parallel in prefill")
+          PY
+
       - name: attribution must not exceed 100%
         run: |
           python - <<'PY'
