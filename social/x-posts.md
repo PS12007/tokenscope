@@ -81,14 +81,12 @@ Repo: https://github.com/PS12007/tokenscope
 
 ---
 
-### A4. The overhead post (single post, has the strongest credibility signal)
+### A4. The overhead-method post
 
 > Measured what my llama.cpp profiler costs before adding a single feature to it.
 >
-> Three arms: compiled out / compiled in but off / active. Interleaved.
-> Bootstrap CIs, not point estimates.
->
-> Result: not distinguishable from zero, ±0.5%.
+> Three arms: compiled out / compiled in but off / active. Interleaved, so
+> thermal drift hits every arm equally. Bootstrap CIs, not point estimates.
 >
 > Also: the harness refuses to print a number when the machine is too noisy to
 > support one.
@@ -113,9 +111,10 @@ Repo: https://github.com/PS12007/tokenscope
 
 ### A6. The diff-size post
 
-> The entire patch to instrument llama.cpp with per-token profiling:
+> The entire patch to instrument llama.cpp with per-token, per-node,
+> per-layer profiling:
 >
-> **24 changed lines across 3 files.**
+> **104 changed lines across 4 files.**
 >
 > Everything else lives in its own translation unit that gets copied in.
 >
@@ -151,39 +150,128 @@ Repo: https://github.com/PS12007/tokenscope
 
 ---
 
-## NEEDS: full per-layer instrumentation working (level 2/3)
+## READY NOW — Tier 2 working, real numbers
 
-### B1. The screenshot post — this is the one that travels
+### B1. The barrier number — strongest single post in this file
 
-> Every generated token, broken down by phase, in Perfetto.
+> Profiled llama.cpp CPU decode down to individual graph nodes.
 >
-> [PERFETTO SCREENSHOT]
+> **11.2% of worker thread time is spent spinning at a barrier, not computing.**
 >
-> That wide bar is not compute. It's seven threads waiting at a barrier for the
-> eighth.
+> ```
+> ffn         4249.84 ms   69.0%
+> barrier      692.53 ms   11.2%   <--
+> attn.qkv     640.73 ms   10.4%
+> attn.out     359.43 ms    5.8%
+> lm_head      160.83 ms    2.6%
+> attn.score    42.35 ms    0.7%
+> ```
+>
+> `ggml_barrier` runs after every node. ~700 per token, on each of 8 threads.
+
+**follow-up (important — do not post B1 without it)**
+> To be clear about what that does and doesn't mean: 11.2% isn't 11.2% of
+> recoverable time.
+>
+> Some barrier wait is structurally required — the graph has real serial
+> dependencies. Separating "required" from "bad partitioning" needs per-node
+> arrival spread, which I have in the trace and haven't reduced yet.
 
 ---
 
-### B2. The work-vs-wait post
+### B2. The validation post — my favourite result
 
-> `ggml_barrier` runs after *every node*. ~500 barriers per token, per thread.
+**1/**
+> Ran a check on my llama.cpp profiler that I expected to fail.
 >
-> Which means a profiler that reports "attention took 15ms across 8 threads"
-> without splitting work from wait is actively lying to you.
+> If CPU decode is bandwidth-bound on streaming weights, then time per phase
+> should be proportional to *parameter count*. That's falsifiable.
+
+**2/**
+> Predicting every phase from the FFN measurement alone:
 >
-> Most of that can be 7 threads spinning.
+> ```
+> phase          params      pred    meas    delta
+> ffn       169,869,312   4249.8  4249.84   (ref)
+> attn.qkv   23,592,960    590.3   640.73   +8.6%
+> attn.out   14,155,776    354.2   359.43   +1.5%
+> lm_head     6,291,456    157.4   160.83   +2.2%
+> ```
+
+**3/**
+> Three phases, 27x range in weight volume, predicted to within a few percent.
+>
+> Two things follow.
+
+**4/**
+> One: decode is almost purely weight streaming. The actual attention math —
+> scores, softmax — is **0.7%**.
+>
+> If you're optimizing attention arithmetic for batch-1 CPU decode, you're
+> optimizing 0.7% of the workload.
+
+**5/**
+> Two, and this is why I care more: the tool is measuring what it says it is.
+>
+> Misattributed nodes, or double-counting across threads, or clock drift would
+> not reproduce a 27x spread to within a few percent by accident.
+
+**6/**
+> The +8.6% on attn.qkv is the interesting residual, not noise to smooth over.
+> That bucket carries RoPE and the KV cache write on top of the projection.
+>
+> It *should* be the one phase that overshoots. It is.
+
+---
+
+### B3. The measured-overhead post
+
+> Full per-node profiling of llama.cpp: every graph node, every worker thread,
+> ~2.9M records over a 256-token run.
+>
+> Cost: **+0.67%**, 95% CI [+0.12, +1.67].
+>
+> First arm in five measurement sessions whose interval excludes zero. Both ends
+> inside the 2% budget, which is the part that matters.
 
 **follow-up**
-> It also means instrumentation overhead isn't the *mean* across threads.
+> Also checked the obvious way that number could be a lie: a profiler that fills
+> its buffer and stops recording gets cheaper.
 >
-> It's the **max**. Every barrier waits for the slowest thread.
+> `229 MB, 259 tokens, 8 threads, 0 dropped.`
 >
-> Jitter that's invisible in a single-threaded profiler compounds here, hundreds
-> of times per token.
+> The full run was recorded. 0.67% is the cost of recording all of it.
 
 ---
 
-### B3. The per-model table
+### B4. The design-vs-reality post
+
+> My design doc predicted ~0.1% overhead from a per-scope cost model, and
+> explicitly warned the model might not hold — cache pollution, and barriers
+> turning per-thread jitter into whole-graph latency.
+>
+> Measured: 0.67%.
+>
+> Right risks. Magnitude wrong by 6x. That's the whole argument for measuring.
+
+---
+
+### B5. Perfetto screenshot
+
+> [PERFETTO SCREENSHOT of a level-3 trace]
+>
+> Every generated token, every graph node, every worker thread. 24 layers.
+>
+> Chrome Trace Event JSON, so Perfetto does all the UI work.
+
+> **Note to self:** needs an actual screenshot. Zoom to 2-3 tokens so the
+> per-node structure and the barrier gaps are both visible.
+
+---
+
+## NEEDS: three model sizes measured
+
+### C0. The per-model table
 
 > Decode time breakdown, three model sizes, same machine:
 >
@@ -193,9 +281,9 @@ Repo: https://github.com/PS12007/tokenscope
 
 ---
 
-## NEEDS: a genuine non-obvious finding from a real trace
+## NEEDS: a real quantized model, on Linux
 
-### C1. The finding post (thread) — the highest-value post in this file
+### C1. The finding post (thread) — reserve for something better than B2
 
 **1/**
 > Built a per-token profiler for llama.cpp mostly to have one.
@@ -249,6 +337,19 @@ Repo: https://github.com/PS12007/tokenscope
 ---
 
 ## EVERGREEN — usable any time, low risk
+
+### E0. The findings-file post
+
+> My profiler's findings doc opens with: the three things I built it to catch
+> aren't happening.
+>
+> KV realloc, logits buffer reserve, graph rebuild — all instrumented, all
+> ~0.4% combined.
+>
+> That's the tool working. A profiler that only confirms your hypotheses isn't
+> measuring anything.
+
+---
 
 ### E1.
 

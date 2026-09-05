@@ -98,6 +98,44 @@ each is a rounding error on a steady-state generation loop. `graph-build` totals
 206 µs across 257 tokens, which says llama.cpp's graph reuse essentially never
 misses. More in [`docs/FINDINGS.md`](docs/FINDINGS.md).
 
+At `TOKENSCOPE_LEVEL=3` the same command breaks the graph open:
+
+```
+  graph nodes -- thread time across 8 workers (6160.1 ms busy of 6200.9 ms available)
+
+  category                 total       %      per-tok
+  --------------------------------------------------
+  ffn                 4249.84 ms   69.0%    128.783 ms
+  barrier              692.53 ms   11.2%     20.986 ms
+  attn.qkv             640.73 ms   10.4%     19.416 ms
+  attn.out             359.43 ms    5.8%     10.892 ms
+  lm_head              160.83 ms    2.6%      4.874 ms
+  attn.score            42.35 ms    0.7%      1.283 ms
+
+  11.2% of worker thread time is barrier wait, not compute.
+  99.3% of available thread time is inside a node scope.
+```
+
+**11.2% of the CPU budget is threads spinning at a barrier, not computing.**
+`ggml_barrier` runs after every graph node — roughly 700 times per token, on
+each of 8 threads. Without a work/wait split that time is indistinguishable from
+compute, which is why "attention took X ms across 8 threads" is a sentence that
+can hide seven idle threads.
+
+And `--layers` groups the same data by layer:
+
+```
+  layer         ffn    attn.qkv    attn.out  attn.score        norm       total
+  ---------------------------------------------------------------------------
+      0      5362.4       808.8       456.8        66.6         8.1      6706.9
+      1      5457.4       796.3       450.4        58.8         7.6      6774.6
+    ...
+     23      5291.3       790.6       437.5        51.2         8.5      6591.4
+
+  median layer 6668.7 us/tok   slowest L5 6824.6 (1.02x)   fastest L15 (0.98x)
+  Layers are uniform to within 10%.
+```
+
 `--outliers` ranks the slowest tokens and attributes each one's *excess over
 median* to a category — because on a slow token everything is large, and the
 question is which thing is large **for that token**. `--diff` compares two
