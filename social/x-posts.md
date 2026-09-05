@@ -624,6 +624,114 @@ advice.
 
 ---
 
+## READY NOW — sampling measured, and the boundary bug (F11)
+
+### H1. The bug thread — the best "my tool caught my tool" story in the project
+
+**1/**
+> Added sampling scopes to my llama.cpp profiler.
+>
+> The summary immediately reported **100.1%** of decode time attributed.
+>
+> Not 99.8. Not 101. A tenth of a percent over — which is the most annoying
+> possible amount, because it's too small to be a stupid bug and too large to
+> be float noise.
+
+**2/**
+> Every timestamp was correct. Every scope was associated with the right token.
+>
+> The bug was that I'd asked a question with two halves and only answered one.
+>
+> "Per token" and "inside what" are not the same question.
+
+**3/**
+> `common_sampler_sample` runs **after** `llama_context::decode` returns.
+>
+> So the sampling scopes belong to token 12 — and they happen outside token
+> 12's slice.
+>
+> Charging them against it adds time the slice never contained. 341 of 341
+> sampling scopes were outside. 16 of 31 tokens went over.
+
+**4/**
+> The fix isn't an epsilon. It's a distinction the report now makes out loud:
+>
+> - per-token work **inside** the decode slice → charged against it
+> - per-token work **outside** it → its own section, labelled
+>
+> Both are real costs of producing a token. Only one is part of decode.
+
+**5/**
+> This is the second time a "these percentages cannot exceed 100" check found
+> something inspection wouldn't have.
+>
+> First time it was scope misparenting. This time a conceptual boundary error.
+>
+> Neither looked like a bug in the code. Both were bugs in the *claim*.
+
+**6/**
+> If you build measurement tools, put in the checks that can only fail if
+> you're wrong about something structural.
+>
+> Not "is this number plausible." Something more like a conservation law.
+>
+> Plausible numbers are exactly the ones that hide this.
+
+---
+
+### H2. The finding itself (single post)
+
+> Finally measured the two parts of llama.cpp's token loop that `llama-bench`
+> never touches, because it never samples and never tokenizes.
+>
+> ```
+> sample        28.6 us/token   0.129% of decode
+> tok.decode     0.62 us/token  0.003%
+> ```
+>
+> **99.87% of a generated token is `llama_context::decode`.** And 99.5% of
+> *that* is one call: `graph_compute`.
+
+**follow-up**
+> Caveat that does real work here: 8192-token synthetic vocabulary. A real 128k
+> vocab makes every softmax and sort ~16× bigger, and a grammar-constrained
+> sampler is a different workload entirely.
+>
+> 0.13% is a fact about this run, not about sampling.
+
+---
+
+### H3. The one about instrumenting the wrong function
+
+> Added a scope to `llama_sampler_sample`. Ran it. Zero samples recorded.
+>
+> Turns out llama-cli never calls it — `common_sampler_sample` calls
+> `llama_sampler_apply` once per sampler in the chain instead.
+>
+> The API function with the obvious name is not the one on the hot path. Again.
+
+**follow-up**
+> This is the third time on this project that the function whose name describes
+> the work was not the function that does the work.
+>
+> `cpy_k` doesn't copy. The per-layer build loop doesn't run the model.
+> `llama_sampler_sample` doesn't sample.
+
+---
+
+### H4. Tooling honesty (small, evergreen)
+
+> Found a message in my own profiler that was confidently wrong.
+>
+> "8.2% attributed — the remainder is time no scope covers yet."
+>
+> No. The remainder was 23 tokens that a capture window deliberately skipped.
+> The tool knew that and said something else.
+>
+> Fixed. But: check what your tool says when it's *partly* out of data.
+
+---
+
 ## NEEDS: three model sizes measured
 
 ### C0. The per-model table
