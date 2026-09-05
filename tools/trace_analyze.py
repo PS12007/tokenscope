@@ -28,6 +28,15 @@ from collections import defaultdict
 # loading
 # ---------------------------------------------------------------------------
 
+# Host scopes are emitted with their own scope name as the category, so the set
+# is closed and known. Everything else in a trace is a graph node or a barrier.
+HOST_CATS = frozenset({
+    "batch-init", "sched-reserve", "kv.update", "kv.slot-search",
+    "output-reserve", "ubatch", "graph-build", "graph-alloc", "set-inputs",
+    "graph-compute", "logits-readback", "sample", "tok.encode", "tok.decode",
+})
+
+
 class Trace:
     def __init__(self, path: str):
         self.path = path
@@ -59,6 +68,30 @@ class Trace:
     @property
     def name(self) -> str:
         return os.path.basename(self.path)
+
+    def split_totals(self, only_decode: bool = True):
+        """Host scopes measure wall time on one thread; node scopes measure
+        thread time across N workers. Returns (host, node, n_workers) so the
+        report can put them against the right denominators instead of summing
+        two different quantities into one meaningless percentage."""
+        keep = {t["args"]["tok"] for t in self.decode} if only_decode else None
+        host: dict[str, float] = defaultdict(float)
+        node: dict[str, float] = defaultdict(float)
+        worker_tids: set = set()
+
+        for tok, evs in self.by_token.items():
+            if keep is not None and tok not in keep:
+                continue
+            host_evs = [e for e in evs if e.get("cat") in HOST_CATS]
+            node_evs = [e for e in evs if e.get("cat") not in HOST_CATS]
+            for cat, dur in self_times(host_evs):
+                host[cat] += dur
+            for e in node_evs:
+                # node scopes never nest, so self-time is duration
+                node[e.get("cat", "other")] += e.get("dur", 0.0)
+                worker_tids.add(e.get("tid", 0))
+
+        return dict(host), dict(node), max(1, len(worker_tids))
 
     def category_totals(self, only_decode: bool = True) -> dict[str, float]:
         """Total microseconds per category. Nested scopes on the same thread are
@@ -174,18 +207,46 @@ def report_summary(tr: Trace) -> None:
     print(f"\ndecode: {len(d)} tokens, {total_ms:.1f} ms total, "
           f"{per_tok:.2f} ms/tok ({1000.0 / per_tok:.1f} tok/s)")
 
-    cats = tr.category_totals()
-    if cats:
-        grand = sum(cats.values())
-        print(f"\n  {'category':<18}{'total':>12}  {'%':>6}   {'per-tok':>10}")
+    # Host scopes run on the calling thread and measure WALL time. Node scopes
+    # run on N workers in parallel and measure THREAD time. Adding them
+    # together produces a percentage of several hundred, which is not a bug in
+    # the trace -- it is a category error in the report. So they are reported
+    # against different denominators, and labelled.
+    host, node, n_workers = tr.split_totals()
+    wall = sum(d)
+
+    if host:
+        grand = sum(host.values())
+        print(f"\n  host scopes -- wall time on the calling thread\n")
+        print(f"  {'category':<18}{'total':>12}  {'%':>6}   {'per-tok':>10}")
         print("  " + "-" * 50)
-        for cat, us in sorted(cats.items(), key=lambda kv: -kv[1]):
+        for cat, us in sorted(host.items(), key=lambda kv: -kv[1]):
+            print(f"  {cat:<18}{fmt_us(us):>12}  {100.0 * us / wall:5.1f}%   "
+                  f"{us / len(d) / 1000.0:8.3f} ms")
+        acc = 100.0 * grand / wall
+        print(f"\n  {acc:.1f}% of decode wall time is attributed to a host scope.")
+        if acc < 90.0:
+            print("  The remainder is time inside llama_decode that no scope covers yet.")
+
+    if node:
+        grand = sum(node.values())
+        budget = wall * max(1, n_workers)
+        print(f"\n  graph nodes -- thread time across {n_workers} worker"
+              f"{'' if n_workers == 1 else 's'}"
+              f" ({grand / 1000.0:.1f} ms busy of {budget / 1000.0:.1f} ms available)\n")
+        print(f"  {'category':<18}{'total':>12}  {'%':>6}   {'per-tok':>10}")
+        print("  " + "-" * 50)
+        for cat, us in sorted(node.items(), key=lambda kv: -kv[1]):
             print(f"  {cat:<18}{fmt_us(us):>12}  {100.0 * us / grand:5.1f}%   "
                   f"{us / len(d) / 1000.0:8.3f} ms")
-        accounted = 100.0 * grand / sum(d)
-        print(f"\n  {accounted:.1f}% of decode wall time is attributed to a scope.")
-        if accounted < 90.0:
-            print("  The remainder is time inside llama_decode that no scope covers yet.")
+        wait = sum(v for k, v in node.items() if k == "barrier")
+        if wait:
+            print(f"\n  {100.0 * wait / grand:.1f}% of worker thread time is barrier wait,"
+                  f" not compute.")
+        print(f"  {100.0 * grand / budget:.1f}% of available thread time is inside a"
+              f" node scope.")
+        print("  Categories prefixed \"~\" are inferred from graph position, not"
+              " from a node name.")
 
     print(f"\n  p50 {pct(d, 50) / 1000.0:6.2f} ms   p95 {pct(d, 95) / 1000.0:6.2f} ms   "
           f"p99 {pct(d, 99) / 1000.0:6.2f} ms   max {max(d) / 1000.0:6.2f} ms")

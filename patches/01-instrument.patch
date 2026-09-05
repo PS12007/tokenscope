@@ -38,6 +38,45 @@ index 9477320..d28d3ce 100644
  if (GGML_BACKEND_DL)
      target_compile_definitions(ggml-base PUBLIC GGML_BACKEND_DL)
  endif()
+diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
+index 87a329f..5e8e645 100644
+--- a/ggml/src/ggml-cpu/ggml-cpu.c
++++ b/ggml/src/ggml-cpu/ggml-cpu.c
+@@ -15,6 +15,7 @@
+ #include "ops.h"
+ #include "ggml.h"
+ #include "common.h"
++#include "tokenscope.h"
+ 
+ #if defined(_MSC_VER) || defined(__MINGW32__)
+ #include <malloc.h> // using malloc.h with MSC/MINGW
+@@ -3126,6 +3127,9 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
+     GGML_PRINT_DEBUG("thread #%d compute-start cplan %p last-graph %d\n", state->ith, (const void *)cplan, state->last_graph);
+ #endif
+ 
++    TS_THREAD_PREPARE(cgraph->n_nodes);
++    TS_NODE_LOOP_DECL();
++
+     for (int node_n = 0; node_n < cgraph->n_nodes && atomic_load_explicit(&tp->abort, memory_order_relaxed) != node_n; node_n++) {
+         struct ggml_tensor * node = cgraph->nodes[node_n];
+ 
+@@ -3147,6 +3151,8 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
+             ggml_compute_forward(&params, node);
+         }
+ 
++        TS_NODE_WORK_END(node_n);
++
+         if (state->ith == 0 && cplan->abort_callback &&
+                 cplan->abort_callback(cplan->abort_callback_data)) {
+             atomic_store_explicit(&tp->abort, node_n + 1, memory_order_relaxed);
+@@ -3155,6 +3161,7 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
+ 
+         if (node_n + 1 < cgraph->n_nodes) {
+             ggml_barrier(state->threadpool);
++            TS_NODE_WAIT_END(node_n);
+         }
+     }
+ 
 diff --git a/src/llama-context.cpp b/src/llama-context.cpp
 index c1ef12f..827308d 100644
 --- a/src/llama-context.cpp

@@ -74,6 +74,7 @@ struct graph_info {
     uint32_t                 n_nodes = 0;
     std::vector<std::string> node_names;
     std::vector<std::string> node_ops;
+    std::vector<std::string> node_cats;   // derived at flush, see derive_categories
 };
 
 struct registry {
@@ -388,6 +389,7 @@ struct out_event {
     const std::string * name;
     const char *        cat;
     uint32_t    token;
+    const char * op;
     uint8_t     depth;
     uint8_t     ph_instant;
 };
@@ -416,6 +418,11 @@ void emit_event(std::string & out, bool & first, const out_event & e, int32_t pi
     out += std::to_string(e.token);
     out += ",\"depth\":";
     out += std::to_string((unsigned) e.depth);
+    if (e.op && *e.op) {
+        out += ",\"op\":\"";
+        out += e.op;
+        out += "\"";
+    }
     out += "}}";
 }
 
@@ -433,11 +440,61 @@ const char * category_for(const std::string & node_name) {
         { "attn_out",    "attn.out"  }, { "kqv_out",   "attn.out"  },
         { "ffn_",        "ffn"       },
         { "result_output","lm_head"  },
+        { "l_out",       "residual"  },
     };
     for (const auto & e : table) {
         if (node_name.compare(0, std::strlen(e.p), e.p) == 0) return e.cat;
     }
-    return "other";
+    return nullptr;   // caller falls back to graph-position inference
+}
+
+// Roughly 15% of graph nodes carry no meaningful name: ggml auto-names them
+// "node_<index>". On this model those unnamed nodes are the attention core --
+// the scores, the softmax, the value multiply -- which is exactly the phase a
+// per-layer profiler most needs to report. Prefix matching cannot see them.
+//
+// But graph ORDER is meaningful. The builders emit each layer in a fixed
+// sequence, and the named nodes act as markers. So we walk the graph once, at
+// flush time, on one thread, and give every unnamed node the phase of the last
+// marker it followed.
+//
+// This is an inference, not a measurement, so the categories it produces are
+// prefixed "~" in the output. A reader should be able to tell at a glance which
+// numbers came from a name and which came from a guess about structure.
+void derive_categories(graph_info & g) {
+    g.node_cats.assign(g.n_nodes, "other");
+
+    const char * phase = "other";
+    for (uint32_t i = 0; i < g.n_nodes; ++i) {
+        const std::string & nm = g.node_names[i];
+        const char * named = category_for(nm);
+
+        if (named) {
+            g.node_cats[i] = named;
+            // advance the phase marker
+            if      (nm.compare(0, 9, "attn_norm") == 0) phase = "~attn";
+            else if (nm.compare(0, 8,  "attn_out") == 0) phase = "~post-attn";
+            else if (nm.compare(0, 8,  "ffn_norm") == 0) phase = "~ffn";
+            else if (nm.compare(0, 5,     "l_out") == 0) phase = "~residual";
+            else if (nm.compare(0, 4,      "Qcur") == 0 ||
+                     nm.compare(0, 4,      "Kcur") == 0 ||
+                     nm.compare(0, 4,      "Vcur") == 0) phase = "~attn";
+            continue;
+        }
+
+        // unnamed: inherit the current phase, and note the op so the reader can
+        // see what it actually was
+        const std::string & op = g.node_ops[i];
+        if (!op.empty() && (op == "SOFT_MAX" || op == "FLASH_ATTN_EXT")) {
+            g.node_cats[i] = "attn.score";
+        } else if (!op.empty() && op == "ROPE") {
+            g.node_cats[i] = "rope";
+        } else if (!op.empty() && (op == "SET_ROWS" || op == "CPY" || op == "CONT")) {
+            g.node_cats[i] = "attn.kv_rw";
+        } else {
+            g.node_cats[i] = phase;
+        }
+    }
 }
 
 } // namespace
@@ -450,6 +507,10 @@ extern "C" TS_API void ts_flush(const char * path) {
     ts_g_level = TS_LEVEL_OFF;          // stop recording before we read
 
     std::lock_guard<std::mutex> lk(r.mu);
+
+    for (auto & g : r.graphs) {
+        derive_categories(g);
+    }
 
     const int32_t pid = cur_pid();
     std::string out;
@@ -523,7 +584,10 @@ extern "C" TS_API void ts_flush(const char * path) {
                     const graph_info * g = rec.graph < r.graphs.size() ? &r.graphs[rec.graph] : nullptr;
                     if (g && rec.ref < g->node_names.size()) {
                         e.name = &g->node_names[rec.ref];
-                        e.cat  = category_for(g->node_names[rec.ref]);
+                        e.cat  = rec.ref < g->node_cats.size()
+                                     ? g->node_cats[rec.ref].c_str() : "other";
+                        e.op   = rec.ref < g->node_ops.size()
+                                     ? g->node_ops[rec.ref].c_str() : "";
                     } else {
                         e.name = &s_unknown;
                         e.cat  = "other";
@@ -550,7 +614,7 @@ extern "C" TS_API void ts_flush(const char * path) {
                 out += ",\"ts\":0,\"args\":{\"node\":\"";
                 json_escape(out, nm);
                 out += "\",\"cat\":\"";
-                out += category_for(nm);
+                out += (g && i < g->node_cats.size()) ? g->node_cats[i].c_str() : "other";
                 out += "\",\"work_us\":";
                 char b[64];
                 std::snprintf(b, sizeof(b), "%.3f", ts_ticks_to_us(st->acc_work[i]));

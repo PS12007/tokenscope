@@ -44,7 +44,8 @@ COPY = ["tokenscope.h", "tokenscope-ggml.h", "tokenscope.cpp"]
 TOUCHED = [
     "ggml/CMakeLists.txt",
     "ggml/src/CMakeLists.txt",
-    "src/llama-context.cpp",
+    "ggml/src/ggml-cpu/ggml-cpu.c",   # tier 2: the node loop
+    "src/llama-context.cpp",          # tier 1: host scopes
 ]
 
 
