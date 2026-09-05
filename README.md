@@ -136,6 +136,64 @@ And `--layers` groups the same data by layer:
   Layers are uniform to within 10%.
 ```
 
+`--barriers` answers the question the 11.2% raises but cannot settle on its
+own: how much of that wait is recoverable?
+
+```
+  barrier decomposition -- 8 threads, 824 barriers over 2 decode tokens
+
+  total barrier wait      62.31 ms   thread-time
+    arrival imbalance     34.59 ms    55.5%   threads idle, waiting for the last
+    after last arrival    27.72 ms    44.5%   release latency and spin-up
+
+  worst nodes by imbalance
+
+  node                   work   imbalance     n  threads busy
+  -------------------------------------------------------------
+  ffn_out            88.93 ms    10.19 ms    48          8.0
+  ffn_swiglu         267.0 us     1.75 ms    48          1.8
+  l_out              204.3 us     1.30 ms    48          2.0
+  attn_norm          211.9 us    657.9 us    48          1.8
+```
+
+Read the last column. **The tiny elementwise nodes run on 1.4–2.0 threads out
+of 8** — because ggml partitions over rows, and at batch size 1 a hidden state
+is a single row, so thread 0 takes it and the other seven fall through to the
+barrier. Ten node types cost more in other threads' waiting than in their own
+arithmetic: 0.32% of the work causing 14% of all the imbalance.
+
+That is a mechanism, so it makes a prediction: the same nodes should
+parallelize normally when there *are* many rows. Prefill is that workload, and
+they do — 1.4 busy threads becomes 7.7. The upper bound on fixing it is a
+deliberately unflattering **1.34% of graph wall time**, and the promising route
+is fusing the elementwise chain rather than parallelizing it
+([`F9`](docs/FINDINGS.md)).
+
+Sweeping thread count turns that into advice you can act on today:
+
+```
+ thr   tok/s  speedup  par.eff  barrier%
+   1   20.25    1.00x     100%      0.1%
+   4   42.34    2.09x      52%      5.7%
+   6   44.82    2.21x      37%      8.4%   <- peak
+   8   44.59    2.20x      28%     12.2%
+  16   41.50    2.05x      13%     22.0%
+  28   39.33    1.94x       7%     22.9%
+```
+
+**Nothing beats 2.2×**, four threads already reach 2.09×, and 28 threads is
+12% *slower* than six while occupying seven times the cores. Barrier wait rises
+monotonically to 22.9%. The barrier is where the wasted parallelism becomes
+visible rather than where it is created — decode here is weight-streaming, so
+once bandwidth saturates around four threads the extra threads cannot go
+faster and the difference is paid at the next rendezvous.
+
+That last clause is also the caveat: this table is a statement about *this
+workload's* arithmetic intensity, not about llama.cpp's threading in general.
+These are synthetic F32 weights, and a Q4\_K\_M model reads roughly a quarter
+of the bytes per parameter, so it should scale further before hitting the same
+wall. Full numbers, method and caveats in [`F10`](docs/FINDINGS.md).
+
 `--outliers` ranks the slowest tokens and attributes each one's *excess over
 median* to a category — because on a slow token everything is large, and the
 question is which thing is large **for that token**. `--diff` compares two
@@ -150,7 +208,7 @@ where your time goes.
 | Constraint | How it is enforced | Status |
 |---|---|---|
 | **Zero overhead when disabled** | Everything behind `TOKENSCOPE_ENABLED`. Off ⇒ macros expand to nothing; no symbol, no branch, no storage. | ✅ verified against the symbol table |
-| **Under 2% when enabled** | Measured with interleaved arms and bootstrap CIs, not assumed. | ✅ all levels; level 3 is +0.67% [+0.12, +1.67] |
+| **Under 2% when enabled** | Measured with interleaved arms and bootstrap CIs, not assumed. | ✅ all levels; level 3 is +0.67% [+0.12, +1.67] at 8 threads. Re-measured at 28 threads: +0.66% [-1.85, +4.18], which the harness declined to certify — see [F10](docs/FINDINGS.md) |
 | **No new dependencies** | C++17 standard library on the engine side. Python stdlib for analysis. | ✅ |
 | **No locks in the hot path** | Thread-local buffers, merged at flush. | ✅ |
 | **Deterministic, not sampled** | Explicitly placed scopes, so the trace is *interpretable* rather than statistical. | ✅ |
@@ -212,6 +270,10 @@ python tools/make_tiny_model.py --llama-cpp ../llama.cpp -o models/tiny.gguf
 TOKENSCOPE_LEVEL=1 TOKENSCOPE_OUT=run.trace.json \
   ../llama.cpp/build-ts-on/bin/llama-bench -m models/tiny.gguf -p 256 -n 128
 python tools/trace_analyze.py run.trace.json
+
+# the work/wait split needs level 3, and a token window to keep the trace small
+TOKENSCOPE_LEVEL=3 TOKENSCOPE_TOKENS=8-13 TOKENSCOPE_OUT=l3.trace.json   ../llama.cpp/build-ts-on/bin/llama-bench -m models/tiny.gguf -p 0 -n 20
+python tools/trace_analyze.py l3.trace.json --layers --barriers
 ```
 
 Then drop `run.trace.json` onto [ui.perfetto.dev](https://ui.perfetto.dev).
@@ -269,7 +331,9 @@ Built in the open. `docs/` is the engineering log, in order — and
 - [x] [Overhead measured for level 1](docs/02-overhead-methodology.md)
 - [x] Tier 1: host instrumentation across `decode` and `process_ubatch`
 - [x] [First findings from real traces](docs/FINDINGS.md)
-- [ ] Tier 2: per-node work/wait split, per-layer breakdown
+- [x] Tier 2: per-node work/wait split, per-layer breakdown
+- [x] [Barrier decomposition: imbalance vs release, and what it is worth](docs/FINDINGS.md)
+- [x] [Thread-count sweep, 1 to 28](docs/FINDINGS.md)
 - [ ] Sampling and tokenizer scopes (`llama-bench` never exercises them)
 - [ ] Perfetto screenshots + three-model decode table
 - [ ] Real quantized models, and Linux/GCC

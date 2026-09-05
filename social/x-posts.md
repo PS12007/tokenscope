@@ -459,6 +459,171 @@ post F1 standalone — it works either way, but the sequence is the story.**
 
 ---
 
+## READY NOW — the thread sweep (F10)
+
+The strongest *practically useful* result in the project: it changes what a
+reader does this afternoon. F1 is the better tooling story; G1 is the better
+advice.
+
+### G1. The headline thread
+
+**1/**
+> Swept llama.cpp CPU decode from 1 to 28 threads on a 20-core machine.
+>
+> Nothing beats **2.2×**.
+>
+> Not 8 threads. Not 16. Not 28. Four threads gets you 2.09× and after that
+> you're buying rounding error with cores.
+
+**2/**
+> ```
+> thr   tok/s  speedup  par.eff  barrier%
+>   1   20.25    1.00x     100%      0.1%
+>   2   35.12    1.73x      87%      2.4%
+>   4   42.34    2.09x      52%      5.7%
+>   6   44.82    2.21x      37%      8.4%   <- peak
+>   8   44.59    2.20x      28%     12.2%
+>  12   40.59    2.00x      17%     21.2%
+>  16   41.50    2.05x      13%     22.0%
+>  28   39.33    1.94x       7%     22.9%
+> ```
+>
+> 28 threads is **12% slower** than 6, using 7× the cores.
+
+**3/**
+> Parallel efficiency: 100% → 7%.
+>
+> If you're running CPU inference on a big box and you set `-t` to your core
+> count because that seemed like the obvious thing, you are probably paying for
+> a lot of electricity to go slower.
+
+**4/**
+> Where does the time go? Straight into the barrier.
+>
+> Barrier wait as a share of worker thread time climbs monotonically:
+> 0.1% → 12.2% at 8 threads → **22.9%** at 20.
+>
+> By 12 threads more than a fifth of all worker CPU is spinning in
+> `ggml_thread_cpu_relax()`.
+
+**5/**
+> But — and this is the part I want to get right — **the barrier isn't the
+> cause.**
+>
+> I'd measured earlier that decode on this model is almost pure weight
+> streaming. The time is memory traffic, not arithmetic.
+
+**6/**
+> So bandwidth saturates around 4 threads. After that an extra thread physically
+> cannot go faster. It just finishes its slice out of step with the others, and
+> the difference gets paid at the next barrier.
+>
+> The barrier is where wasted parallelism becomes **visible**. Not where it's
+> created.
+
+**7/**
+> Which is the whole argument for splitting work from wait.
+>
+> A profiler that reports "ffn: 69% across 8 threads" cannot tell you that a
+> fifth of that is spinning — or that it's spinning *because you asked for too
+> many threads*.
+>
+> Same number. Opposite advice.
+
+**8/**
+> One more thing fell out. Per-thread compute spread is 0-2% up to 8 threads,
+> then jumps to 13-29%.
+>
+> 8 is the P-core count on this chip. ggml hands every thread an **equal number
+> of rows** — which stops being a fair split the moment the cores aren't equal.
+
+**9/**
+> I predicted that would show up as two tight clusters, one per core type.
+>
+> It doesn't. At 16 threads the spread is continuous: 30.0, 30.2, 30.5, 33.3,
+> 33.7, 35.1 … 44.9 ms.
+>
+> So: symptom confirmed, mechanism not. Proving it needs thread pinning, which
+> I haven't done.
+
+**10/**
+> Caveat that matters more than usual here: synthetic F32 weights.
+>
+> This entire result turns on the workload being bandwidth-bound. Q4_K_M reads
+> ~4× fewer bytes per parameter and should scale further before hitting the same
+> wall.
+>
+> This is a fact about arithmetic intensity, not about llama.cpp's threading.
+
+**11/**
+> Method, traces, and the analysis that produced the barrier column:
+> github.com/PS12007/tokenscope
+>
+> The table is reproducible from the repo. The uninstrumented build produced the
+> throughput numbers — I'm not quoting tok/s measured by my own profiler.
+
+---
+
+### G2. The practical single post
+
+> PSA for anyone running llama.cpp on CPU:
+>
+> more threads than ~4-6 probably makes you slower.
+>
+> Measured 1→28 threads on a 20-core box. Peak was 6 threads at 2.21×. 28
+> threads came in **below** 6, at 7% parallel efficiency.
+>
+> Decode is memory-bound. You can't thread your way past DRAM.
+
+---
+
+### G3. The one for people who like being wrong in public
+
+> Predicted: per-thread times on a P-core/E-core CPU would split into two tight
+> clusters.
+>
+> Measured: 30.0, 30.2, 30.5, 33.3, 33.7, 35.1, 37.2, 39.0 … 44.9. Continuous.
+>
+> The step at 8 threads is real and lines up with the P-core count. The clean
+> bimodal signature that would *prove* it isn't there.
+>
+> Symptom confirmed. Mechanism: still a guess.
+
+---
+
+### G4. The negative result (pairs with A4/A5)
+
+> My design doc predicted profiler overhead would compound with thread count —
+> a barrier makes the graph pay the *max* of per-thread overhead, not the mean.
+>
+> Tested it at 8 and 28 threads. Both CIs span zero. The harness refused to
+> certify either.
+>
+> Not confirmed. Not refuted. Posting it as neither.
+
+**follow-up**
+> The tempting move is to read "no measurable overhead" as "my mitigations
+> worked."
+>
+> But the baseline IQR was 2-4% and the effect I was hunting is smaller than
+> that. The honest version is: if it compounds, it doesn't compound enough to
+> see at 28 threads on this machine.
+
+---
+
+### G5. The energy angle (different audience, same data)
+
+> Same llama.cpp workload, same tokens generated:
+>
+> 4 threads → 2.09× speedup
+> 28 threads → 1.94× speedup, 7× the cores
+>
+> Seven times the CPU time to go slightly slower.
+>
+> Thread count defaults are an energy decision and almost nobody measures them.
+
+---
+
 ## NEEDS: three model sizes measured
 
 ### C0. The per-model table
