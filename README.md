@@ -220,6 +220,25 @@ the **output projection at 29.6%** — a 151,936-token vocabulary against
 is no model-independent answer, which is the argument for measuring rather than
 reasoning ([`F13`](docs/FINDINGS.md)).
 
+And serving concurrently changes the answer again. At `-np 16` on the same
+model, sixteen sequences cost nothing like sixteen times:
+
+```
+phase        np=1 %   np=16 %   work x
+ffn           47.8%     58.4%     6.1x
+lm_head       29.0%     21.5%     3.7x
+barrier       13.6%      7.2%     2.7x
+attn.score     1.1%      2.2%     9.8x
+```
+
+Weight-bound phases amortize hard — a weight matrix is read once per step
+however many sequences ride along, so `lm_head` does 16× the arithmetic for
+3.7× the time. Sequence-bound work does not: `attn.score` is 9.8×, because
+every sequence has its own KV. **Batching does not just make decode faster, it
+changes what decode is** — and it dissolves the single-threaded-node problem
+above entirely, 1.0 busy threads becoming 6.0
+([`F17`](docs/FINDINGS.md)).
+
 `--outliers` ranks the slowest tokens and attributes each one's *excess over
 median* to a category — because on a slow token everything is large, and the
 question is which thing is large **for that token**. `--diff` compares two

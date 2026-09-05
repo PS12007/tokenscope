@@ -978,6 +978,51 @@ carry. Post I1 after G1; it is the payoff to G1's closing caveat.
 
 ---
 
+### M1b. The batching one (post separately, it stands alone)
+
+**1/**
+> Ran llama.cpp decode with 1 vs 16 concurrent sequences and measured every
+> phase.
+>
+> 16x the tokens. **Nothing costs 16x.**
+>
+> ```
+> phase        np=1 %   np=16 %   work x
+> ffn           47.8%     58.4%     6.1x
+> lm_head       29.0%     21.5%     3.7x
+> barrier       13.6%      7.2%     2.7x
+> attn.score     1.1%      2.2%     9.8x
+> ```
+
+**2/**
+> The split is clean: **weight-bound work amortizes, sequence-bound work
+> doesn't.**
+>
+> A weight matrix gets read once per step however many sequences ride along. So
+> lm_head does 16x the arithmetic for 3.7x the time.
+>
+> Attention has its own KV per sequence. 9.8x.
+
+**3/**
+> Which means batching doesn't just make decode faster. **It changes what decode
+> is.**
+>
+> lm_head — 29% of decode and the thing I'd have told you to optimize at batch
+> size 1 — drops to 21.5%.
+>
+> Attention doubles its share and is the only phase heading for dominance.
+
+**4/**
+> It also completely dissolves a problem I'd spent two findings on: tiny
+> elementwise ops running on 1 of 6 threads at batch size 1.
+>
+> At -np 16 they use all 6. Barrier wait halves.
+>
+> That finding is real — and it's a *single-user local inference* finding, not a
+> serving one.
+
+---
+
 ### M2. The standalone
 
 > Wrote a finding criticizing llama.cpp's prefill/decode heuristic for
