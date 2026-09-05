@@ -1,0 +1,41 @@
+# upstream engine checkout (cloned by scripts/bootstrap, never committed)
+vendor/
+llama.cpp/
+
+# build output
+build/
+build-*/
+out/
+*.obj
+*.o
+*.lib
+*.dll
+*.exe
+*.pdb
+*.ilk
+*.exp
+
+# models & artifacts
+models/
+*.gguf
+*.bin
+*.safetensors
+
+# traces (can be large); keep curated ones under examples/
+traces/
+*.trace.json
+*.trace.json.gz
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# editors / os
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
