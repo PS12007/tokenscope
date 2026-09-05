@@ -19,6 +19,8 @@ picking the project back up.
 - Barrier decomposition: arrival imbalance vs release latency, per node, with
   the matching refused rather than guessed if node/barrier alternation breaks
   (FINDINGS F9).
+- Sampling, tokenizer and cell-search scopes (sites 13, 16-19), so the whole
+  per-token loop is covered and not just the parts `llama-bench` reaches.
 - Thread-count sweep, 1 to 28, throughput from the uninstrumented build
   (FINDINGS F10).
 - Python analysis: summary, per-token, outliers-with-cause, per-layer, diff.
@@ -222,7 +224,7 @@ thread sweep is FINDINGS F10, and the barrier arrival spread is F9.
 
 | Claim | Value | Source |
 |---|---|---|
-| Upstream patch size | 123 lines, 6 files | `patches/01-instrument.patch` |
+| Upstream patch size | 130 lines, 7 files | `patches/01-instrument.patch` |
 | Per-scope cost | 52.8 ns (2 clock reads + 1 store) | `ts_selftest` |
 | Level 3 overhead | +0.67% [+0.12, +1.67] | [`02`](02-overhead-methodology.md) |
 | Zero-overhead-when-off | 0 symbols, 864-byte archive | [`02`](02-overhead-methodology.md) §2 |
@@ -236,6 +238,8 @@ thread sweep is FINDINGS F10, and the barrier arrival spread is F9.
 | Phase time predicted from weight BYTES | within 2.9 points on a real quantized model | [`FINDINGS`](FINDINGS.md) F12 |
 | ...predicted from parameter counts | wrong by 7.2 points on the same model | [`FINDINGS`](FINDINGS.md) F12 |
 | Sampling + detokenization | 0.13% of a token | [`FINDINGS`](FINDINGS.md) F11 |
+| Context shift, `-c 256` | 4 spikes in 699 tokens, 1.13-1.34x median | [`FINDINGS`](FINDINGS.md) F16 |
+| KV cell search (`find_slot`) | 1.17 us/token, and *falls* as the cache fills | [`FINDINGS`](FINDINGS.md) F16 |
 | Parallel efficiency at 28 threads | 7% | [`FINDINGS`](FINDINGS.md) F10 |
 | P-core vs E-core, compute-bound | 2.88x (265.95 vs 92.39 tok/s) | [`FINDINGS`](FINDINGS.md) F14 |
 | Barrier wait, mixed vs homogeneous cores | 21.2% -> 11.1% at 12 threads | [`FINDINGS`](FINDINGS.md) F14 |

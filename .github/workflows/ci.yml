@@ -152,6 +152,58 @@ jobs:
           print("ok: F9 holds -- serial at batch size 1, parallel in prefill")
           PY
 
+      # FINDINGS F16 as a regression test. Two claims: context shift produces a
+      # visible periodic spike, and the cell search is a small fraction of the
+      # scope named after it. The second is the one that matters -- F2 built a
+      # wrong prediction on the assumption that they were the same number.
+      - name: F16 - context shift is visible, and find_slot is not slot-search
+        run: |
+          python - <<'PY'
+          import sys, collections
+          sys.path.insert(0, "tools")
+          from trace_analyze import Trace, self_times, HOST_CATS, pct
+
+          tr = Trace("examples/qwen-ctxshift-c256.trace.json")
+          per = collections.defaultdict(float)
+          shifts = 0
+          for t in tr.decode:
+              tok = t["args"]["tok"]
+              lo, hi = t["ts"], t["ts"] + t["dur"]
+              evs = [e for e in tr.by_token.get(tok, [])
+                     if e.get("cat") in HOST_CATS
+                     and lo - 1e-6 <= e["ts"]
+                     and e["ts"] + e.get("dur", 0.0) <= hi + 1e-6]
+              c = collections.defaultdict(float)
+              for cat, d in self_times(evs):
+                  c[cat] += d
+                  per[cat] += d
+              if c.get("kv.update", 0.0) > 1000.0:
+                  shifts += 1
+
+          n = len(tr.decode)
+          find = per.get("kv.find-slot", 0.0)
+          slot = per.get("kv.slot-search", 0.0)
+          print(f"{n} decode tokens, {shifts} context-shift events")
+          print(f"kv.find-slot   {find / n:6.2f} us/tok")
+          print(f"kv.slot-search {slot / n:6.2f} us/tok")
+
+          fail = []
+          if shifts < 2:
+              fail.append(f"expected several context shifts in a 256-cell cache, saw {shifts}")
+          if find <= 0:
+              fail.append("kv.find-slot scope is missing -- site 13 lost its instrumentation")
+          if slot <= 0:
+              fail.append("kv.slot-search scope is missing")
+          if find > 0.25 * slot:
+              fail.append(f"kv.find-slot is {100 * find / slot:.0f}% of kv.slot-search;"
+                          " F16 measured 2.7%. If find_slot really got that expensive"
+                          " that is a finding, not a test failure -- check before editing"
+                          " this threshold.")
+          if fail:
+              sys.exit("F16 no longer holds:\n  " + "\n  ".join(fail))
+          print("ok: F16 holds -- shifts visible, cell search is a small part of the scope")
+          PY
+
       - name: attribution must not exceed 100%
         run: |
           python - <<'PY'

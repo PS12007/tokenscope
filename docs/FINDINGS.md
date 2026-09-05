@@ -90,6 +90,12 @@ error.
 Recorded now precisely so that the prediction is on the record *before* the
 measurement that tests it.
 
+**That measurement is F16, and this prediction was wrong.** `find_slot` keeps a
+rotating head pointer rather than scanning from zero, so its cost is amortized
+O(1) and *fell* 40% as the cache filled. Worse, the 56 us/token quoted above is
+97% batch splitting: the scope wraps `init_batch`, which calls `find_slot` but
+is not `find_slot`. The actual cell search is 1.17 us/token.
+
 ---
 
 ## F3 — The outliers are all inside the graph, which is a finding about the tool
@@ -1145,10 +1151,111 @@ synchronizations that have one" is.**
 
 ---
 
+---
+
+## F16 — Context shift is real and cheap. F2's prediction was wrong, and the scope name is why.
+
+**Workload:** Qwen2.5-0.5B Q4_K_M, `llama-cli`, **`-c 256`** with `-n 700` so the
+context fills and shifts repeatedly, 6 threads, `TOKENSCOPE_LEVEL=1`. 699 decode
+tokens, median 11.60 ms.
+
+F1 and F2 each recorded a prediction about the KV cache *before* the experiment
+that could test it, which is the only reason either is worth anything now. This
+is that experiment.
+
+### F1's prediction: confirmed
+
+F1 measured `kv.update` at 275 µs across 257 tokens and said the case where it
+should light up — long generation in a tight window — "has not been tested yet."
+
+```
+context-shift events (kv.update > 1 ms): 4 of 699 tokens
+
+  token  218   13.34 ms  (1.15x median)  kv.update 1.72 ms
+  token  345   15.54 ms  (1.34x median)  kv.update 1.80 ms
+  token  472   13.48 ms  (1.16x median)  kv.update 1.99 ms
+  token  599   13.13 ms  (1.13x median)  kv.update 1.62 ms
+```
+
+Four shifts, **evenly spaced 127 tokens apart** in a 256-cell cache, each
+costing 1.6-2.0 ms on an 11.6 ms token. `kv.update` in total went from 275 µs
+(no shift) to 7.83 ms — **28×** — exactly as predicted.
+
+And it is the first thing in this project that produces a *periodic* per-token
+spike rather than a flat cost, which is precisely the "token 340 stalled" shape
+the tool was built to catch. It is also, honestly, small: a shift token is 13-34%
+slower than median, not 3×.
+
+### F2's prediction: falsified
+
+F2 said of `kv.slot-search`:
+
+> `llama_kv_cache::find_slot` is a linear scan for free cells, so its cost grows
+> with cache occupancy. […] on a long run in a nearly-full cache […] this is the
+> host-side cost that stops being a rounding error.
+
+This run is exactly that: a 256-cell cache held at capacity for 500 tokens.
+
+```
+  quarter 1: find-slot  1.59 us/tok    slot-search  43.31 us/tok
+  quarter 2: find-slot  1.20 us/tok    slot-search  42.81 us/tok
+  quarter 3: find-slot  0.95 us/tok    slot-search  42.56 us/tok
+  quarter 4: find-slot  0.94 us/tok    slot-search  41.65 us/tok
+```
+
+It does not grow. It **shrinks**, by 40%, as the cache fills.
+
+**Why.** `find_slot` is not a scan from zero. It keeps a per-stream head pointer
+(`v_heads[]`) and starts from there, so in steady-state single-sequence decode
+the cell it wants is the one immediately after the last one it took, and the
+loop exits almost immediately. There is even an explicit reset —
+`if (head_cur > cells.get_used() + 2*n_tokens) head_cur = 0;` — for the case
+where enough space has opened up behind it. The cost is amortized O(1) per
+token, not O(occupancy). F2 described an algorithm llama.cpp does not use.
+
+### The part that is a lesson rather than a correction
+
+F2 quoted 56 µs/token and attributed all of it to the cell search. Adding the
+scope for the cell search itself — site 13 in [`00`](00-architecture-map.md),
+listed since the first day and never implemented — shows what that number was:
+
+```
+  kv.slot-search self    42.59 us/tok      (init_batch, minus find_slot)
+  kv.find-slot            1.17 us/tok      (the actual cell search)
+
+  find_slot is 2.7% of what F2 called "kv.slot-search".
+```
+
+**97% of it was batch splitting, not searching.** The scope wraps
+`memory->init_batch(...)` at `llama-context.cpp:1785`, which splits the batch
+into ubatches *and then* calls `find_slot`. It was named for the interesting
+half and measured both.
+
+So F2 was wrong twice over, and the profiler carried the error: a name that
+over-claimed what a scope covered, and a prediction reasoned from the name
+rather than from the code. **A scope's name is a claim about what it measures,
+and it is exactly as checkable as any other claim in this file.**
+
+The fix is the measurement above — the nested scope now separates them
+permanently, so the split is visible rather than assumed. The enclosing scope
+keeps its name for compatibility with the committed reference traces, which is a
+compromise, and the architecture map now says what it actually covers.
+
+### Caveats
+
+- Single sequence. F2's *other* prediction — that concurrent sequences stress
+  `find_slot` far harder — remains untested, and the head-pointer mechanism is
+  much weaker with many streams competing, so it is still plausible.
+- A 256-cell cache is small. The head-pointer argument says occupancy should not
+  matter at any size, but only 256 was tested.
+- `kv.update` at 1.6-2.0 ms per shift is for a 24-layer 0.5B model; the shift
+  copies KV data, so it should scale with layers × heads × context.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
 
 - larger real models — the biggest measured is 630 M parameters (F12)
-- context-shift behaviour, i.e. the case where `kv.update` should be expensive
 - concurrent sequences / server workload

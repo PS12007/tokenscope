@@ -389,7 +389,7 @@ build flag.**
 | 2 | `balloc->init` | `llama-context.cpp:1705` | 1 | `batch-init` |
 | 3 | `sched_reserve` | `llama-context.cpp:1737` | 1 | `sched-reserve` |
 | 4 | `memory_update` | `llama-context.cpp:1740` | 1 | `kv.update` |
-| 5 | `memory->init_batch` | `llama-context.cpp:1745` | 1 | `kv.slot-search` |
+| 5 | `memory->init_batch` | `llama-context.cpp:1745` | 1 | `kv.slot-search` ✅ — **covers batch splitting *and* `find_slot`; 97% of it is the splitting (F16)** |
 | 6 | `output_reserve` | `llama-context.cpp:1793` | 1 | `output-reserve` |
 | 7 | `process_ubatch` | `llama-context.cpp:1826` | 1 | `ubatch` |
 | 8 | graph build (reuse miss) | `llama-context.cpp:1366` | 1 | `graph-build` |
@@ -397,7 +397,7 @@ build flag.**
 | 10 | `res->set_inputs` | `llama-context.cpp:1389` | 1 | `set-inputs` |
 | 11 | `graph_compute` | `llama-context.cpp:1394` | 1 | `graph-compute` |
 | 12 | logits readback | `llama-context.cpp:1874` | 1 | `logits-readback` |
-| 13 | `find_slot` | `llama-kv-cache.cpp:898` | 1 | `kv.find-slot` |
+| 13 | `find_slot` | `llama-kv-cache.cpp:898` | 1 | `kv.find-slot` ✅ — nested inside site 5, so the two are separable (F16) |
 | 14 | `apply_ubatch` | `llama-kv-cache.cpp:1097` | 1 | `kv.apply` |
 | 15 | `kv_cache::update` | `llama-kv-cache.cpp:817` | 1 | `kv.shift` |
 | 16 | `llama_sampler_sample` | `llama-sampler.cpp:895` | 1 | `sample` ✅ |

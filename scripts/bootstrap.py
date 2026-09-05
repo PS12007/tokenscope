@@ -48,6 +48,7 @@ TOUCHED = [
     "src/llama-context.cpp",          # tier 1: host scopes
     "src/llama-sampler.cpp",          # tier 1: sampling, via llama-cli
     "src/llama-vocab.cpp",            # tier 1: tokenize / detokenize
+    "src/llama-kv-cache.cpp",         # tier 1: the cell search itself
 ]
 
 

@@ -35,6 +35,7 @@ from collections import defaultdict
 HOST_CATS = frozenset({
     "batch-init", "sched-reserve", "kv.update", "kv.slot-search",
     "output-reserve", "ubatch", "graph-build", "graph-alloc", "set-inputs",
+    "kv.find-slot",
     "graph-compute", "logits-readback", "sample", "tok.encode", "tok.decode",
 })
 
