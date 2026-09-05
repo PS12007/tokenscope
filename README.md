@@ -334,7 +334,7 @@ Built in the open. `docs/` is the engineering log, in order — and
 - [x] Tier 2: per-node work/wait split, per-layer breakdown
 - [x] [Barrier decomposition: imbalance vs release, and what it is worth](docs/FINDINGS.md)
 - [x] [Thread-count sweep, 1 to 28](docs/FINDINGS.md)
-- [ ] Sampling and tokenizer scopes (`llama-bench` never exercises them)
+- [x] [Sampling and tokenizer scopes](docs/FINDINGS.md) — `llama-cli`, not `llama-bench`
 - [ ] Perfetto screenshots + three-model decode table
 - [ ] Real quantized models, and Linux/GCC
 - [ ] [Upstream issue](docs/03-upstream-issue-draft.md), then a PR

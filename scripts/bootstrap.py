@@ -46,6 +46,8 @@ TOUCHED = [
     "ggml/src/CMakeLists.txt",
     "ggml/src/ggml-cpu/ggml-cpu.c",   # tier 2: the node loop
     "src/llama-context.cpp",          # tier 1: host scopes
+    "src/llama-sampler.cpp",          # tier 1: sampling, via llama-cli
+    "src/llama-vocab.cpp",            # tier 1: tokenize / detokenize
 ]
 
 

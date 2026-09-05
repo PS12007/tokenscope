@@ -114,7 +114,7 @@ Repo: https://github.com/PS12007/tokenscope
 > The entire patch to instrument llama.cpp with per-token, per-node,
 > per-layer profiling:
 >
-> **104 changed lines across 4 files.**
+> **123 changed lines across 6 files.**
 >
 > Everything else lives in its own translation unit that gets copied in.
 >

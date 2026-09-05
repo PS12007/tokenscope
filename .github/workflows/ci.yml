@@ -172,8 +172,16 @@ jobs:
                   # compared against the token slice. Mixing them is the exact
                   # bug this check exists to catch (FINDINGS F5, and the 894%
                   # report that followed it).
+                  # Only scopes that lie inside the token's own slice can be
+                  # charged against it. Sampling and detokenization belong to a
+                  # token but run after llama_context::decode returns, and
+                  # counting those here is what first pushed attribution over
+                  # 100% when the sampling scopes were added.
+                  lo, hi = t["ts"], t["ts"] + t["dur"]
                   evs = [e for e in tr.by_token.get(tok, [])
-                         if e.get("cat") in HOST_CATS]
+                         if e.get("cat") in HOST_CATS
+                         and lo - 1e-6 <= e["ts"]
+                         and e["ts"] + e.get("dur", 0.0) <= hi + 1e-6]
                   total = sum(d for _, d in self_times(evs))
                   if total > t["dur"] * 1.001:
                       bad.append((tok, t["dur"], total))

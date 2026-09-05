@@ -27,9 +27,10 @@ picking the project back up.
 - Zero-overhead-when-off verified against the symbol table.
 - CI for three platforms, including the over-attribution regression check.
 
-**The upstream patch is 104 changed lines across 4 files.** (Unchanged this
-session -- F9 and F10 needed no new instrumentation, only analysis of traces
-the existing scopes already produced.)
+**The upstream patch is 123 changed lines across 6 files.** F9 and F10 needed
+no new instrumentation at all -- only analysis of traces the existing scopes
+already produced. The growth from 104/4 is the sampling and tokenizer scopes,
+which `llama-bench` never reaches.
 
 **Not done** — the honest list is in [`FINDINGS.md`](FINDINGS.md) under
 "Not yet measured" and [`02`](02-overhead-methodology.md) under "Remaining gaps".
@@ -219,7 +220,7 @@ thread sweep is FINDINGS F10, and the barrier arrival spread is F9.
 
 | Claim | Value | Source |
 |---|---|---|
-| Upstream patch size | 104 lines, 4 files | `patches/01-instrument.patch` |
+| Upstream patch size | 123 lines, 6 files | `patches/01-instrument.patch` |
 | Per-scope cost | 52.8 ns (2 clock reads + 1 store) | `ts_selftest` |
 | Level 3 overhead | +0.67% [+0.12, +1.67] | [`02`](02-overhead-methodology.md) |
 | Zero-overhead-when-off | 0 symbols, 864-byte archive | [`02`](02-overhead-methodology.md) §2 |

@@ -60,6 +60,10 @@ class Trace:
         self.decode = [e for e in self.tokens if e["cat"] == "decode"]
         self.prefill = [e for e in self.tokens if e["cat"] == "prefill"]
 
+        # per-token work that happens outside the token's own slice, filled
+        # in by split_totals
+        self.outside: dict[str, float] = {}
+
         # everything else, bucketed by the token ordinal recorded in args
         self.by_token = defaultdict(list)
         for e in self.events:
@@ -75,24 +79,48 @@ class Trace:
         """Host scopes measure wall time on one thread; node scopes measure
         thread time across N workers. Returns (host, node, n_workers) so the
         report can put them against the right denominators instead of summing
-        two different quantities into one meaningless percentage."""
+        two different quantities into one meaningless percentage.
+
+        `host` counts only scopes that lie *inside* their token's slice. Work
+        that belongs to a token but happens outside `llama_context::decode` --
+        sampling and detokenization, which run after decode returns -- is in
+        `self.outside` instead. Charging those against the decode slice makes
+        attribution exceed 100%, which is how this was found."""
         keep = {t["args"]["tok"] for t in self.decode} if only_decode else None
         host: dict[str, float] = defaultdict(float)
+        outside: dict[str, float] = defaultdict(float)
         node: dict[str, float] = defaultdict(float)
         worker_tids: set = set()
+
+        bounds = {t["args"]["tok"]: (t["ts"], t["ts"] + t["dur"])
+                  for t in self.tokens}
 
         for tok, evs in self.by_token.items():
             if keep is not None and tok not in keep:
                 continue
-            host_evs = [e for e in evs if e.get("cat") in HOST_CATS]
-            node_evs = [e for e in evs if e.get("cat") not in HOST_CATS]
+            lo_hi = bounds.get(tok)
+            host_evs, out_evs = [], []
+            node_evs = []
+            for e in evs:
+                if e.get("cat") not in HOST_CATS:
+                    node_evs.append(e)
+                elif lo_hi is not None and not (
+                        lo_hi[0] - _EPS_US <= e["ts"]
+                        and e["ts"] + e.get("dur", 0.0) <= lo_hi[1] + _EPS_US):
+                    out_evs.append(e)
+                else:
+                    host_evs.append(e)
+
             for cat, dur in self_times(host_evs):
                 host[cat] += dur
+            for cat, dur in self_times(out_evs):
+                outside[cat] += dur
             for e in node_evs:
                 # node scopes never nest, so self-time is duration
                 node[e.get("cat", "other")] += e.get("dur", 0.0)
                 worker_tids.add(e.get("tid", 0))
 
+        self.outside = dict(outside)
         return dict(host), dict(node), max(1, len(worker_tids))
 
     def category_totals(self, only_decode: bool = True) -> dict[str, float]:
@@ -227,8 +255,42 @@ def report_summary(tr: Trace) -> None:
                   f"{us / len(d) / 1000.0:8.3f} ms")
         acc = 100.0 * grand / wall
         print(f"\n  {acc:.1f}% of decode wall time is attributed to a host scope.")
-        if acc < 90.0:
-            print("  The remainder is time inside llama_decode that no scope covers yet.")
+        # A capture window (TOKENSCOPE_TOKENS) records scopes for only some
+        # tokens while the token slices themselves are still recorded for the
+        # whole run. Then a low percentage means "most tokens were not
+        # captured", not "most of decode is uninstrumented", and saying the
+        # latter would send a reader hunting for a gap that is not there.
+        covered = sum(1 for t in tr.decode
+                      if any(e.get("cat") in HOST_CATS
+                             for e in tr.by_token.get(t["args"]["tok"], [])))
+        if covered < len(d):
+            print("  {} of {} decode tokens carry host scopes -- the rest were"
+                  " outside".format(covered, len(d)))
+            print("  the TOKENSCOPE_TOKENS capture window, so the percentage"
+                  " above is of the")
+            print("  whole run, not of the captured tokens.")
+        elif acc < 90.0:
+            print("  The remainder is time inside llama_decode that no scope"
+                  " covers yet.")
+
+    # Per-token work that runs outside llama_context::decode -- sampling and
+    # detokenization happen after decode returns. It is real per-token cost,
+    # but it is not part of the decode slice, and charging it there pushed
+    # attribution over 100% when the sampling scopes were first added.
+    if tr.outside:
+        tot = sum(tr.outside.values())
+        print("\n  per-token work OUTSIDE the decode slice"
+              " (sampling, detokenization)\n")
+        print("  {:<18}{:>12}  {:>6}   {:>10}".format(
+            "category", "total", "%", "per-tok"))
+        print("  " + "-" * 50)
+        for cat, us in sorted(tr.outside.items(), key=lambda kv: -kv[1]):
+            print("  {:<18}{:>12}  {:5.1f}%   {:8.3f} ms".format(
+                cat, fmt_us(us), 100.0 * us / wall, us / len(d) / 1000.0))
+        print("\n  {} on top of decode, i.e. {:.1f}% more wall time per token."
+              .format(fmt_us(tot).strip(), 100.0 * tot / wall))
+        print("  These run between decode calls, so they are NOT included in the")
+        print("  percentages above -- llama-bench never calls them at all.")
 
     if node:
         grand = sum(node.values())

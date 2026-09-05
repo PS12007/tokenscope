@@ -617,6 +617,85 @@ trace_analyze.py t$T.json --barriers
 
 ---
 
+---
+
+## F11 — Sampling and detokenization are 0.13% of a token, and finding that out broke the attribution check
+
+**Workload:** same 24-layer synthetic F32 model, `llama-cli` (not `llama-bench`),
+6 threads, 31 decode tokens, `TOKENSCOPE_LEVEL=1`
+([`examples/mid-24L-cli-sampling.trace.json`](../examples/mid-24L-cli-sampling.trace.json)).
+
+Every number in F1 through F10 came from `llama-bench`, which never samples and
+never tokenizes. Those two are the last pieces of the per-token loop that had
+never been measured, so this closes the gap the "Not yet measured" list has
+carried since F1.
+
+```
+  per-token work OUTSIDE the decode slice (sampling, detokenization)
+
+  category                 total       %      per-tok
+  --------------------------------------------------
+  sample                886.9 us    0.1%      0.029 ms
+  tok.decode             19.2 us    0.0%      0.001 ms
+
+  906.1 us on top of decode, i.e. 0.1% more wall time per token.
+```
+
+- **`sample` — 28.6 µs/token, 0.129% of decode.** That is the whole CPU sampler
+  chain: `set_logits`, the reasoning-budget and grammar samplers, and the chain
+  apply, over an 8192-entry vocabulary.
+- **`tok.decode` — 0.62 µs/token.** Detokenization is not a cost.
+- **`tok.encode` — 206 µs, once,** for the whole prompt. It is a prefill cost
+  and does not recur.
+
+So sampling joins KV-slot search, graph building and logits readback on the
+list of things that sound expensive and are not. On this model, **99.87% of a
+generated token is `llama_context::decode`, and 99.5% of that is
+`graph_compute`.** F1 said every remaining question lives inside the graph;
+with sampling now measured rather than assumed, that statement is complete
+rather than provisional.
+
+### The part worth more than the number
+
+Adding these scopes made the summary report **100.1% of decode wall time
+attributed to a host scope** — which is impossible, and is the same consistency
+check that caught the scope-misparenting bug in F5.
+
+The cause was not a timing bug. It was a **boundary** bug, and a conceptual one:
+`common_sampler_sample` runs *after* `llama_context::decode` returns. The scopes
+were correctly timed and correctly associated with their token — but they lie
+outside that token's slice, so charging them against it adds time the slice
+never contained. 341 of 341 sampling scopes were outside; 16 of 31 tokens went
+over.
+
+The fix is a distinction the report now makes explicitly: per-token work that
+happens *inside* the decode slice is charged against it, and per-token work that
+happens *outside* it is reported separately, with its own note saying so. Both
+are real costs of producing a token. Only one is part of `decode`.
+
+This is F4's lesson arriving from the other direction. F4 was about two tools
+drawing the boundary differently; this is about one tool drawing it in one place
+and then quietly billing work from outside it. **A per-token profiler has to
+answer "per token" and "inside what" as separate questions,** and the 0.1%
+overshoot was the only thing that made the difference visible.
+
+The CI check now applies the same inside-the-slice rule, so the two cannot drift
+apart, and the `llama-cli` trace is committed as a reference so the sampling
+path stays covered.
+
+### Caveats
+
+- One sampler chain (`llama-cli` defaults) and an 8192-token synthetic
+  vocabulary. A real 128k vocabulary makes every softmax and sort roughly 16×
+  larger, and a grammar-constrained sampler is a different workload entirely.
+  **0.13% is not a general claim about sampling.**
+- `llama_sampler_apply` is scoped rather than `common_sampler_sample`, so
+  `llama_synchronize` and `set_logits` inside the latter are *not* in the
+  number. The scope covers the samplers, not the wait for the graph.
+- 6 threads, single sequence, greedy-ish default chain.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
@@ -624,4 +703,3 @@ Listed so the gaps are explicit rather than implied:
 - real quantized models — everything above is synthetic F32 weights
 - context-shift behaviour, i.e. the case where `kv.update` should be expensive
 - concurrent sequences / server workload
-- sampling and tokenization, which `llama-bench` never exercises

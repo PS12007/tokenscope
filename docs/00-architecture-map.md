@@ -400,10 +400,10 @@ build flag.**
 | 13 | `find_slot` | `llama-kv-cache.cpp:898` | 1 | `kv.find-slot` |
 | 14 | `apply_ubatch` | `llama-kv-cache.cpp:1097` | 1 | `kv.apply` |
 | 15 | `kv_cache::update` | `llama-kv-cache.cpp:817` | 1 | `kv.shift` |
-| 16 | `llama_sampler_sample` | `llama-sampler.cpp:895` | 1 | `sample` |
-| 17 | `llama_sampler_apply` | `llama-sampler.cpp:382` | 1 | `sample.<name>` |
-| 18 | `llama_token_to_piece` | `llama-vocab.cpp:4426` | 1 | `tok.decode` |
-| 19 | `llama_tokenize` | `llama-vocab.cpp:4415` | 1 | `tok.encode` |
+| 16 | `llama_sampler_sample` | `llama-sampler.cpp:895` | 1 | `sample` ✅ |
+| 17 | `llama_sampler_apply` | `llama-sampler.cpp:382` | 1 | `sample` ✅ — this, not 16, is the entry point `common_sampler_sample` uses |
+| 18 | `llama_token_to_piece` | `llama-vocab.cpp:4426` | 1 | `tok.decode` ✅ |
+| 19 | `llama_tokenize` | `llama-vocab.cpp:4415` | 1 | `tok.encode` ✅ |
 | 20 | **`ggml_compute_forward`** | `ggml-cpu.c:3147` | **2** | derived from `node->name` |
 | 21 | **`ggml_barrier`** | `ggml-cpu.c:3157` | **2** | `barrier-wait` |
 
