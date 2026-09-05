@@ -188,7 +188,15 @@ python scripts/bootstrap.py --make-patch --dest ../llama.cpp
 ```
 
 Forgetting the `cp` means rebuilding the old code and debugging a fix that is
-already correct. It cost time this session.
+already correct. It cost time in session 1.
+
+**And if you instrument a file that is not already in `bootstrap.py`'s
+`TOUCHED` list, `--make-patch` silently regenerates the *old* patch and reports
+success.** That happened twice in session 2. The list is now:
+`ggml/CMakeLists.txt`, `ggml/src/CMakeLists.txt`,
+`ggml/src/ggml-cpu/ggml-cpu.c`, `src/llama-context.cpp`,
+`src/llama-sampler.cpp`, `src/llama-vocab.cpp`, `src/llama-kv-cache.cpp`.
+Add to it the moment you touch a new file.
 
 ---
 
