@@ -475,6 +475,13 @@ the barrier that follows. The realistic version of this fix is not "parallelize
 them", it is **fuse them**, so that a chain of single-row elementwise ops pays
 one barrier instead of five.
 
+**That recommendation was tested in F15 and did not hold.** ggml already fuses
+exactly this kind of chain (`RMS_NORM` + `MUL`), removing 49 of 461 barriers per
+token; turning it off changes throughput by no measurable amount, in three
+regimes including one where barrier wait is 54% of thread time. The barriers a
+fusion removes are the ones threads arrive at together, so removing them saves
+nothing. The measurement above stands; the fix proposed here does not.
+
 Recorded as a bounded, checkable claim rather than a headline: the honest
 statement is *"29% of decode barriers are paid for single-threaded nodes, worth
 at most 1.3% of graph wall time, and the promising fix is fusion, not
@@ -1027,6 +1034,114 @@ E-only run, which is clean, rather than on this one.
 - Synthetic F32 weights. F12 showed the quantized model falls off *more*
   steeply past the P-core count, which is consistent with this being the cause,
   but that combination was not measured under pinning.
+
+---
+
+---
+
+## F15 — Fusion removes 10.6% of the barriers and buys nothing. F9's recommendation was wrong.
+
+**Workload:** as labelled below; uninstrumented build for throughput, level-3
+traces for structure. ggml exposes `GGML_CPU_DISABLE_FUSION=1`, which turns off
+its op fusion at runtime — so the value of fusion can be measured directly
+rather than argued about.
+
+F9 closed by recommending fusion: the near-serial elementwise nodes cost more in
+other threads' waiting than in their own work, so *"the realistic version of
+this fix is not 'parallelize them', it is fuse them, so that a chain of
+single-row elementwise ops pays one barrier instead of five."*
+
+That was reasoning, not measurement. Here is the measurement.
+
+### What ggml already fuses, and what it removes
+
+`ggml_cpu_try_fuse_ops` implements exactly **one** pattern: `RMS_NORM` + `MUL`.
+That is the norm chain — precisely the kind of single-row elementwise work F9
+was talking about.
+
+Turning it off, on the 24-layer F32 model at 6 threads:
+
+```
+                     barriers/token   barrier share of thread time
+  fusion enabled          412                    6.8%
+  fusion disabled         461                    8.5%
+```
+
+**49 barriers per token** — 24 layers × 2 norms, plus the final one — or 10.6%
+of all barriers in the graph. Barrier thread-time share falls by a fifth
+relative. By F9's argument this should show up as throughput.
+
+### It does not
+
+Interleaved arms, `-r 5` per round:
+
+```
+  24L F32, 6 threads   (barrier ~7% of thread time)
+    fusion enabled    44.75   44.78   45.06     mean 44.86
+    fusion disabled   44.81   44.86   45.00     mean 44.89
+
+  24L F32, 20 threads  (barrier ~23%)
+    fusion enabled    42.06   41.71               mean 41.89
+    fusion disabled   41.62   41.86               mean 41.74
+
+  tiny 8L, 6 threads   (barrier 54%)
+    fusion enabled  1789.92 1933.83               mean 1861.9
+    fusion disabled 1854.92 1875.68               mean 1865.3
+```
+
+**No measurable difference in any regime**, including the one where barrier wait
+is more than half of all worker thread time. The signs are not even consistent:
+−0.06%, +0.35%, −0.18%, all inside the run-to-run spread.
+
+### Why, and what it means for F9
+
+The barriers fusion removes are **cheap** barriers. A barrier's wall-clock cost
+is set by how far apart the threads arrive at it, and threads arrive at a norm
+almost together — the node before it is tiny and everyone finishes it at
+roughly the same moment. Removing a rendezvous that nobody was waiting long at
+saves nothing, no matter how many of them you remove.
+
+F9's own table said this and I misread it. `ffn_swiglu` carries 1.75 ms of
+imbalance; `ffn_out` carries **10.19 ms**. The waiting that matters is at the
+barriers after the *big matmuls*, where threads genuinely arrive at different
+times — and F14 then showed why they do: unequal cores given equal row counts.
+
+So the three findings resolve into one story, with the middle step corrected:
+
+- **F9** — the tiny elementwise nodes are single-threaded and cost more in
+  waiting than in work. **True, and still true on a real quantized model.**
+- **F9's proposed fix** — fuse them. **Tested here. No measurable benefit.**
+- **F14** — the imbalance with real wall-clock cost comes from core
+  heterogeneity in the large matmuls, and wants proportional work assignment,
+  not fewer rendezvous.
+
+F9's *measurement* stands. F9's *recommendation* does not, and F9 now says so
+inline. The 1.34% figure there was already labelled an upper bound that would
+not be reached; this is how far short it falls — the reachable part is not
+distinguishable from zero by this experiment.
+
+### The general point
+
+Barrier count and barrier cost are different quantities, and a profiler that
+reports the first invites you to optimize the second by proxy. Ten percent of
+the rendezvous carried approximately none of the waiting. **"Reduce
+synchronization" is not a strategy; "reduce the arrival spread at the
+synchronizations that have one" is.**
+
+### Caveats
+
+- This tests one fusion pattern, the only one ggml has. It is a norm chain, and
+  the residual-add and SwiGLU chains F9 also named are not fused by anything, so
+  they are not directly tested. But they are the same *kind* of node — cheap,
+  single-row, entered by threads that arrive together — so the prior that
+  fusing them would pay should now be much weaker, not merely unproven.
+- Interleaved arms but not the full bootstrap treatment of
+  [`02`](02-overhead-methodology.md); this is a null result on a machine whose
+  noise floor is 1-3%, so it bounds the effect rather than excluding it. A real
+  effect smaller than about 1% would not be visible here.
+- The tiny-model arm has ±50-110 tok/s of spread on a ~1860 tok/s median, which
+  is why it is reported as three regimes agreeing rather than as one precise
+  number.
 
 ---
 

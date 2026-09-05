@@ -186,11 +186,12 @@ thread sweep is FINDINGS F10, and the barrier arrival spread is F9.
    split by measured per-thread throughput would test whether the barrier waste
    F14 attributes to heterogeneity is actually recoverable. This is the largest
    change this project has pointed at, and the best-supported.
-7. **Fusion experiment for F9.** F9 says the promising fix for the near-serial
-   elementwise nodes is fusing them, not parallelizing them, and llama.cpp
-   already has `ggml_cpu_try_fuse_ops`. Checking what it currently fuses on this
-   graph would turn F9's closing recommendation from reasoning into a
-   measurement.
+7. ~~**Fusion experiment for F9.**~~ **Done (F15), and it came out negative.**
+   ggml fuses one pattern; disabling it removes 49 of 461 barriers per token and
+   changes throughput by nothing measurable, in three regimes. F9's
+   recommendation is retracted inline. The live question it leaves is item 6:
+   the waiting that has wall-clock cost is at the big matmuls, not the cheap
+   elementwise nodes.
 8. **File the upstream issue** - draft and prerequisites in
    [`03`](03-upstream-issue-draft.md). Do not file before items 1 and 3. F9 is
    now much the strongest material for it, and it comes with a mechanism from
@@ -228,7 +229,8 @@ thread sweep is FINDINGS F10, and the barrier arrival spread is F9.
 | Barrier wait | 11.2% of worker thread time | [`FINDINGS`](FINDINGS.md) F6 |
 | ...of which arrival imbalance | 83.7% (spin-up excluded) | [`FINDINGS`](FINDINGS.md) F9 |
 | Barriers behind single-threaded nodes | 120 of 412 per token | [`FINDINGS`](FINDINGS.md) F9 |
-| Upper bound on fixing that | 1.34% of graph wall time | [`FINDINGS`](FINDINGS.md) F9 |
+| Upper bound on fixing that | 1.34% of graph wall time, and F15 found no reachable part | F9, F15 |
+| Barriers removed by ggml's one fusion | 49 of 461 per token, for no measurable throughput | [`FINDINGS`](FINDINGS.md) F15 |
 | Best speedup at any thread count | 2.21x F32 / 3.28x Q4_K_M, both at 6 threads | F10, F12 |
 | `lm_head` share, Qwen2.5-0.5B Q4_K_M | 34% of decode thread time | [`FINDINGS`](FINDINGS.md) F12 |
 | Phase time predicted from weight BYTES | within 2.9 points on a real quantized model | [`FINDINGS`](FINDINGS.md) F12 |
