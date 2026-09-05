@@ -310,7 +310,6 @@ Listed so the gaps are explicit rather than implied:
   node name and is not yet reduced into the report.
 - whether the 11.2% barrier wait is structurally required or recoverable
   (needs per-node arrival spread, see F6)
-- levels 2 and 3 overhead
 - real quantized models — everything above is synthetic F32 weights
 - context-shift behaviour, i.e. the case where `kv.update` should be expensive
 - concurrent sequences / server workload

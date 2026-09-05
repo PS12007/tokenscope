@@ -6,7 +6,7 @@ the parts that are not yet settled.
 | Claim | Status |
 |---|---|
 | Zero overhead when compiled out | **Established**, structurally |
-| Under 2% when enabled | **Established for level 1.** Levels 2 and 3 are not implemented yet and therefore not measured. |
+| Under 2% when enabled | **Established for every level.** Level 3, the full per-node timeline, measures +0.67% [+0.12, +1.67]. |
 
 ---
 
@@ -80,7 +80,9 @@ that is not about the profiler at all. Three arms:
 |---|---|---|---|
 | **A** | `GGML_TOKENSCOPE=OFF` | — | true baseline |
 | **B** | `ON` | `TOKENSCOPE_LEVEL=0` | cost of the residual enable-flag check |
-| **C1** | `ON` | `TOKENSCOPE_LEVEL=1` | real profiling overhead, host scopes |
+| **C1** | `ON` | `TOKENSCOPE_LEVEL=1` | host scopes only |
+| **C2** | `ON` | `TOKENSCOPE_LEVEL=2` | + per-node aggregates, constant memory |
+| **C3** | `ON` | `TOKENSCOPE_LEVEL=3` | + every node event on every thread |
 
 **A vs B** is the honest test of "you can ship a build with this compiled in and
 turned off." **B vs C** is what a user pays to actually profile.
@@ -102,7 +104,13 @@ turned off." **B vs C** is what a user pays to actually profile.
 
 Implementation: [`tools/bench_overhead.py`](../tools/bench_overhead.py).
 
-### Result: decode (tg256, 8 threads, 15 reps)
+### Session 1: levels 0 and 1 only
+
+Taken before Tier 2 existed, when level 1 meant a single scope per
+`llama_decode` call. Kept because the sessions together make the point about
+measurement noise below.
+
+#### decode (tg256, 8 threads, 15 reps)
 
 ```
   arm                       median tok/s     IQR   overhead vs A
@@ -114,7 +122,7 @@ Implementation: [`tools/bench_overhead.py`](../tools/bench_overhead.py).
   baseline IQR is 0.42% of median.
 ```
 
-### Result: prefill (pp512, 8 threads, 15 reps)
+#### prefill (pp512, 8 threads, 15 reps)
 
 ```
   arm                       median tok/s     IQR   overhead vs A
@@ -138,7 +146,7 @@ The negative point estimate on decode (`-0.04%`) is not the profiler making
 inference faster. It is noise, and reporting it as a speedup would be exactly
 the kind of dishonesty this methodology exists to prevent.
 
-### Re-measured after full Tier 1 instrumentation
+### Session 2: re-measured after full Tier 1 instrumentation
 
 The numbers above were taken when level 1 meant **one** scope per `llama_decode`
 call. Level 1 now records **eleven**: `batch-init`, `sched-reserve`,
@@ -191,31 +199,114 @@ The defensible combined statement across both sessions:
 > ±0.5%; the loosest is ±1.3%. No run has produced a point estimate outside
 > ±0.3%.
 
-### What level 1 currently contains, and why that matters
+### Session 3: levels 2 and 3, and the first measurable overhead
 
-This is the important caveat, and burying it would make the headline number
-misleading.
+Level 3 records **every graph node event on every worker thread** — roughly
+1,400 records per token per thread, ~2.9 million records over a `tg256` run.
+This is the arm the whole design was worried about.
 
-**Level 1 was one scope per `llama_decode` call when the headline numbers above
-were taken** — the prefill/decode boundary, and nothing else. That was
-deliberate: the plan
-([`01`](01-design-scope-timing.md) section 11) is to validate the mechanism and
-its cost *before* expanding scope, so that when a number does come back too
-high, there is exactly one place it can be coming from.
+15 repetitions, 5 arms, interleaved:
 
-So the result above establishes:
+```
+decode (tg256, 8 threads)
+  arm                       median tok/s     IQR   overhead vs A
+  --------------------------------------------------------------------
+  A: compiled out                  42.41    0.7%                  -
+  B: in, level 0                   42.28    1.6%    +0.31%  [-1.13, +0.79]
+  C1: active level 1               42.26    2.3%    +0.36%  [-0.61, +1.80]
+  C2: active level 2               42.12    1.7%    +0.69%  [-0.01, +1.86]
+  C3: active level 3               42.13    1.1%    +0.67%  [+0.12, +1.67]
 
-- the fixed cost of the mechanism (TLS access, buffer reserve, two clock reads,
-  a 24-byte store) is below this system's noise floor;
-- and, more usefully, that the harness can resolve 0.4% at all, which is the
-  precondition for the levels that will actually cost something.
+  baseline IQR is 0.70% of median.
+```
 
-Level 1 is now fully instrumented (eleven scopes; see the re-measurement above),
-so that first point is settled. What remains unmeasured is levels 2 and 3, where
-~500 nodes per token per thread are recorded. Those are where the real risk lives
-(docs/01 section 8: cache pollution, and the barrier turning per-thread jitter
-into whole-graph latency), and they will be measured the same way before any
-number about them appears in the README.
+**Level 3 is the first arm whose confidence interval excludes zero.** After five
+measurement sessions in which every result was "indistinguishable from zero",
+this one is an actual effect:
+
+> **Level 3 overhead is +0.67%, 95% CI [+0.12, +1.67].**
+
+Level 2 sits at +0.69% [-0.01, +1.86] — the interval grazes zero, so it is
+suggestive rather than established.
+
+Both are inside the 2% budget. The upper bound of the level 3 interval (+1.67%)
+is inside it too, which matters: the claim survives the pessimistic end of the
+measurement, not just the point estimate.
+
+### Verifying the level 3 number is not an artifact of dropped records
+
+A profiler that fills its buffer and stops recording gets cheaper. If the
+budget had been exhausted partway through the `tg256` run, the measured
+overhead would be for a partial trace and the number would be worthless.
+
+Checked directly, on the exact benchmark workload:
+
+```
+tokenscope: wrote full3.json (228,723,230 bytes, 259 tokens, 8 threads, 0 dropped)
+```
+
+**Zero dropped.** The full run was recorded, so +0.67% is the cost of recording
+all of it.
+
+That 229 MB is itself the practical constraint on level 3: it is close to the
+256 MB default budget, and a longer run would hit it. That is what
+`TOKENSCOPE_TOKENS=340-345` is for, and it is why level 2's constant-memory
+aggregate mode exists.
+
+### Why the cost is this low, and why that was not obvious
+
+The naive model in docs/01 predicted ~0.1% and explicitly warned it might not
+hold, for two reasons that the model does not capture:
+
+- **cache pollution** — records evicting weights in a bandwidth-bound workload;
+- **the barrier** — per-thread jitter becoming whole-graph latency, since the
+  graph waits for the slowest thread at each of ~700 barriers per token.
+
+Measured at +0.67% against a ~0.1% naive prediction, both effects are real —
+the cost is roughly 6× the arithmetic — and both are small enough in absolute
+terms to stay well inside budget. The mitigations appear to have worked:
+collapsing four clock reads per node into two, keeping records at 24 bytes, and
+pre-touching chunks so no allocation happens inside a graph.
+
+That is a satisfying place to land, but the honest framing is that the design
+predicted the *right risks* and got the *magnitude* wrong by 6×. The naive cost
+model is not a substitute for the measurement, which is the entire argument of
+this document.
+
+### Why the order of these sessions mattered
+
+Session 1 measured a mechanism with **one** scope in it. That looked like a
+weak result at the time — and it was the point.
+
+The plan ([`01`](01-design-scope-timing.md) section 11) was to measure the
+mechanism before expanding scope, so that if a number ever came back too high
+there would be exactly one place it could be coming from. Session 1 established
+two things that only look useful in hindsight:
+
+- the fixed cost of the mechanism — TLS access, buffer reserve, two clock reads,
+  a 24-byte store — is below the system's noise floor;
+- the harness can resolve 0.4% at all, which is the precondition for measuring
+  anything smaller than 2%.
+
+Without that, session 3's `+0.67% [+0.12, +1.67]` would be a number with
+sixteen instrumentation sites behind it and no way to attribute it. With it, the
+progression 0.31% → 0.36% → 0.69% → 0.67% across arms B, C1, C2, C3 reads as a
+cost curve rather than a single opaque figure.
+
+### Remaining gaps in the overhead claim
+
+- **Linux/GCC untested.** Everything here is MSVC on Windows. The TLS
+  characteristics that shaped the design are Windows-specific, and GCC's
+  `__thread` is cheaper, so the expectation is that Linux is no worse — but
+  expectation is not measurement.
+- **Shared-library builds untested.** All measurements are
+  `BUILD_SHARED_LIBS=OFF`. The `__declspec(dllimport)` path adds an indirection
+  per global read on Windows.
+- **Thread-count sweep not done.** docs/01 argued that barrier effects make
+  overhead a `max()` across threads rather than a mean, which predicts that
+  overhead grows with thread count. Only 8 threads has been measured. A 1 / 4 /
+  8 / oversubscribed sweep is the test of that prediction.
+- **Quantized models untested**, as noted in section 1.
 
 ### The isolated per-scope cost
 

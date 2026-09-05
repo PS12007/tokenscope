@@ -112,7 +112,7 @@ where your time goes.
 | Constraint | How it is enforced | Status |
 |---|---|---|
 | **Zero overhead when disabled** | Everything behind `TOKENSCOPE_ENABLED`. Off ⇒ macros expand to nothing; no symbol, no branch, no storage. | ✅ verified against the symbol table |
-| **Under 2% when enabled** | Measured with interleaved arms and bootstrap CIs, not assumed. | ✅ for level 1; levels 2–3 not built yet |
+| **Under 2% when enabled** | Measured with interleaved arms and bootstrap CIs, not assumed. | ✅ all levels; level 3 is +0.67% [+0.12, +1.67] |
 | **No new dependencies** | C++17 standard library on the engine side. Python stdlib for analysis. | ✅ |
 | **No locks in the hot path** | Thread-local buffers, merged at flush. | ✅ |
 | **Deterministic, not sampled** | Explicitly placed scopes, so the trace is *interpretable* rather than statistical. | ✅ |
@@ -125,20 +125,29 @@ repetitions per arm. Full method and caveats in
 [`docs/02-overhead-methodology.md`](docs/02-overhead-methodology.md).
 
 ```
-decode (tg256)
+decode (tg256, 8 threads, 15 interleaved reps per arm)
   arm                       median tok/s     IQR   overhead vs A
   --------------------------------------------------------------------
-  A: compiled out                  42.23    0.4%                  -
-  B: in, level 0                   42.19    0.8%    +0.11%  [-0.25, +0.76]
-  C1: active level 1               42.25    0.7%    -0.04%  [-0.48, +0.45]
+  A: compiled out                  42.41    0.7%                  -
+  B: in, level 0                   42.28    1.6%    +0.31%  [-1.13, +0.79]
+  C1: active level 1               42.26    2.3%    +0.36%  [-0.61, +1.80]
+  C2: active level 2               42.12    1.7%    +0.69%  [-0.01, +1.86]
+  C3: active level 3               42.13    1.1%    +0.67%  [+0.12, +1.67]
 ```
 
-Every interval contains zero, so the correct claim is **not** "0.11% overhead".
-It is: *at level 1, the cost is not distinguishable from zero on this system, at
-a resolution of about ±0.5%.* Level 1 currently means one scope per
-`llama_decode` call; the levels that record every graph node are where the real
-risk lives and they will be measured the same way before any number about them
-appears here.
+Levels 0–2 have intervals containing zero, so the honest reading there is "not
+distinguishable from zero". **Level 3 — every graph node event on every worker
+thread, ~2.9 million records over the run — is the first arm with a measurable
+effect: +0.67%, CI [+0.12, +1.67].** Both ends of that interval are inside the
+2% budget, which is the part that matters; the claim survives the pessimistic
+end of the measurement, not just the point estimate.
+
+And the number is not an artifact of a full buffer, which would make recording
+look cheap by doing less of it:
+
+```
+tokenscope: wrote full3.json (228,723,230 bytes, 259 tokens, 8 threads, 0 dropped)
+```
 
 And the claim that cannot be tested statistically, tested structurally instead:
 
