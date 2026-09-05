@@ -64,22 +64,27 @@ The short version:
 
 ---
 
-## 2. The push landed
+## 2. Push first. Check before anything else.
 
-**Session 2 pushed everything.** The repo is no longer one machine's local
-state, which is what section 2 used to be about. Check `git log --oneline
-origin/main..main` is empty before doing anything else; session 2's last push
-hit `Empty reply from server` and had to be retried.
+```bash
+git log --oneline origin/main..main    # MUST be empty
+git push origin main
+```
 
-Networking here is **intermittent, not simply blocked**. During session 2
-`github.com`, `huggingface.co` and `pypi.org` were all unreachable for over an
-hour, then a `git push` succeeded while a `curl https://github.com` issued
-seconds later still failed, and a `git fetch` right after that died with
-`expected flush after ref listing`. So: retry rather than conclude. A failed
-connection says nothing about the next one.
+Session 2 pushed most of its work but **ended with commits still local**,
+because `github.com` went down again near the end and stayed down. Everything is
+committed; some of it may not have reached the remote. Check and push before
+starting anything new.
 
-The Hugging Face download needed for a real quantized model is still
-outstanding for this reason.
+Networking here is **intermittent, not blocked**. Session 1 concluded GitHub was
+specifically unreachable and stopped retrying, which is why 14 commits sat local
+for a whole session. Session 2 saw a `git push` succeed while a `curl
+https://github.com` seconds later still failed, a `git fetch` die mid-protocol
+with `expected flush after ref listing`, a Hugging Face download of 469 MB
+complete without a hiccup, and then hours where nothing connected at all.
+
+**The rule: a failed connection says nothing about the next one. Retry, and
+retry again later.**
 
 ## 3. Environment — what had to be set up, and the traps
 
