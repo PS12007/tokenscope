@@ -37,7 +37,7 @@ SRC = os.path.join(HERE, "src")
 PATCHES = os.path.join(HERE, "patches")
 
 # Files copied verbatim into the upstream tree.
-COPY = ["tokenscope.h", "tokenscope.cpp"]
+COPY = ["tokenscope.h", "tokenscope-ggml.h", "tokenscope.cpp"]
 
 # Upstream files the patches touch. Listed here so --make-patch produces a
 # stable, reviewable diff instead of whatever happens to be dirty.

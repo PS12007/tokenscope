@@ -74,33 +74,53 @@ class Trace:
         return dict(totals)
 
 
+# Two scopes that touch share an instant: the parent's end and the child's
+# start are the same microsecond. In floating point they are not, and a
+# comparison that is wrong by 1e-9 reparents a sibling as a child, which makes
+# self-time attribution silently wrong. tokenscope therefore records nesting
+# depth explicitly; this tolerance is only for traces that lack it.
+_EPS_US = 1e-6
+
+
 def self_times(events: list[dict]):
     """Yield (category, self_microseconds) for a set of events, subtracting
     time attributable to nested children so categories sum to wall time
-    rather than to something larger than the run."""
+    rather than to something larger than the run.
+
+    Nesting comes from the recorded `args.depth` when present, and falls back
+    to timestamp containment otherwise, so traces from other producers still
+    work."""
     by_thread = defaultdict(list)
     for e in events:
         by_thread[e.get("tid", 0)].append(e)
 
     for evs in by_thread.values():
         evs.sort(key=lambda e: (e["ts"], -e.get("dur", 0.0)))
-        stack: list[tuple[float, float, str, list[float]]] = []
+        stack: list[tuple[float, float, str, list[float], int]] = []
         for e in evs:
             t0 = e["ts"]
             dur = e.get("dur", 0.0)
             t1 = t0 + dur
             cat = e.get("cat", "other")
+            depth = e.get("args", {}).get("depth")
 
-            while stack and stack[-1][1] <= t0:
-                st0, st1, scat, kids = stack.pop()
-                yield scat, max(0.0, (st1 - st0) - sum(kids))
+            if depth is None:
+                # fall back to timestamp containment, with a tolerance
+                while stack and stack[-1][1] <= t0 + _EPS_US:
+                    st0, st1, scat, kids, _ = stack.pop()
+                    yield scat, max(0.0, (st1 - st0) - sum(kids))
+            else:
+                # a scope at depth d closes every open scope at depth >= d
+                while stack and stack[-1][4] >= depth:
+                    st0, st1, scat, kids, _ = stack.pop()
+                    yield scat, max(0.0, (st1 - st0) - sum(kids))
 
             if stack:
                 stack[-1][3].append(dur)
-            stack.append((t0, t1, cat, []))
+            stack.append((t0, t1, cat, [], depth if depth is not None else -1))
 
         while stack:
-            st0, st1, scat, kids = stack.pop()
+            st0, st1, scat, kids, _ = stack.pop()
             yield scat, max(0.0, (st1 - st0) - sum(kids))
 
 

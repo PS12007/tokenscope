@@ -135,6 +135,16 @@ __thread
 #endif
 struct ts_buffer * ts_tls;
 
+// Host-scope nesting depth. Thread-local, plain integer, constant initializer:
+// the same MSVC-DLL constraint that applies to ts_tls applies here.
+extern
+#ifdef _MSC_VER
+__declspec(thread)
+#else
+__thread
+#endif
+uint32_t ts_depth;
+
 #define TS_ACTIVE (ts_g_level != TS_LEVEL_OFF)
 
 // ---------------------------------------------------------------------------
@@ -230,15 +240,28 @@ namespace tokenscope {
 
 class scope {
 public:
-    TS_INLINE scope(uint32_t id) : m_id(id), m_t0(ts_g_level ? ts_now() : 0) {}
+    TS_INLINE scope(uint32_t id) : m_id(id), m_t0(ts_g_level ? ts_now() : 0) {
+        // Record nesting depth explicitly rather than leaving the analyzer to
+        // infer it from timestamps. Two adjacent scopes touch at exactly one
+        // instant, and floating-point microseconds cannot tell "ends where the
+        // next begins" from "contains the next" -- which silently reparents a
+        // sibling and makes self-time attribution wrong. One increment is a
+        // cheaper fix than an epsilon that has to be right on every machine.
+        if (m_t0) m_depth = ts_depth++;
+    }
     TS_INLINE ~scope() {
-        if (m_t0) ts_emit(m_t0, ts_now(), m_id, TS_KIND_HOST, 0);
+        if (m_t0) {
+            --ts_depth;
+            ts_emit(m_t0, ts_now(), m_id, TS_KIND_HOST,
+                    m_depth > 255 ? 255 : (uint8_t) m_depth);
+        }
     }
     scope(const scope &) = delete;
     scope & operator=(const scope &) = delete;
 private:
     uint32_t m_id;
     uint64_t m_t0;
+    uint32_t m_depth = 0;
 };
 
 // A token (or prefill batch) boundary. RAII because llama_context::decode has

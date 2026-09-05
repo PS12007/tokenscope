@@ -44,8 +44,10 @@ TS_API uint16_t ts_g_graph = 0;
 
 #ifdef _MSC_VER
 __declspec(thread) ts_buffer * ts_tls = nullptr;
+__declspec(thread) uint32_t    ts_depth = 0;
 #else
 __thread ts_buffer * ts_tls = nullptr;
+__thread uint32_t    ts_depth = 0;
 #endif
 }
 
@@ -386,6 +388,7 @@ struct out_event {
     const std::string * name;
     const char *        cat;
     uint32_t    token;
+    uint8_t     depth;
     uint8_t     ph_instant;
 };
 
@@ -411,6 +414,8 @@ void emit_event(std::string & out, bool & first, const out_event & e, int32_t pi
     }
     out += ",\"args\":{\"tok\":";
     out += std::to_string(e.token);
+    out += ",\"depth\":";
+    out += std::to_string((unsigned) e.depth);
     out += "}}";
 }
 
@@ -501,11 +506,16 @@ extern "C" TS_API void ts_flush(const char * path) {
                 e.dur_us     = ts_ticks_to_us(rec.dur);
                 e.tid        = st->buf.tid;
                 e.token      = rec.token;
+                e.depth      = rec.depth;
                 e.ph_instant = (rec.kind == TS_KIND_MARK);
 
                 if (rec.kind == TS_KIND_HOST || rec.kind == TS_KIND_MARK) {
                     e.name = rec.ref < r.names.size() ? &r.names[rec.ref] : &s_unknown;
-                    e.cat  = "host";
+                    // Category IS the scope name for host scopes. Bucketing them
+                    // all under "host" would collapse the breakdown the tool
+                    // exists to produce -- and would make outlier attribution
+                    // report "the slow thing was the token", which is not news.
+                    e.cat = e.name->c_str();
                 } else if (rec.kind == TS_KIND_NODE_WAIT) {
                     e.name = &s_barrier;
                     e.cat  = "barrier";
