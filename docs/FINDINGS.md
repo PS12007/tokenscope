@@ -1655,10 +1655,372 @@ Free memory gets checked before and after each run, and any run that pages is
 thrown out rather than reported.
 ---
 
+## F19 — The 8B run: five of six predictions hold, and the byte law gets a controlled experiment
+
+**Workload:** Qwen3 8B Q4_K_M (8.19 B params, 36 layers, `n_embd` 4096, `n_ff`
+12288, 32 query heads / 8 KV heads, vocab 151,936, 4.86 GiB). Throughput from
+the **uninstrumented** build, `-r 3` for decode and `-r 2` for prefill.
+Structural columns from a level-3 trace of 6 decode tokens at 6 threads,
+6,742,824 bytes, **0 records dropped**. Free memory 8.30 GB before and 9.29 GB
+after, against 4.86 GiB of weights: **the run did not page**, which
+[P19](#p19--six-predictions-for-an-8b-model-recorded-before-the-run) named as
+the thing that would invalidate it.
+
+The six predictions in P19 were committed before any of this was measured
+(`b4a140d`, and this finding is a later commit). **Five hold. P19.4 fails on
+both of its specific claims while holding on its general one**, and the failure
+is more interesting than the successes.
+
+### Scorecard
+
+| | prediction | measured | |
+|---|---|---|---|
+| P19.1 | `lm_head` 7.5–13.5% of decode | **10.5%** | ✅ dead on the byte share |
+| P19.2 | byte error < 5 points, bytes beat params | **0.3 vs 4.5 points** | ✅ far stronger than predicted |
+| P19.3 | `attn_v`/`attn_k` in 2.0–4.5, below 3.56 | **2.91** | ✅ both parts |
+| P19.4 | peak speedup 2.0–3.0x, at ≤6 threads | **3.01x at 8 threads** | ❌ both specifics |
+| P19.5 | K and V reach ≥5 of 6 threads | **5.1 and 6.0** | ✅ |
+| P19.6 | elementwise imbalance share < 14% | **12%** | ✅ |
+
+### P19.1 — `lm_head` fell from 34% to 10.5%, and vocabulary is why
+
+F12 measured `lm_head` at 34% of decode thread time on Qwen2.5-0.5B and called
+it "a first-class cost". Here the same tensor, against a **numerically identical
+vocabulary of 151,936**, is 10.5%.
+
+```
+                        Qwen2.5-0.5B      Qwen3 8B
+  vocab                    151,936        151,936     unchanged
+  n_embd                       896          4096       4.6x
+  lm_head params              136 M         622 M      4.6x
+  everything else             494 M       7,568 M     15.3x
+  lm_head time share          34.0%         10.5%     0.31x
+```
+
+The output projection did not get cheaper — it grew 4.6x. It shrank *as a share*
+because the rest of the model grew 15.3x around it. F12's phrasing, that the
+share "shrinks fast as models grow, since vocabulary is fixed while everything
+else scales", is exactly right and the mechanism is exactly the stated one.
+
+The practical reading of F12 needs the qualifier attached, though. Its estimate
+that requantizing this one tensor could remove "about 12% of decode time" was a
+0.5B result; the same arithmetic here gives **about 3%**, and on a 70B it would
+be under 1%. **`lm_head` is a small-model problem.**
+
+### P19.2 — the byte law, and a test I called weak that turned out decisive
+
+```
+phase          bits/w  param share  byte share  time share  err(param)  err(byte)
+---------------------------------------------------------------------------------
+ffn              4.84        71.8%       67.6%       67.3%        -4.5       -0.3
+attn.qkv         6.42        12.0%       14.9%       15.1%        +3.1       +0.1
+lm_head          6.56         8.2%       10.5%       10.5%        +2.3       +0.0
+attn.out         4.50         8.0%        7.0%        7.1%        -0.8       +0.2
+
+max error predicting time from parameters: 4.5 points
+max error predicting time from bytes:      0.3 points
+```
+
+**0.3 points.** F12's byte prediction was good to 2.9 points and that was already
+the headline; this is an order of magnitude tighter, on a model 13x larger.
+
+P19.2 predicted this would be a *weaker* test than F12's, because the two rival
+predictions disagree by at most 4.2 points here against 8.3 there. That
+reasoning was sound and the conclusion was still too pessimistic: a narrower gap
+between the hypotheses does not make the winner's residual larger, and the
+residual is what carries the information. Worth remembering — the strength of a
+test is not only the separation between hypotheses.
+
+Time shares are of the four weight-bearing phases, renormalised from 99.62%;
+the missing 0.38% is `attn.score`, `norm`, `residual` and `attn.kv_rw`, which
+stream no weights and so appear in no byte column.
+
+### The controlled experiment: same node, same shape, adjacent layers, different dtype
+
+Everything above is still a correlation across phases that differ in many ways
+at once. This file allows something better.
+
+llama.cpp's Q4_K_M recipe stores `ffn_down` at **Q6_K in 18 layers and Q4_K in
+the other 18** — layers 0-3, then every third, then 30-35. Same tensor, same
+shape `[12288, 4096]`, same op, same graph position, same token, same thread
+pool. **The dtype is the only difference**, and `ffn_gate` and `ffn_up` are Q4_K
+in every layer and serve as controls.
+
+```
+                Q6_K layers    Q4_K layers    ratio
+  ffn_out        38516.6 us      27138.5 us   1.419     <- the test
+  ffn_gate       26735.9 us      26485.5 us   1.009     <- control
+  ffn_up         26681.6 us      26506.4 us   1.007     <- control
+
+  predicted from bytes alone: 6.5625 / 4.5 = 1.458
+```
+
+**1.419 measured against 1.458 predicted, a 2.7% error, with both controls flat
+at 1.00.** The controls are what make this an experiment rather than an
+observation: if the Q6_K layers were slower for any reason other than the dtype
+of that one tensor — placement, scheduling, cache, position in the graph — the
+gate and up projections in those same layers would show it too. They do not.
+
+This is the strongest form of F7's law the project has produced, and it upgrades
+it from a cross-phase correlation to a paired within-model result.
+
+### P19.3 — `attn_v` against `attn_k`, where bytes and compute disagree
+
+Same shape `[4096, 1024]`, 4.2 M parameters each, all 36 layers, `MUL_MAT` only
+(Qwen3's QK-norm shares the `Kcur` node name, so the op filter matters — without
+it `Kcur` carries 1,296 extra RMS-norm events).
+
+```
+  Kcur MUL_MAT    91.1 ms      Q4_K, 4.50 bits/weight
+  Vcur MUL_MAT   265.1 ms      F16,  16.00 bits/weight
+  Qcur MUL_MAT   328.7 ms      Q4_K, 4.50 bits/weight, 4x the rows
+
+  V/K = 2.911   against a byte ratio of 3.556
+  Q/K = 3.608   against a byte ratio of 4.000
+```
+
+P19.3 predicted 2.0–4.5 **and specifically below 3.56**, on the argument that
+Q4_K must be dequantized where F16 need not be, so compute pulls the other way
+from bandwidth. 2.911 is below, and the direction of the miss is the predicted
+one.
+
+The `Q/K` row is the check that keeps this honest: Q and K are the *same dtype*
+and differ only in size, and they come in at 3.608 against a byte ratio of 4.000
+— a 10% shortfall from fixed per-node overhead that has nothing to do with
+dtype. So of V/K's 18% shortfall from its byte ratio, roughly half is the same
+size effect visible in Q/K, and only the remainder is attributable to
+dequantization. **The dequantization effect is real but smaller than the raw
+number suggests**, and P19.3's reasoning was right for a reason that accounts
+for about half of what it predicted.
+
+### P19.4 — wrong twice, and the interesting part is where
+
+```
+              Qwen2.5-0.5B Q4_K_M          Qwen3 8B Q4_K_M
+ thr    tok/s  speedup  par.eff       tok/s  speedup  par.eff
+   1    27.06    1.00x     100%        2.56    1.00x     100%
+   2    52.85    1.95x      98%        4.85    1.89x      95%
+   4    77.49    2.86x      72%        6.82    2.66x      67%
+   6    88.88    3.28x      55%        7.50    2.93x      49%
+   8    88.20    3.26x      41%        7.70    3.01x      38%
+  12    70.80    2.62x      22%        7.49    2.93x      24%
+  28    66.07    2.44x       9%        7.55    2.95x      11%
+```
+
+P19.4 got the general claim right — peak speedup fell from 3.28x to 3.01x, so
+the 12.4x rise in bytes streamed per token beats the drop from 6.35 to 5.15
+bits/weight, and **absolute traffic sets the wall, not compression ratio**.
+
+Both specifics failed. The peak is 3.01x, marginally outside the stated 2.0–3.0x
+range; that is a near miss but the range was stated and 3.01 is outside it. And
+the peak moved **out** to 8 threads, not in to six or fewer, which was the
+confident half of the prediction.
+
+The reason is visible in the last two rows and it is not a detail. **The 0.5B
+collapses past its peak and the 8B does not.** The small model falls 3.26x ->
+2.44x from 8 to 28 threads, a 25% loss; the 8B goes 3.01x -> 2.95x, a 2% loss.
+F14 established the mechanism for that collapse — heterogeneous cores, P-cores
+2.88x faster than E-cores, every barrier waiting on the slowest. That mechanism
+needs the workload to be compute-bound enough for core speed to matter. At 8B
+decode every thread is waiting on memory, the E-cores are no slower at waiting,
+and **the heterogeneity penalty disappears into the bandwidth wall.**
+
+So a prediction reasoned from one mechanism (traffic) got the direction right
+and the shape wrong, because a second mechanism (heterogeneity) stopped applying
+at the same time. Both moved together and I only modelled one.
+
+### Prefill is the control, and it scales
+
+The same sweep on `pp256`, which is compute-bound rather than bandwidth-bound:
+
+```
+ thr    tok/s   speedup   par.eff
+   1     7.08     1.00x      100%
+   2    14.52     2.05x      103%
+   4    28.56     4.03x      101%
+   6    42.28     5.97x       99%
+   8    52.23     7.38x       92%
+  12    53.51     7.56x       63%
+  28    78.40    11.07x       40%
+```
+
+**Near-perfect scaling to six threads and still climbing at 28**, against decode
+on the identical model, weights and machine plateauing at 3.01x. This is the
+cleanest statement of "decode is bandwidth-bound" the project has: not an
+inference from a null result as in F14, but the same model doing the same
+arithmetic on the same cores, differing only in how many tokens share each
+weight read.
+
+One anomaly, recorded and not explained: the 8 -> 12 thread step is nearly flat
+(52.23 -> 53.51) before jumping to 78.40 at 28. That does not fit a smooth
+curve. 12 threads on an 8 P-core / 12 E-core machine is where the scheduler must
+start mixing core types, so F14's mechanism is the obvious suspect, but this run
+does not test it and the affinity sweep that would has not been done at 8B.
+
+### P19.5 — GQA narrowing was a width problem, and the width grew
+
+F12 found `Kcur` filling 2.5 of 6 threads and `Vcur` 3.0 on the 0.5B, where K
+and V outputs are 128 wide. Qwen3 8B's are 1024 wide.
+
+```
+  node        threads busy (of 6)     0.5B, for comparison
+  Qcur                6.0                     4.0
+  Vcur                6.0                     3.0
+  Kcur                5.1                     2.5
+  ffn_gate/up/out     6.0                     6.0
+```
+
+Confirmed. The Q:KV head ratio only improved from 7:1 to 4:1, but the absolute
+width went up 8x, and **ggml partitions rows, so absolute width is what
+matters**. GQA narrowing is a small-model artifact, not a permanent cost of
+grouped-query attention — which is the opposite of what a reader of F12 alone
+might reasonably conclude.
+
+`Kcur` at 5.1 rather than 6.0 uses `--barriers`' stricter definition (a thread
+counts as busy if it takes more than 25% of the busiest thread's time). By the
+looser "did this thread touch the node at all" count it is 6.0 like the rest.
+
+### P19.6 — elementwise imbalance fell to 12%
+
+```
+                          work share   of all imbalance
+  synthetic F32 220M          0.32%          14%
+  Qwen2.5-0.5B Q4_K_M         0.74%          19%
+  Qwen3 8B Q4_K_M             0.18%          12%
+```
+
+54 node types cost more in other threads' waiting than in their own work — 7.58
+ms of compute causing 29.19 ms of waiting. But the share fell below even the
+synthetic model's, as predicted, and F12's stated mechanism run backwards is
+why: the elementwise nodes scale with `n_embd` while the matmuls around them
+scale far faster, so the same serial nodes are a smaller fraction of a much
+larger total.
+
+`ffn_swiglu`, `attn_norm`, `l_out`, `ffn_norm` and `ffn_inp` are still the worst
+offenders and still run on 1.0–1.7 threads, exactly as F9 described. The
+structure did not change; its weight did.
+
+**Barrier wait is also down**: 5.6% of worker thread time here, against 11.2% in
+F6 and 22.9% at high thread counts in F10. Bigger matmuls amortise the same
+barriers over more work. This is consistent with F15's conclusion that barrier
+*count* and barrier *cost* are different quantities.
+
+### Caveats
+
+- One model, one quantization, one machine, MSVC Release on Windows 11,
+  i7-14700HX. The barrier and thread numbers are the non-OpenMP path; see the
+  Linux section.
+- Structural columns are a single trace of 6 decode tokens at 6 threads.
+  Throughput is `-r 3` decode / `-r 2` prefill from the uninstrumented build.
+- The `ffn_down` experiment is the one result here that does not depend on
+  cross-phase attribution at all, and is the one to quote if only one survives.
+- `attn.out` in the byte table is measured as tokenscope's `~attn` bucket. That
+  it *is* the output projection is established in F20, not assumed here.
+- "Q4_K_M" remains a recipe rather than a dtype. This file's `attn_v` is F16 in
+  all 36 layers, which is not what most Q4_K_M exports do, and is the reason
+  P19.3 was testable at all.
+
+---
+
+## F20 — The attention output projection is anonymous in every llama.cpp graph, and it is 7% of decode
+
+Found while checking which trace bucket the 8B's output projection landed in.
+This one is a defect in upstream llama.cpp rather than a property of a workload.
+
+### What the trace showed
+
+Tokenscope reported a category `~attn` at **7.1% of decode thread time** — the
+tilde meaning the phase was inferred from graph position because the node had no
+usable name. The nodes were `node_27`, `node_62`, `node_97`, ... spaced exactly
+35 apart, one per layer, all `MUL_MAT`, all on 6 threads.
+
+The identification is arithmetic rather than a guess:
+
+```
+  ~attn total (36 nodes, one per layer)   328.63 ms
+  Qcur MUL_MAT                            328.67 ms
+```
+
+`attn_output` is `[4096, 4096]` Q4_K and `attn_q` is `[4096, 4096]` Q4_K — same
+shape, same dtype, same op. **They agree to 0.01%.** Combined with one instance
+per layer at a fixed graph offset, the anonymous nodes are the output
+projections.
+
+### Why they have no name
+
+`llama-graph.cpp`, in `build_attn`, which every attention-based architecture
+routes through:
+
+```c
+    ggml_tensor * cur = build_attn_mha(q, k, v, kq_b, kq_mask, sinks, v_mla, 0, kq_scale, il);
+    cb(cur, "kqv_out", il);
+
+    if (wo) {
+        cur = build_lora_mm(wo, cur, wo_s);
+    }
+
+    if (wo_b) {
+        //cb(cur, "kqv_wo", il);
+    }
+
+    if (wo_b) {
+        cur = ggml_add(ctx0, cur, wo_b);
+    }
+```
+
+Two separate faults, and the second is the one that matters:
+
+1. The naming call is **commented out**.
+2. It is inside `if (wo_b)` — guarded by the attention output **bias**, not by
+   the weight `wo` that the matmul it names actually uses. Qwen3 has no
+   attention output bias, so `wo_b` is null and **uncommenting the line would
+   still not name the node on this model**, nor on Llama, Mistral, or any other
+   architecture without that bias.
+
+There is also a dead `if (wo_b) { }` block left behind, which is what a
+commented-out body in a guard leaves.
+
+The fix is to move the call into the `if (wo)` block that performs the matmul:
+
+```c
+    if (wo) {
+        cur = build_lora_mm(wo, cur, wo_s);
+        cb(cur, "kqv_wo", il);
+    }
+```
+
+### Why it is worth reporting
+
+This is the largest single node in the attention block — bigger than `Qcur`,
+6.6x `Kcur` — and it is invisible to anything that groups by node name. That
+includes tokenscope without its graph-position fallback, and it includes
+`GGML_SCHED_DEBUG` and any profiling built on ggml's own names.
+
+F8 recorded that about 15% of graph nodes carry no meaningful name and treated
+it as a general property of ggml. It is partly that, but at least one of those
+anonymous nodes is anonymous **because of a specific two-line bug**, it is worth
+7% of decode time, and it affects every architecture. F8's framing was too
+resigned.
+
+This is now the best-evidenced item in the upstream draft
+([`03`](03-upstream-issue-draft.md)): a two-line fix, a named node worth 7% of
+decode, no behaviour change, and no performance cost — `cb` only sets a name.
+
+### Caveats
+
+- The identification is by shape, dtype, count and graph spacing, not by reading
+  a name that does not exist. It is very strong but it is inference.
+- Measured on Qwen3 8B. The 7.1% share is model-dependent; the naming defect is
+  not, since `build_attn` is shared by every attention architecture.
+- Not yet tested against a model that *does* have `wo_b`, where the existing
+  guard would fire if the line were uncommented.
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
 
-- larger real models — the biggest measured is 630 M parameters (F12)
+- larger real models — the biggest measured is now 8.19 B (F19); nothing
+  above that, and no MoE model at all
 - server workloads with real arrival and eviction patterns (F17 covers
   `llama-batched` only, up to 16 sequences)
