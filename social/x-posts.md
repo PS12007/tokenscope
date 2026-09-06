@@ -1048,6 +1048,252 @@ carry. Post I1 after G1; it is the payoff to G1's closing caveat.
 
 ---
 
+## READY NOW — the 8B run, five of six predictions, and a controlled experiment (F19 / F20)
+
+### N1. The strongest thread the project has (thread)
+
+**1/**
+> I've been claiming for weeks that llama.cpp decode time tracks **bytes of
+> weights read**, not parameter counts.
+>
+> It was a correlation across phases that differ in ten ways at once.
+>
+> Today I found a way to test it properly, and the answer was sitting inside
+> the quantization recipe.
+
+**2/**
+> llama.cpp's Q4_K_M doesn't store every tensor the same way.
+>
+> In Qwen3 8B, `ffn_down` is **Q6_K in 18 layers and Q4_K in the other 18**.
+> Layers 0-3, then every third one, then 30-35.
+>
+> Same tensor. Same shape. Same op. Different dtype.
+
+**3/**
+> That's a paired experiment, for free.
+>
+> 6.5625 bits / 4.5 bits = **1.458x**
+>
+> If time follows bytes, the Q6_K layers' `ffn_down` should cost 1.458x the
+> Q4_K layers'. Nothing else about those layers differs.
+
+**4/**
+> ```
+>              Q6_K layers   Q4_K layers   ratio
+> ffn_out        38516.6us     27138.5us   1.419   <- the test
+> ffn_gate       26735.9us     26485.5us   1.009   <- control
+> ffn_up         26681.6us     26506.4us   1.007   <- control
+> ```
+>
+> **1.419 measured. 1.458 predicted. From the file's tensor table alone.**
+
+**5/**
+> The controls are the whole point.
+>
+> `ffn_gate` and `ffn_up` are Q4_K in *every* layer. If the Q6_K layers were
+> slower for any other reason — scheduling, cache, graph position — those two
+> would show it too.
+>
+> They're flat at 1.00. So it's the dtype.
+
+**6/**
+> Across the whole model, per-phase time predicted from bytes:
+>
+> ```
+> phase      byte share   time share   error
+> ffn             67.6%        67.3%    -0.3
+> attn.qkv        14.9%        15.1%    +0.1
+> lm_head         10.5%        10.5%    +0.0
+> attn.out         7.0%         7.1%    +0.2
+> ```
+>
+> Predicting from **parameter counts** instead: off by 4.5 points.
+
+**7/**
+> Why it matters practically: you can predict where decode time goes on a model
+> you have never run, by reading the GGUF tensor table.
+>
+> Not the config. Not the parameter count. The **tensor table**, because
+> "Q4_K_M" is a recipe, not a dtype.
+
+---
+
+### N2. The upstream bug (standalone — the most useful thing here)
+
+> The attention output projection in llama.cpp has **no name** in the graph.
+>
+> It's 7.1% of decode time on Qwen3 8B. Bigger than Qcur. It shows up in
+> profiles as `node_1182`.
+>
+> Here's why:
+>
+> ```c
+> if (wo) {
+>     cur = build_lora_mm(wo, cur, wo_s);
+> }
+>
+> if (wo_b) {
+>     //cb(cur, "kqv_wo", il);
+> }
+> ```
+>
+> The naming call is commented out — *and* it's inside the block guarded by the
+> **bias**, not the weight the matmul actually uses.
+>
+> So uncommenting it still wouldn't name the node on any model without an
+> attention output bias. Which is most of them.
+
+---
+
+### N2b. The follow-up, if N2 gets traction
+
+> To be clear about how that node was identified, since it has no name to read:
+>
+> ```
+> the anonymous nodes   328.63 ms
+> Qcur                  328.67 ms
+> ```
+>
+> `attn_output` and `attn_q` are both [4096,4096] Q4_K. Same shape, same dtype,
+> same op.
+>
+> 36 of them, one per layer, at a fixed graph offset. Agreeing to 0.01%.
+
+---
+
+### N3. The prediction that failed (thread — post this one honestly or not at all)
+
+**1/**
+> I wrote six predictions into the findings file and committed them **before**
+> running an 8B model. Then ran it.
+>
+> Five held. One failed on both of its specifics.
+>
+> The failure taught me more than the five.
+
+**2/**
+> **The prediction:** an 8B streams 12.4x more bytes per token than a 0.5B, so
+> decode should hit the memory wall *sooner*. Peak speedup 2.0-3.0x, at six
+> threads or fewer.
+>
+> **Measured: 3.01x, at eight threads.**
+>
+> Outside my range, and the wrong direction on threads.
+
+**3/**
+> ```
+>          0.5B            8B
+>  thr   speedup       speedup
+>    6     3.28x         2.93x
+>    8     3.26x         3.01x
+>   12     2.62x         2.93x
+>   28     2.44x         2.95x
+> ```
+>
+> Look at the bottom two rows. The small model **collapses** past its peak.
+> The big one doesn't.
+
+**4/**
+> I'd already measured why the small one collapses: this CPU has 8 P-cores and
+> 12 E-cores, P-cores are 2.88x faster, and every barrier waits on the slowest
+> thread.
+>
+> But that penalty needs the work to be **compute-bound** for core speed to
+> matter at all.
+
+**5/**
+> At 8B, decode is so bandwidth-starved that every thread is waiting on memory
+> anyway.
+>
+> E-cores are exactly as good at waiting as P-cores.
+>
+> The heterogeneity penalty **disappears into the bandwidth wall.**
+
+**6/**
+> So: two mechanisms moved at once and I modelled one of them.
+>
+> The general claim (more traffic, lower peak) was right — 3.28x to 3.01x.
+> Both specific numbers were wrong.
+>
+> That's what a prediction registry is for. I can't retroactively remember
+> getting this right.
+
+---
+
+### N4. The bandwidth-bound standalone (strongest single post)
+
+> Same model. Same weights. Same cores. Same machine.
+>
+> ```
+>  threads    decode    prefill
+>        1     1.00x      1.00x
+>        6     2.93x      5.97x
+>        8     3.01x      7.38x
+>       28     2.95x     11.07x
+> ```
+>
+> Prefill scales to 11x. Decode flatlines at 3x.
+>
+> Identical arithmetic. The only difference is how many tokens share each
+> weight read.
+>
+> This is what "decode is bandwidth-bound" looks like when you measure it
+> instead of asserting it.
+
+---
+
+### N5. The one for anyone benchmarking small models
+
+> Measured on Qwen2.5-**0.5B**: the output projection is **34% of decode time**.
+> Wrote it up as a first-class cost.
+>
+> Same tensor on Qwen3-**8B**: **10.5%**.
+>
+> Vocabulary is *identical* — 151,936 both times. It didn't get cheaper, it
+> grew 4.6x. Everything else grew 15x around it.
+>
+> My own suggestion that requantizing it saves ~12% of decode was a small-model
+> number. It's 3% at 8B and under 1% at 70B.
+>
+> Small models with big vocabularies are their own performance regime. Don't
+> generalize from them. I nearly did.
+
+---
+
+### N6. The GQA one
+
+> On Qwen2.5-0.5B I found K and V projections using only **2.5 and 3.0 of 6
+> threads** while everything else used all 6.
+>
+> 2 KV heads means K/V outputs are 128 wide. Too narrow for ggml to partition.
+> I filed it as a hidden cost of grouped-query attention.
+>
+> On Qwen3-8B: **5.1 and 6.0**.
+>
+> The head *ratio* barely moved (7:1 to 4:1). The absolute width went 128 to
+> 1024.
+>
+> ggml partitions rows. Width is what matters, not the ratio. So that's a
+> small-model artifact, not a cost of GQA — which is the opposite of what my
+> earlier note implied.
+
+---
+
+### N7. For the methodology crowd
+
+> Something I got wrong about my own experiment design.
+>
+> I predicted a test would be **weak** because the two competing hypotheses only
+> disagreed by 4.2 points, versus 8.3 in an earlier run.
+>
+> It came back as the sharpest result in the project: 0.3 points of residual vs
+> 4.5 for the rival.
+>
+> A narrower gap between hypotheses doesn't make the winner's residual bigger.
+> Separation and precision are different axes, and I'd conflated them.
+
+---
+
 ## READY NOW — the KV predictions, one right one wrong (F16)
 
 ### L1. The thread
