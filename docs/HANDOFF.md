@@ -335,6 +335,13 @@ Added by session 2, in rough order of how much time they would have saved:
   two edited files. Add the file to the list *when you first edit it*.
 - **curl progress output floods the transcript.** Use `-s` on any large
   download.
+- **A feature can look dead because your test is too small.** `TOKENSCOPE_RING`
+  produced byte-identical output to non-ring mode three times running, which
+  reads exactly like the `TOKENSCOPE_TOKENS` bug from session 1. It works.
+  Records come in 1 MiB chunks *per thread*, so ring only engages after a thread
+  fills one (~43,700 records) -- all three tests were under that. Before
+  declaring a feature inert, check its precondition is actually met. (It is
+  genuinely inert at small budgets though, and the README now says so.)
 
 ---
 
