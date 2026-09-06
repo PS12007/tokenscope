@@ -1517,6 +1517,144 @@ Untested either way. Stated here rather than repeated in eight caveat sections.
 
 ---
 
+## P19 — Six predictions for an 8B model, recorded before the run
+
+**Dated 2026-09-06, session 3.** No 8B measurement has been taken at the time
+this is written; the only thing run so far is a 12-second smoke test
+(`38.78 pp32 / 7.39 tg16` at 8 threads) to confirm the file loads. This section
+exists so the predictions are in the commit history *before* the data, which is
+the habit the last two sessions found most valuable — four predictions were
+tested in session 2 and two of them were wrong, and without the written version
+I would have remembered predicting whichever turned out right.
+
+**The model.** Qwen3 8B Q4_K_M, the GGUF Ollama had already pulled onto this
+machine. 8.19 B parameters, 36 layers, `n_embd` 4096, `n_ff` 12288, 32 query
+heads against 8 KV heads, vocab 151,936, 4.86 GiB on disk. Against F12's
+Qwen2.5-0.5B that is **13x the parameters** and **12.4x the bytes streamed per
+token**, at a *lower* 5.15 bits/weight against 6.35.
+
+Structural inputs, from `tools/model_bytes.py` (tensor table only, nothing run):
+
+```
+phase            n  bits/w  param share  byte share
+---------------------------------------------------
+ffn            108    4.84        71.8%       67.6%
+attn.qkv       108    6.42        12.0%       14.9%
+lm_head          1    6.56         8.2%       10.5%
+attn.out        36    4.50         8.0%        7.0%
+norm           145   32.00         0.0%        0.0%
+
+streamed per token: 7.568 G params, 4.535 GiB, 5.15 bits/weight
+token_embd (gathered, not streamed): 0.622 G params, 0.326 GiB
+```
+
+Untied embeddings: `output.weight` is a separate Q6_K tensor, so `lm_head`
+really is streamed at decode rather than aliasing `token_embd`.
+
+### P19.1 — `lm_head` collapses from 34% to about 10%
+
+F12 measured `lm_head` at **34% of decode thread time** on the 0.5B and its
+caveat said the share "shrinks fast as models grow, since vocabulary is fixed
+while everything else scales". Vocabulary is in fact *identical* here — 151,936
+both times — while everything else grew 13x, so this is as clean a test of that
+sentence as the two models allow.
+
+**Predict: 7.5%–13.5% of decode thread time**, centred on the 10.5% byte share,
+a fall of roughly 3.2x. Falsified if it lands above 15% or below 6%.
+
+### P19.2 — the byte law holds again, but this model tests it more weakly
+
+**Predict byte-share error under 5 points, and bytes beating parameters.**
+
+Stated with the caveat up front: on F12's model the two predictions disagreed by
+up to 8.3 points, because one tensor sat at 8.50 bits/weight while the rest were
+near 5.5. Here the spread is narrower and the largest disagreement is 4.2 points
+on `ffn`. **A weaker test, and it should be reported as one** — if bytes win by
+a point and a half, that is consistent with the law but is not strong evidence
+for it, and P19.3 is the test that carries the weight.
+
+### P19.3 — the controlled experiment: `attn_v` against `attn_k`
+
+The sharpest test available, and one F12's model could not run. In all 36
+layers, `attn_k` and `attn_v` have **identical shape** `[4096, 1024]`, 4.2 M
+parameters each, the same matmul, the same output width, in the same phase and
+the same layer. The only difference is dtype: **`attn_k` is Q4_K at 4.50
+bits/weight, `attn_v` is F16 at 16.00** — a 3.56x byte ratio at identical
+arithmetic. (An odd choice for a file labelled Q4_K_M, and itself worth noting:
+"Q4_K_M" is a recipe, not a dtype, which was already F12's point.)
+
+If per-phase time tracks bytes, `attn_v` should cost about **3.56x** `attn_k`.
+
+**Predict the ratio lands in 2.0–4.5, and specifically below 3.56.** Below,
+because the two effects pull apart here in a way the aggregate table hides:
+bytes say V is 3.56x worse, but Q4_K must be *dequantized* and F16 need not be,
+so compute works in V's favour while bandwidth works against it. That is the
+first place in this project where the byte law and a compute effect make
+opposite-signed predictions about the same pair of tensors.
+
+Falsified as a byte law if the ratio comes out near 1.0 — that would say the
+cost is the arithmetic, not the traffic, and would put F12's headline result in
+question rather than confirming it.
+
+### P19.4 — thread scaling gets worse, not better
+
+F10 predicted and F12 confirmed that a quantized model scales further than an
+F32 one: peak speedup rose 2.21x -> 3.28x, both peaking at six threads.
+
+The naive extension says 8B is more compressed still (5.15 vs 6.35 bits/weight,
+so more compute per byte) and should scale better again. **I predict the
+opposite.** The thing that sets the wall is absolute bandwidth demand, and this
+model streams 4.535 GiB per token against 0.365 — **12.4x more traffic** —
+against a memory system that has not changed. The bits/weight effect is real but
+second-order to that.
+
+**Predict peak speedup below 3.28x, in the range 2.0x–3.0x, peaking at six
+threads or fewer.** Falsified if it beats 3.28x, which would mean bits/weight
+governs and absolute traffic does not.
+
+This is the prediction I am least confident in, and it is the one where the two
+effects are closest in size.
+
+### P19.5 — GQA narrowing should mostly disappear
+
+F12 found `Kcur` filling 2.5 of 6 threads and `Vcur` 3.0, against 4.0 for `Qcur`
+and 6.0 for the FFN matmuls, and attributed it to width: Qwen2.5-0.5B has 2 KV
+heads, so K and V produce **128-wide** outputs against 896 for Q. Too narrow to
+partition across the pool.
+
+Qwen3 8B has 8 KV heads at head_dim 128, so K and V are **1024 wide** — eight
+times wider in absolute terms, even though the Q:KV head ratio only moves from
+7:1 to 4:1. Width is what ggml partitions on, not the ratio.
+
+**Predict K and V reach at least 5 of 6 threads busy**, close to Q. Falsified if
+they stay near 2.5–3.0, which would mean the ratio governs and the absolute
+width does not — and would make GQA narrowing a permanent cost rather than a
+small-model artifact.
+
+### P19.6 — the near-serial elementwise nodes shrink in relative cost
+
+F9 found elementwise nodes (`ffn_swiglu`, `l_out`, `attn_norm`, ...) running on
+one thread and causing imbalance out of all proportion to their work: 0.32% of
+work causing 14% of imbalance on the synthetic F32 model, **0.74% causing 19%**
+on the 0.5B. F12 read that as a trend and named the mechanism: "its relative
+cost grows as the matmuls around it get cheaper."
+
+That mechanism run backwards predicts a fall here, because the matmuls got much
+more expensive — the elementwise nodes scale with `n_embd` (4.6x) while the
+matmuls scale with `n_embd`-squared-ish (13x in parameters).
+
+**Predict the elementwise share of total imbalance falls below 14%**, i.e. below
+even the synthetic model. Falsified if it holds near 19% or rises.
+
+### What would make this whole section uninteresting
+
+If the machine pages. 4.86 GiB of weights against ~7.4 GB free is a thin margin,
+and decode is bandwidth-bound (F14), so eviction would corrupt exactly the
+numbers P19.1–P19.4 depend on while still producing a plausible-looking table.
+Free memory gets checked before and after each run, and any run that pages is
+thrown out rather than reported.
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
