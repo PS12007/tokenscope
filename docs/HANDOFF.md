@@ -57,7 +57,7 @@ The short version:
 | ~~Sampling / tokenizer scopes not written~~ | **Done (F11).** `llama-cli` is now built in `build-ts-on`. Sampling + detokenization are 0.13% of a token |
 | ~~Context-shift behaviour~~ | **Done (F16).** 4 spikes in 699 tokens at `-c 256`, 1.13-1.34x median |
 | Concurrent sequences / server workload | The last untested prediction in F2, and F16 says it is still plausible: the head-pointer trick that makes `find_slot` O(1) is much weaker with many streams |
-| Larger real model | Biggest measured is 630 M. F12's `lm_head` result shrinks with size and its bandwidth result should move |
+| Larger real model | Biggest measured is 630 M. F12's `lm_head` result shrinks with size and its bandwidth result should move. **An 8B is already on this machine — no download needed, see section 3** |
 | No Perfetto screenshot | Blocks the README and several posts |
 | ~~No thread pinning~~ | **Done (F14).** Mechanism confirmed: homogeneous cores drop spread 13%->2% and halve barrier wait. Pinning is not the fix |
 | Upstream issue not filed | Draft ready at [`03`](03-upstream-issue-draft.md); F9 is the strongest material for it |
@@ -121,6 +121,27 @@ C:\-CS\TLI profiler\
     ├── tiny.gguf          8L,  34 MB   synthetic F32
     ├── mid.gguf           24L, 840 MB  synthetic F32
     └── qwen-q4km.gguf     Qwen2.5-0.5B-Instruct Q4_K_M, 469 MB, REAL
+
+**A real 8B model is already on disk**, pulled by Ollama before this project
+started, so item 4 of section 5 needs no download at all. Ollama stores GGUF
+blobs unmodified and content-addressed; `llama-bench -m` opens one directly:
+
+```
+~/.ollama/models/blobs/sha256-a3de86cd1c132c822487ededd47a324c50491393e6565cd14bafa40d0b8e686f
+```
+
+That is **Qwen3 8B Q4_K_M**, 4.86 GiB, 8.19 B params, 36 layers, `n_embd` 4096,
+`n_ff` 12288, GQA 32/8 — 13x the parameters of the Qwen2.5-0.5B used in F12.
+Read the metadata with `gguf-py` rather than trusting the tag; the manifest at
+`~/.ollama/models/manifests/registry.ollama.ai/library/qwen3/8b` maps tags to
+blobs. `dolphin-llama3` (8B) and `dolphin-mistral` (7B) are there too.
+
+**The constraint is RAM, not disk.** This machine has 15.7 GB total and about
+7.4 GB free, against a 4.86 GiB model. It fits and it does not thrash — measured
+38.78 pp32 / 7.39 tg16 tok/s at 8 threads — but the margin is thin enough that
+anything else running can page the weights out and quietly corrupt a decode
+number, because decode is bandwidth-bound (F14). Check free memory before
+trusting a run at this size.
 ```
 
 **`llama-cli` is required** for anything involving sampling, tokenization or
