@@ -650,14 +650,27 @@ def report_diff(a: Trace, b: Trace) -> None:
     if not keys:
         return
 
-    print(f"\n  per-token, by category (us)\n")
-    print(f"  {'category':<18}{'before':>10}{'after':>10}{'delta':>10}{'':>4}")
-    print("  " + "-" * 52)
+    # Host scopes measure wall time on the calling thread; node scopes measure
+    # thread time summed across workers. The summary report puts them against
+    # different denominators for that reason, and this table would invite the
+    # same category error by listing them together unlabelled -- each row is
+    # still compared only against itself, but "graph-compute 6808" sitting
+    # above "ffn 29057" reads as a contradiction unless the units are stated.
+    print("\n  per-token change, by category\n")
+    print("  {:<18}{:>10}{:>10}{:>10}{:>10}".format(
+        "category", "before", "after", "delta", "units"))
+    print("  " + "-" * 62)
     for k in keys:
         va, vb = ca.get(k, 0.0), cb.get(k, 0.0)
         d = vb - va
         mark = "  <--" if abs(d) > 0.05 * max(pa, pb) else ""
-        print(f"  {k:<18}{va:>10.1f}{vb:>10.1f}{d:>+10.1f}{mark}")
+        unit = "wall us" if k in HOST_CATS else "thread us"
+        print("  {:<18}{:>10.1f}{:>10.1f}{:>+10.1f}{:>10}{}".format(
+            k, va, vb, d, unit, mark))
+    print("\n  wall us is time on the calling thread; thread us is summed across"
+          " workers.")
+    print("  They are not comparable to each other, only to themselves before"
+          " and after.")
 
 
 # ---------------------------------------------------------------------------
