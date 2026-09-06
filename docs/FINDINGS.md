@@ -1491,6 +1491,32 @@ writing down.
 
 ---
 
+## A caveat that applies to every barrier number here
+
+All of them were measured on the **non-OpenMP** threading path (Windows/MSVC,
+ggml's own threadpool), where `ggml_barrier` is an atomic spin-wait using
+`ggml_thread_cpu_relax()`. On Linux `GGML_USE_OPENMP` is the default and
+`ggml_barrier` becomes `#pragma omp barrier` (`ggml-cpu.c:577`) -- a different
+implementation, and OpenMP runtimes generally spin then park rather than
+spinning throughout.
+
+The instrumentation itself is fine there: the OpenMP branch calls the same
+`ggml_graph_compute_thread`, so every node and barrier scope is present.
+
+So, splitting the claims by how far they should travel:
+
+- **Should transfer** -- F9's structural results (which nodes run on one
+  thread, and why), F12's byte model, F13's phase mix, F17's batching results.
+  These are about ggml's row partitioning and about memory traffic, not about
+  how threads wait.
+- **May not transfer** -- every barrier *cost* figure: F6's 11.2%, F9's
+  imbalance/release split, F10's rise to 22.9%, F14's halving under homogeneous
+  cores, F15's null result on fusion. These measure one barrier implementation.
+
+Untested either way. Stated here rather than repeated in eight caveat sections.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:

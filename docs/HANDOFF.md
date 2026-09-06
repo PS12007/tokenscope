@@ -248,15 +248,30 @@ prefill), and F16 (shifts visible, `find_slot` a small part of its scope).
 Session 2 closed items 1, 5, 6 and 7 of the session-1 list, plus the real
 model. What is left, in the order I would do it:
 
-1. **Linux + GCC.** Now the single most valuable thing, and the only remaining
-   blocker on filing upstream. CI covers the standalone core on ubuntu, but
-   nobody has built *instrumented llama.cpp* there. The reason it matters more
-   than it looks: `GGML_USE_OPENMP` is the **default on Linux** and takes a
-   different branch in `ggml_graph_compute` from the one every barrier finding
-   (F9, F10, F14, F15) was measured on. Those findings are currently claims
-   about the non-OpenMP path only. Expected breakages: `__thread` vs
-   `__declspec(thread)` (already handled), and the OpenMP branch not having the
-   `TS_NODE_*` macros wired at all -- check that first.
+1. **Linux + GCC**, and the OpenMP barrier in particular. Read the source
+   before assuming the worst -- session 2 did, and it is less bad than feared:
+
+   - `ggml_graph_compute`'s OpenMP branch calls **the same
+     `ggml_graph_compute_thread`**, so `TS_THREAD_PREPARE`, `TS_NODE_WORK_END`
+     and `TS_NODE_WAIT_END` are all present there. The instrumentation will
+     fire; it is not an uninstrumented path.
+   - But `ggml_barrier` itself is `#pragma omp barrier` under OpenMP
+     (`ggml-cpu.c:577`) instead of the atomic spin-wait with
+     `ggml_thread_cpu_relax()` measured on Windows. **A different barrier
+     implementation with a different cost profile** -- OpenMP runtimes usually
+     spin then park.
+
+   So the split is: F9's *structural* claims (which nodes are single-threaded,
+   where the arrival spread comes from) are about ggml's row partitioning and
+   should transfer unchanged. The barrier *cost* numbers -- 11.2% in F6, 22.9%
+   in F10, the imbalance-vs-release split in F9, and F15's null result -- are
+   measurements of one barrier implementation and **may not transfer at all**.
+   That is the real reason this matters, and it is sharper than "untested on
+   Linux".
+
+   Remaining unknowns worth checking: whether OpenMP creating threads per
+   parallel region makes `ts_thread_init` re-allocate buffers each graph and eat
+   the budget, and `__thread` visibility across shared objects (F18).
 2. **Perfetto screenshot.** Still the best impact-to-effort item that needs no
    new code. Open `examples/mid-24L-L3-tok10-11.trace.json` at
    [ui.perfetto.dev](https://ui.perfetto.dev), zoom to 2-3 tokens, put it at the
