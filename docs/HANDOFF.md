@@ -150,7 +150,9 @@ That is **Qwen3 8B Q4_K_M**, 4.86 GiB, 8.19 B params, 36 layers, `n_embd` 4096,
 `n_ff` 12288, GQA 32/8 — 13x the parameters of the Qwen2.5-0.5B used in F12.
 Read the metadata with `gguf-py` rather than trusting the tag; the manifest at
 `~/.ollama/models/manifests/registry.ollama.ai/library/qwen3/8b` maps tags to
-blobs. `dolphin-llama3` (8B) and `dolphin-mistral` (7B) are there too.
+blobs. `dolphin-llama3` (8B) and `dolphin-mistral` (7B) are there too, and **both were
+measured in F21** — blobs `sha256-ea025c10...` and `sha256-11a57a9b...`
+respectively.
 
 **The constraint is RAM, not disk.** This machine has 15.7 GB total and about
 7.4 GB free, against a 4.86 GiB model. It fits and it does not thrash — measured
@@ -159,6 +161,17 @@ anything else running can page the weights out and quietly corrupt a decode
 number, because decode is bandwidth-bound (F14). Check free memory before
 trusting a run at this size.
 ```
+
+**`build-ts-on` now contains a change that is NOT upstream.** Session 3 applied
+`patches/02-name-attn-output.patch` to `llama.cpp/src/llama-graph.cpp` in place
+and rebuilt, so `llama-bench` from that directory names the attention output
+projection where stock llama.cpp does not. Traces taken from it are not
+byte-comparable with pre-session-3 traces in that one respect — `attn.out`
+appears and `~attn` nearly vanishes (F20). `git -C ../llama.cpp diff
+src/llama-graph.cpp` shows it; `git -C ../llama.cpp checkout src/llama-graph.cpp`
+reverts it. `bootstrap.py --make-patch` does **not** touch it, deliberately:
+`llama-graph.cpp` is kept out of `TOUCHED` so the naming fix stays a separate
+patch from the instrumentation.
 
 **`llama-cli` is required** for anything involving sampling, tokenization or
 context shift (F11, F16) -- `llama-bench` calls none of them. It is built in
