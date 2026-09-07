@@ -204,6 +204,22 @@ argued from the F32 numbers that a model reading fewer bytes per parameter
 should scale further, and [`F12`](docs/FINDINGS.md) measured it doing exactly
 that — 2.21× to 3.28×. The wall moved up. It did not move out.
 
+At 8B the wall moves back down, to **3.01×**, because absolute traffic is what
+sets it — 12.4× more bytes per token beats the model being more compressed. The
+same sweep on prefill, which is compute-bound rather than bandwidth-bound, is
+the control:
+
+```
+ threads    decode    prefill        same model, same weights, same cores
+       1     1.00x      1.00x
+       6     2.93x      5.97x
+       8     3.01x      7.38x
+      28     2.95x     11.07x
+```
+
+Prefill scales to 11× and decode flatlines at 3×. The only difference is how
+many tokens share each weight read ([`F19`](docs/FINDINGS.md)).
+
 Across three models the answer to "where does decode time go" is a different
 phase every time:
 
@@ -212,6 +228,7 @@ model                 params      ffn  lm_head  barrier
 tiny   8L F32 synth     8.9 M   27.6%     0.9%    54.0%
 mid   24L F32 synth     220 M   70.1%     2.6%    10.1%
 Qwen2.5-0.5B Q4_K_M     630 M   49.2%    29.6%    11.3%
+Qwen3-8B     Q4_K_M    8.19 B   63.3%     9.9%     5.6%
 ```
 
 Barrier on the smallest, the FFN stack in the middle, and on a real 0.5B model
@@ -219,6 +236,12 @@ the **output projection at 29.6%** — a 151,936-token vocabulary against
 `n_embd` 896, stored at higher precision than anything else in the file. There
 is no model-independent answer, which is the argument for measuring rather than
 reasoning ([`F13`](docs/FINDINGS.md)).
+
+The 8B row is the same vocabulary — **151,936, unchanged** — against a model
+15× larger everywhere else, and `lm_head` falls to 9.9%. Barrier wait falls too,
+because bigger matmuls amortize the same barriers over more work. A small model
+with a big vocabulary is its own regime, and the 0.5B row does not generalize
+([`F19`](docs/FINDINGS.md)).
 
 And serving concurrently changes the answer again. At `-np 16` on the same
 model, sixteen sequences cost nothing like sixteen times:
@@ -238,6 +261,32 @@ every sequence has its own KV. **Batching does not just make decode faster, it
 changes what decode is** — and it dissolves the single-threaded-node problem
 above entirely, 1.0 busy threads becoming 6.0
 ([`F17`](docs/FINDINGS.md)).
+
+Because the phases are separated, the profile answers a question the aggregate
+timers cannot: **what predicts where decode time goes?** Weight *bytes* do, and
+parameter counts do not — a distinction with no meaning on an F32 model and a
+large one on a quantized file, where llama.cpp stores different tensors at
+different precisions.
+
+The clean test is inside the quantization recipe. Q4_K_M stores `ffn_down` at
+Q6_K in 18 of Qwen3-8B's 36 layers and Q4_K in the other 18 — the same tensor,
+the same shape, the same op, differing only in dtype. `ffn_gate` and `ffn_up`
+are Q4_K in every layer and act as controls:
+
+```
+                Q6_K layers    Q4_K layers    ratio
+  ffn_out        38516.6 us     27138.5 us    1.419     <- the test
+  ffn_gate       26735.9 us     26485.5 us    1.009     <- control
+  ffn_up         26681.6 us     26506.4 us    1.007     <- control
+
+  predicted from bytes alone:  6.5625 / 4.5 = 1.458
+```
+
+1.419 measured against 1.458 predicted, with both controls flat. Across the
+whole model, predicting each phase's share of time from its share of bytes is
+accurate to **0.3 points**; predicting from parameter counts is wrong by 4.5
+([`F19`](docs/FINDINGS.md)). `tools/model_bytes.py` prints that table for any
+GGUF without running it.
 
 `--outliers` ranks the slowest tokens and attributes each one's *excess over
 median* to a category — because on a slow token everything is large, and the
@@ -387,6 +436,8 @@ Built in the open. `docs/` is the engineering log, in order — and
 - [x] [Concurrent sequences, 1 to 16](docs/FINDINGS.md)
 - [ ] Perfetto screenshots
 - [x] [Real quantized model](docs/FINDINGS.md) — Qwen2.5-0.5B Q4_K_M
+- [x] [An 8B model, and five of six predictions](docs/FINDINGS.md) — Qwen3-8B Q4_K_M
+- [x] [A defect found in llama.cpp's graph naming](docs/FINDINGS.md), fixed and measured
 - [ ] Linux/GCC
 - [ ] [Upstream issue](docs/03-upstream-issue-draft.md), then a PR
 
@@ -397,12 +448,13 @@ src/tokenscope.h        the mechanism: record, buffer, macros — header-only ho
 src/tokenscope-ggml.h   the only part that knows about ggml, kept separate
 src/tokenscope.cpp      cold path: arena, interning, graph epochs, Chrome Trace emit
 src/ts_selftest.cpp     8-thread self-test, layout assertions, per-scope cost
-patches/                surgical edits to upstream llama.cpp, 3 files
+patches/                01: the instrumentation. 02: the F20 naming fix, standalone
 examples/               committed reference traces (level 1 and level 3), used by CI
 scripts/bootstrap.py    clone at the pin, copy sources, apply patches
 tools/trace_analyze.py  summary · per-token · outliers with cause · diff
 tools/bench_overhead.py interleaved A/B/C arms, medians, bootstrap CIs
 tools/make_tiny_model.py synthesize a random-weight GGUF so tests need no network
+tools/model_bytes.py     per-phase weight bytes from a GGUF, to score the byte law
 docs/                   the engineering log
 ```
 
