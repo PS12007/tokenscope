@@ -14,6 +14,9 @@ revised as the data improves.
 - [x] Overhead measured at levels 2 and 3, not just level 1
 - [x] Tested against a real quantized model, not only synthetic weights
       (Qwen2.5-0.5B Q4_K_M, [`FINDINGS`](FINDINGS.md) F12)
+- [x] Tested at a size a maintainer would care about (Qwen3-8B Q4_K_M,
+      [`FINDINGS`](FINDINGS.md) F19) — and the 0.5B results did *not* all
+      survive, which is worth saying in the issue rather than hiding
 - [ ] At least one Perfetto screenshot
 - [ ] Tested on Linux/GCC as well as Windows/MSVC
 - [ ] `BUILD_SHARED_LIBS=ON` linking (F18: currently broken, and llama.cpp ships
@@ -24,6 +27,40 @@ from the non-OpenMP barrier path, and `GGML_USE_OPENMP` is the default on Linux
 and takes a *different* branch in `ggml_graph_compute`. Filing an issue whose
 central measurements a maintainer cannot reproduce on their own machine is
 worse than not filing.
+
+---
+
+## File this one first: the naming defect (F20)
+
+**This is a different issue from the one below, and it should go first.**
+
+[`F20`](FINDINGS.md) found that the attention output projection has no name in
+any of `build_attn`'s seven overloads, so it appears in every ggml-name-based
+profile as `node_1182`. On Qwen3-8B it is 7.1% of decode thread time — the
+largest single node in the attention block.
+
+It is worth filing separately because it is **not about tokenscope at all**:
+
+- it is a defect, not a feature request, so it does not need the "do you want
+  this in-tree" conversation
+- it is reviewable in a minute: one line inside the `if (wo)` that does the
+  matmul, in each overload, plus three dead `if (wo_b) { }` blocks removed
+- `cb()` assigns a name at graph-build time, which graph reuse makes about once
+  per run (F1), so there is no measurable cost and no behaviour change
+- the evidence is a before/after that needs no profiler to believe: the node
+  goes from anonymous to named, and every existing tool that groups by name
+  picks it up
+
+`patches/02-name-attn-output.patch` is applied and measured locally. Per
+llama.cpp's `AGENTS.md`, open an **issue** describing the defect first rather
+than a PR — and note that AGENTS.md also asks that a contributor own and be
+able to defend the change without assistance, which for a change this size is a
+reasonable bar to meet before filing.
+
+Unlike the instrumentation proposal, **this one is not blocked on Linux.** It is
+a graph-construction change with no threading or platform dependency, and the
+evidence for it does not rest on any timing number that the OpenMP path could
+invalidate.
 
 ---
 
@@ -74,11 +111,25 @@ all are on one machine (i7-14700HX, Windows, MSVC) and say so.
    count. Equal row counts to unequal cores is the mechanism. (Pinning is not
    the fix; it costs 8-10% throughput. Proportional row assignment would be.)
 
-3. **Per-phase time tracks weight *bytes*, not parameter counts, and on a real
-   quantized model the difference matters.** On Qwen2.5-0.5B Q4_K_M — where
-   `output.weight` is Q8_0 while the rest is nearer 5.5 bits — predicting phase
-   time from bytes is accurate to 2.9 points and from parameters is wrong by
-   7.2. `lm_head` alone is **34% of decode** on that model.
+3. **Per-phase time tracks weight *bytes*, not parameter counts.** The clean
+   test is inside your own quantization recipe: Q4_K_M stores `ffn_down` at
+   Q6_K in 18 of Qwen3-8B's 36 layers and Q4_K in the other 18. Same tensor,
+   same shape, same op, adjacent layers, dtype the only difference.
+
+   ```
+                   Q6_K layers    Q4_K layers    ratio
+     ffn_out        38516.6 us     27138.5 us    1.419    <- the test
+     ffn_gate       26735.9 us     26485.5 us    1.009    <- control
+     ffn_up         26681.6 us     26506.4 us    1.007    <- control
+
+     predicted from bytes alone: 6.5625 / 4.5 = 1.458
+   ```
+
+   Across the whole model, phase time predicted from byte share is accurate to
+   **0.3 points**, and from parameter counts wrong by 4.5. `lm_head` is 34% of
+   decode on Qwen2.5-0.5B and 10.5% on Qwen3-8B against an identical 151,936
+   vocabulary, so per-tensor quantization choices are directly visible in the
+   profile and small-model results do not transfer.
 
 4. **A negative result, included because it corrected me.** I expected op fusion
    to help: `GGML_CPU_DISABLE_FUSION=1` removes 49 of 461 barriers per token,
