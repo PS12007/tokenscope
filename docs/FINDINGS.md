@@ -2058,11 +2058,98 @@ Per llama.cpp's `AGENTS.md`, this goes to an **issue first**, not a PR.
 
 ---
 
+## F21 — The byte law across three architectures, and the vocabulary story it explains
+
+**Workload:** two more real models that were already on the machine, both
+`arch=llama`, both traced identically to F19 — level 3, 6 decode tokens, 6
+threads, 0 dropped. `dolphin-2.9-llama3-8b` (8.03 B params, 4.06 GiB, vocab
+128,256) and `dolphin-2.9.3-mistral-7b` (7.24 B, 3.76 GiB, vocab **32,000**).
+
+F19 established the byte law on one model, with a controlled experiment inside
+it. The open question was whether it is a property of memory traffic in general
+or of Qwen3 in particular.
+
+```
+dolphin-llama3-8B            bits/w  param%   byte%   time%   err(param)  err(byte)
+  ffn                          4.50   75.1    72.8    72.3       -2.8       -0.5
+  attn.qkv                     4.50   10.7    10.4    10.6       -0.1       +0.2
+  lm_head                      6.56    7.0     9.9    10.2       +3.2       +0.3
+  attn.out                     4.50    7.2     6.9     6.8       -0.3       -0.1
+                                              max:              3.2        0.5
+
+dolphin-mistral-7B           bits/w  param%   byte%   time%   err(param)  err(byte)
+  ffn                          4.50   79.3    78.6    78.2       -1.1       -0.4
+  attn.qkv                     4.50   11.3    11.2    11.6       +0.3       +0.4
+  attn.out                     4.50    7.6     7.5     7.5       -0.1       -0.0
+  lm_head                      6.56    1.8     2.7     2.8       +0.9       +0.1
+                                              max:              1.1        0.4
+```
+
+**Byte error 0.5 and 0.4 points**, against F19's 0.3 on Qwen3. Three
+architectures, three quantization mixes, same answer.
+
+**The mistral row is a weak test and should be read as one.** Its file is
+uniform Q4_K apart from `lm_head`, so the two rival predictions only disagree by
+0.9 points anywhere. It confirms nothing that F19 did not already establish; it
+is included because excluding a weak-but-consistent result and keeping the
+strong ones is how a law stops being falsifiable.
+
+The llama3 row is the real test of the pair: `lm_head` at Q6_K against a
+uniformly Q4_K body puts 2.9 points between the hypotheses, and the byte form
+takes it by 3.2 to 0.3.
+
+### What four models say about `lm_head`, which is the practical result
+
+F12 called the output projection "a first-class cost" at 34%. F19 found 10.5%
+and blamed vocabulary. These two models vary vocabulary independently of size,
+which neither Qwen model could:
+
+```
+model                    vocab    n_embd   lm_head byte%   lm_head time%
+Qwen2.5-0.5B Q4_K_M    151,936       896          36.9            34.0
+Qwen3-8B     Q4_K_M    151,936      4096          10.5            10.5
+llama3-8B    Q4_K      128,256      4096           9.9            10.2
+mistral-7B   Q4_K       32,000      4096           2.7             2.8
+```
+
+**A 13.7x range in `lm_head`'s share, tracked to within 0.3 points on three of
+the four**, and 2.9 on the fourth. Two 8B models at the same `n_embd` differ
+only by vocabulary and land 10.5 against 10.2; drop vocabulary to 32,000 at the
+same size and it collapses to 2.8.
+
+So the rule is `vocab x n_embd x bits`, against the rest of the model, and
+nothing else needs to be known:
+
+- **Qwen2.5-0.5B's 34% was a small-model artifact**, as F19 said, but the
+  vocabulary half of the explanation is now tested directly rather than inferred
+  from two models that shared a vocabulary.
+- **On a 32k-vocabulary model the output projection is not worth instrumenting.**
+  2.8% is inside the noise of most of what this project measures.
+- The practical consequence for anyone reading F12: whether `lm_head` matters is
+  decided before you run anything, by two integers in the config and one dtype
+  in the tensor table.
+
+### Caveats
+
+- Both models are `arch=llama`, so this is two quantization recipes and two
+  vocabularies more than F19, but only one additional *architecture family*. A
+  MoE model would be the interesting next test and none is available here.
+- Single 6-token level-3 traces at 6 threads, as in F19. No throughput sweeps
+  were run on either model, so nothing here speaks to F19's scaling result.
+- Traces not committed. The two files are ~5 MB each and the reference set is
+  already 13 MB; they add nothing CI does not already check on the Qwen3 pair.
+  Reproduce with the command in F19 against the blob paths in HANDOFF section 3.
+- The `~post-attn` and `other` buckets are together under 0.05% on both models,
+  so the F20 naming fix is doing its job on `arch=llama` too — the output
+  projection is named there as well, not just on Qwen3.
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
 
-- larger real models — the biggest measured is now 8.19 B (F19); nothing
-  above that, and no MoE model at all
+- larger real models — the biggest measured is now 8.19 B (F19, F21);
+  nothing above that, and **no MoE model at all**, which is the most obvious
+  gap in the byte law's coverage
 - server workloads with real arrival and eviction patterns (F17 covers
   `llama-batched` only, up to 16 sequences)

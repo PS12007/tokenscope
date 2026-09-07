@@ -1321,6 +1321,33 @@ carry. Post I1 after G1; it is the payoff to G1's closing caveat.
 
 ---
 
+### N8. Four models, one rule (F21)
+
+> "Is the output projection worth optimizing?" — you can answer that before
+> running anything.
+>
+> ```
+> model              vocab   n_embd   predicted   measured
+> Qwen2.5-0.5B     151,936      896      36.9%      34.0%
+> Qwen3-8B         151,936     4096      10.5%      10.5%
+> llama3-8B        128,256     4096       9.9%      10.2%
+> mistral-7B        32,000     4096       2.7%       2.8%
+> ```
+>
+> Predicted column is `vocab x n_embd x bits-per-weight`, as a share of all
+> weight bytes streamed per token. Read straight out of the GGUF tensor table.
+>
+> A **13.7x range**, tracked to within 0.3 points on three of four.
+>
+> The two 8B rows are the useful comparison: same size, same n_embd, different
+> vocabulary, and the share moves with the vocabulary. Drop to 32k and it's
+> 2.8% — not worth instrumenting.
+>
+> I published the 34% number first and called it "a first-class cost". It was a
+> small-model artifact and the arithmetic was always there to say so.
+
+---
+
 ## READY NOW — the KV predictions, one right one wrong (F16)
 
 ### L1. The thread
