@@ -188,6 +188,15 @@ TS_API void ts_token_begin(int is_prefill, uint32_t n_tokens);
 TS_API void ts_token_end(void);
 TS_API void ts_flush(const char * path);
 
+// Node-name -> phase classification is a hand-ordered prefix table, and the
+// first match wins. An entry that another entry is a prefix of is therefore
+// unreachable. ts_check_category_table returns how many such entries exist --
+// zero, or the classification is silently wrong for some node. `report`, if
+// given, is called with (shadowed_prefix, shadowing_prefix) for each. See
+// FINDINGS F20, where "kqv_out" turned out to have been dead the whole time.
+typedef void (*ts_shadow_report_fn)(const char * shadowed, const char * by);
+TS_API int ts_check_category_table(ts_shadow_report_fn report);
+
 // Graph epochs. ts_graph_begin returns non-zero if this cgraph has not been
 // seen before, in which case the caller (the main thread, outside the node
 // loop) should walk the graph once and register node names. Because llama.cpp

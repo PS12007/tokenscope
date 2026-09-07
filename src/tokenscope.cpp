@@ -437,23 +437,35 @@ void emit_event(std::string & out, bool & first, const out_event & e, int32_t pi
     out += "}}";
 }
 
+// Prefix -> phase. ORDER MATTERS: the first match wins, so any prefix that is
+// itself a prefix of another entry must come after the longer one.
+//
+// This is not hypothetical. "kqv_out" sat below "kq" here for the whole life of
+// the project and was therefore unreachable -- every "kqv*" node was filed as
+// attn.score. Nothing complained, because the one model that exercised it named
+// its node "attn_out" instead. `ts_check_category_table()` now fails the
+// self-test if a shadowed entry is ever added back (FINDINGS F20).
+static const struct { const char * p; const char * cat; } k_cat_table[] = {
+    // longest / most specific first
+    { "result_output","lm_head"  },
+    { "result_norm", "norm"      },
+    { "attn_norm",   "norm"      }, { "ffn_norm",  "norm"      },
+    { "cache_k",     "attn.kv_rw"}, { "cache_v",   "attn.kv_rw"},
+    { "k_cache",     "attn.kv_rw"}, { "v_cache",   "attn.kv_rw"},
+    { "attn_out",    "attn.out"  },
+    { "kqv_out",     "attn.out"  }, { "kqv_wo",    "attn.out"  },
+    { "kqv",         "attn.score"}, { "kq",        "attn.score"},
+    { "Qcur",        "attn.qkv"  }, { "Kcur",      "attn.qkv"  },
+    { "Vcur",        "attn.qkv"  }, { "attn_q",    "attn.qkv"  },
+    { "attn_k",      "attn.qkv"  }, { "attn_v",    "attn.qkv"  },
+    { "ffn_",        "ffn"       },
+    { "l_out",       "residual"  },
+    { "norm",        "norm"      },
+};
+
 const char * category_for(const std::string & node_name) {
     // Node names are "<role>-<layer>"; see docs/00 section 2.
-    static const struct { const char * p; const char * cat; } table[] = {
-        { "attn_norm",   "norm"      }, { "ffn_norm",  "norm"      },
-        { "result_norm", "norm"      }, { "norm",      "norm"      },
-        { "Qcur",        "attn.qkv"  }, { "Kcur",      "attn.qkv"  },
-        { "Vcur",        "attn.qkv"  }, { "attn_q",    "attn.qkv"  },
-        { "attn_k",      "attn.qkv"  }, { "attn_v",    "attn.qkv"  },
-        { "cache_k",     "attn.kv_rw"}, { "cache_v",   "attn.kv_rw"},
-        { "k_cache",     "attn.kv_rw"}, { "v_cache",   "attn.kv_rw"},
-        { "kq",          "attn.score"}, { "kqv",       "attn.score"},
-        { "attn_out",    "attn.out"  }, { "kqv_out",   "attn.out"  },
-        { "ffn_",        "ffn"       },
-        { "result_output","lm_head"  },
-        { "l_out",       "residual"  },
-    };
-    for (const auto & e : table) {
+    for (const auto & e : k_cat_table) {
         if (node_name.compare(0, std::strlen(e.p), e.p) == 0) return e.cat;
     }
     return nullptr;   // caller falls back to graph-position inference
@@ -531,6 +543,27 @@ void derive_categories(graph_info & g) {
 }
 
 } // namespace
+
+// Returns the number of prefix entries that can never be reached, because an
+// earlier entry in the table is a prefix of them. Zero is the only acceptable
+// answer, and ts_selftest asserts it -- a lookup table ordered by hand is
+// exactly the kind of thing that rots quietly (FINDINGS F20).
+extern "C" TS_API int ts_check_category_table(ts_shadow_report_fn report) {
+    int shadowed = 0;
+    const int n = (int) (sizeof(k_cat_table) / sizeof(k_cat_table[0]));
+    for (int i = 0; i < n; ++i) {
+        for (int j = 0; j < i; ++j) {
+            const size_t lj = std::strlen(k_cat_table[j].p);
+            if (std::strlen(k_cat_table[i].p) >= lj &&
+                std::strncmp(k_cat_table[i].p, k_cat_table[j].p, lj) == 0) {
+                ++shadowed;
+                if (report) report(k_cat_table[i].p, k_cat_table[j].p);
+                break;
+            }
+        }
+    }
+    return shadowed;
+}
 
 extern "C" TS_API void ts_flush(const char * path) {
     if (ts_g_level == TS_LEVEL_OFF) return;

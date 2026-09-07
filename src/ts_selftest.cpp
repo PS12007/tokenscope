@@ -35,6 +35,10 @@ int main() {
 
 static int g_failures = 0;
 
+static void report_shadowed(const char * shadowed, const char * by) {
+    std::printf("    \"%s\" is unreachable: \"%s\" matches it first\n", shadowed, by);
+}
+
 static void check(bool cond, const char * what) {
     std::printf("  [%s] %s\n", cond ? " ok " : "FAIL", what);
     if (!cond) g_failures++;
@@ -174,6 +178,15 @@ int main(int argc, char ** argv) {
     check(data.find("\"cat\":\"decode\"") != std::string::npos, "decode token slices present");
     check(data.find("\"cat\":\"prefill\"") != std::string::npos, "prefill token slice present");
     check(data.find("\"dropped\":0") != std::string::npos, "provenance record reports zero drops");
+
+    // The category table is ordered by hand and the first match wins, so an
+    // entry that a shorter entry already covers is dead code that silently
+    // misfiles nodes. This caught nothing when written only because F20 had
+    // just fixed the one instance; it exists so the next one is loud.
+    {
+        const int shadowed = ts_check_category_table(&report_shadowed);
+        check(shadowed == 0, "no category-table prefix is shadowed by an earlier one");
+    }
 
     std::printf("\n%s (%d failure%s)\n",
         g_failures == 0 ? "PASS" : "FAIL", g_failures, g_failures == 1 ? "" : "s");
