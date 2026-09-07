@@ -1,16 +1,20 @@
 # HANDOFF — state of the project, and what to do next
 
-Updated at the end of **session 2 (2026-09-05)**. Everything here is either a
+Updated at the end of **session 3 (2026-09-06)**. Everything here is either a
 fact about the current tree or an explicit next step. Read this first when
 picking the project back up.
 
-**Session 2 in one paragraph.** Pushed the 14 commits session 1 could not.
-Added the `--barriers` analysis, sampling/tokenizer/cell-search scopes, and a
-real quantized model. Findings went from F8 to **F16**. Four of those tested
-predictions the project had written down in advance: F10's scaling prediction
-and F1's context-shift prediction were confirmed; **F2's `find_slot` prediction
-and F9's own fusion recommendation were falsified** and now carry corrections
-inline. The upstream draft was rewritten to lead with findings.
+**Session 3 in one paragraph.** Ran the 8B that section 5 item 4 was waiting on
+— it was already on the machine, pulled by Ollama, no download needed. Wrote six
+predictions down and committed them *before* measuring; five held and one failed
+on both its specifics. Findings went F18 -> **F21**. The best result is a
+controlled experiment the earlier models could not support: llama.cpp's Q4_K_M
+recipe stores `ffn_down` at two different precisions in different layers, so the
+same node in adjacent layers differs only in dtype, and the byte law predicts
+the ratio to 2.7% with two control tensors flat at 1.00. Also found and fixed a
+defect in **upstream llama.cpp** (F20) and a dead entry in **tokenscope's own**
+category table (found because the first would have exposed the second). All 24
+commits from sessions 2 and 3 are pushed.
 
 ---
 
@@ -57,10 +61,10 @@ The short version:
 | ~~Sampling / tokenizer scopes not written~~ | **Done (F11).** `llama-cli` is now built in `build-ts-on`. Sampling + detokenization are 0.13% of a token |
 | ~~Context-shift behaviour~~ | **Done (F16).** 4 spikes in 699 tokens at `-c 256`, 1.13-1.34x median |
 | Concurrent sequences / server workload | The last untested prediction in F2, and F16 says it is still plausible: the head-pointer trick that makes `find_slot` O(1) is much weaker with many streams |
-| Larger real model | Biggest measured is 630 M. F12's `lm_head` result shrinks with size and its bandwidth result should move. **An 8B is already on this machine — no download needed, see section 3** |
-| No Perfetto screenshot | Blocks the README and several posts |
+| ~~Larger real model~~ | **Done (F19, F21).** Three more real models measured, to 8.19 B. Biggest is now 8.19 B; **no MoE model at all**, which is the clearest remaining gap |
+| No Perfetto screenshot | Blocks the README and several posts. **Still the best impact-to-effort item that needs no new code**, and the reference trace for it is now `examples/qwen3-8b-named-attnout.trace.json` |
 | ~~No thread pinning~~ | **Done (F14).** Mechanism confirmed: homogeneous cores drop spread 13%->2% and halve barrier wait. Pinning is not the fix |
-| Upstream issue not filed | Draft ready at [`03`](03-upstream-issue-draft.md); F9 is the strongest material for it |
+| Upstream issue not filed | Two issues now, and [`03`](03-upstream-issue-draft.md) says which goes first. **The F20 naming defect is not blocked on Linux** and should be filed on its own; the instrumentation proposal still is |
 
 ---
 
@@ -71,10 +75,20 @@ git log --oneline origin/main..main    # MUST be empty
 git push origin main
 ```
 
-Session 2 pushed most of its work but **ended with commits still local**,
-because `github.com` went down again near the end and stayed down. Everything is
-committed; some of it may not have reached the remote. Check and push before
-starting anything new.
+**Session 3 ended with everything pushed**, including the 15 commits session 2
+left stranded. That is the first time this has been true, so do not assume it
+stays that way — run the check anyway.
+
+Session 3's outage was total, not GitHub-specific: `ping 1.1.1.1` lost 100% of
+packets and DNS to 8.8.8.8 timed out, for roughly an hour. Diagnosing that took
+one command and was worth it, because "GitHub is blocked" and "this machine has
+no network" call for different responses. Then it came back with no warning and
+the first retry succeeded.
+
+**What worked: a retry loop in the background** (`git push` every 45s, up to 40
+times) started early and left alone while the real work continued. It landed on
+its first attempt after the network returned, with no further attention. Do that
+at the *start* of a session rather than pushing by hand between commits.
 
 Networking here is **intermittent, not blocked**. Session 1 concluded GitHub was
 specifically unreachable and stopped retrying, which is why 14 commits sat local
@@ -82,6 +96,8 @@ for a whole session. Session 2 saw a `git push` succeed while a `curl
 https://github.com` seconds later still failed, a `git fetch` die mid-protocol
 with `expected flush after ref listing`, a Hugging Face download of 469 MB
 complete without a hiccup, and then hours where nothing connected at all.
+Session 3 lost all networking for about an hour and got it back without doing
+anything.
 
 **The rule: a failed connection says nothing about the next one. Retry, and
 retry again later.**
@@ -266,66 +282,46 @@ prefill), and F16 (shifts visible, `find_slot` a small part of its scope).
 
 ## 5. Next steps, in the order I would do them
 
-Session 2 closed items 1, 5, 6 and 7 of the session-1 list, plus the real
-model. What is left, in the order I would do it:
+Session 3 closed items 3 and 4 (concurrent sequences had already gone in F17;
+the 8B is F19/F21) and added a new one at the top that did not exist before.
 
-1. **Linux + GCC**, and the OpenMP barrier in particular. Read the source
-   before assuming the worst -- session 2 did, and it is less bad than feared:
-
-   - `ggml_graph_compute`'s OpenMP branch calls **the same
-     `ggml_graph_compute_thread`**, so `TS_THREAD_PREPARE`, `TS_NODE_WORK_END`
-     and `TS_NODE_WAIT_END` are all present there. The instrumentation will
-     fire; it is not an uninstrumented path.
-   - But `ggml_barrier` itself is `#pragma omp barrier` under OpenMP
-     (`ggml-cpu.c:577`) instead of the atomic spin-wait with
-     `ggml_thread_cpu_relax()` measured on Windows. **A different barrier
-     implementation with a different cost profile** -- OpenMP runtimes usually
-     spin then park.
-
-   So the split is: F9's *structural* claims (which nodes are single-threaded,
-   where the arrival spread comes from) are about ggml's row partitioning and
-   should transfer unchanged. The barrier *cost* numbers -- 11.2% in F6, 22.9%
-   in F10, the imbalance-vs-release split in F9, and F15's null result -- are
-   measurements of one barrier implementation and **may not transfer at all**.
-   That is the real reason this matters, and it is sharper than "untested on
-   Linux".
-
-   Remaining unknowns worth checking: whether OpenMP creating threads per
-   parallel region makes `ts_thread_init` re-allocate buffers each graph and eat
-   the budget, and `__thread` visibility across shared objects (F18).
-2. **Perfetto screenshot.** Still the best impact-to-effort item that needs no
-   new code. Open `examples/mid-24L-L3-tok10-11.trace.json` at
-   [ui.perfetto.dev](https://ui.perfetto.dev), zoom to 2-3 tokens, put it at the
-   top of the README. Blocks post B5 and improves several others.
-3. **Concurrent sequences.** The last of F2's predictions still standing, and
-   F16 explains why it is the one most likely to be *right*: `find_slot` is
-   O(1) because of a per-stream head pointer, and that argument weakens with
-   many streams competing for cells. Needs `llama-server` or `llama-bench -np`.
-   This is the most likely source of the next real finding.
-4. **A 7-8B Q4_K_M model.** F12's two headline results move in opposite
-   directions with size -- `lm_head` share shrinks, the bandwidth wall moves --
-   so a bigger model tests both at once. The download works; see section 2.
-5. **Proportional row assignment**, which is what F14 ends up arguing for and
-   the largest change this project has pointed at. ggml's
-   `dr = (nr + nth - 1)/nth` gives every thread the same row count, optimal only
-   when every core is equally fast; F14 measured P-cores at **2.88x** E-cores.
-   A prototype weighting the split by measured per-thread throughput would test
-   whether that waste is recoverable. **Do this before proposing it upstream** --
-   F15 is what happens when a plausible fix goes out unmeasured.
-6. **File the upstream issue.** Draft at [`03`](03-upstream-issue-draft.md),
-   rewritten in session 2 to lead with findings rather than architecture. Do not
-   file before item 1.
-7. **Fix the shared-library build (F18).** It does not link, and this is a
-   blocker for upstreaming rather than a nice-to-have, since llama.cpp ships
-   shared libraries. MSVC forbids `dllexport` on `__declspec(thread)` (C2492),
-   so the raw-TLS design and the exported-registry design are incompatible as
-   written. F18 lays out two fixes; the per-DLL-TLS-with-shared-registry one
-   keeps the hot path intact and is the one I would try. **Re-measure level 3
-   overhead after, whichever is chosen** -- both touch the node loop's hot path.
-   Check the GCC/Linux behaviour at the same time (item 1); ELF may not have
-   this restriction at all.
-
----
+1. **File the F20 naming issue.** New, and first because it is the only piece of
+   this work that is *not* blocked on Linux, and the smallest thing a maintainer
+   could say yes to. `patches/02-name-attn-output.patch` is applied and measured;
+   [`03`](03-upstream-issue-draft.md) has the framing. llama.cpp's `AGENTS.md`
+   asks for an issue before a PR **and** asks that the contributor own the change
+   and be able to defend it unaided — which for a change this size is a fair bar
+   and worth meeting deliberately before filing.
+2. **Linux + GCC**, unchanged from session 2 and still the blocker for the main
+   upstream conversation. The detail is in section 5 of the previous revision
+   and still accurate: `ggml_graph_compute_thread` is shared, so the scopes fire,
+   but `ggml_barrier` is `#pragma omp barrier` instead of the atomic spin-wait
+   measured here. F9's *structural* claims should transfer; every barrier *cost*
+   number may not transfer at all.
+3. **Perfetto screenshot.** Still the best impact-to-effort item that needs no
+   new code, and now with a better trace to use — open
+   `examples/qwen3-8b-named-attnout.trace.json`, zoom to 2-3 tokens, put it at
+   the top of the README. Blocks post B5.
+4. **An MoE model.** The clearest remaining gap in the byte law. F21 covers three
+   architectures and a 13.7x range of `lm_head` share, but every model measured
+   is dense, and MoE is the case where bytes-streamed-per-token stops being a
+   property of the file and starts depending on the router. The law as stated
+   would predict expert phases from *stored* bytes and should be **wrong** there,
+   which makes it the most informative test available.
+5. **Proportional row assignment**, unchanged and still the largest change this
+   project has pointed at. ggml's `dr = (nr + nth - 1)/nth` gives every thread
+   the same row count; F14 measured P-cores at 2.88x E-cores. **Do this before
+   proposing it upstream** — F15 is what happens when a plausible fix goes out
+   unmeasured. Note F19 narrows where it matters: at 8B the heterogeneity
+   penalty vanishes into the bandwidth wall, so this is a prefill and
+   small-model fix, not a universal one.
+6. **Fix the shared-library build (F18).** Unchanged, still a blocker for
+   in-tree adoption, and the per-DLL-TLS-with-shared-registry option is still
+   the one I would try. **Re-measure level 3 overhead after**, and check the
+   GCC/ELF behaviour at the same time as item 2.
+7. **Re-measure overhead on a quiet machine.** The harness refused to certify
+   twice in session 2 and nothing has changed. Every quoted overhead number is
+   still the session-1 8-thread one.
 
 ## 6. Things I would tell myself
 
@@ -379,6 +375,49 @@ Added by session 2, in rough order of how much time they would have saved:
   declaring a feature inert, check its precondition is actually met. (It is
   genuinely inert at small budgets though, and the README now says so.)
 
+Added by session 3:
+
+- **A prediction can be right for a reason worth half of what it claimed.**
+  P19.3 predicted `attn_v` would cost less than its 3.56x byte ratio because
+  Q4_K needs dequantizing and F16 does not. It came in at 2.911, below, as
+  predicted. But `Qcur`/`Kcur` — same dtype, differing only in size — undershoots
+  *its* byte ratio by 10% too, so roughly half the effect was a size artifact
+  present in both. **Check whether your mechanism is the only thing producing
+  the sign you predicted**, using a pair where it cannot be operating.
+- **Two mechanisms can move at once and you will model one.** P19.4 reasoned
+  correctly about memory traffic, got the direction right and both specifics
+  wrong, because F14's core-heterogeneity penalty stopped applying at the same
+  time — at 8B every thread waits on memory, so slow cores cost nothing. When a
+  prediction fails, check whether a *second* known mechanism changed regime.
+- **The strength of a test is not the separation between the hypotheses.** I
+  predicted the 8B would test the byte law weakly, because bytes and parameters
+  only disagreed by 4.2 points there against 8.3 on the 0.5B. It was the
+  sharpest result in the project — 0.3 points of residual. Separation and
+  precision are different axes.
+- **Look for the controlled experiment inside the data you already have.** The
+  best result of the session cost nothing to produce: `ffn_down` is Q6_K in 18
+  layers and Q4_K in 18, which is a paired experiment with controls sitting
+  inside a file that had already been traced. Ask what varies *within* a
+  workload before running another one.
+- **A dead branch in a lookup table has no symptom.** `{ "kqv_out", ... }` was
+  unreachable behind `{ "kq", ... }` for the whole project. Nothing failed,
+  because no model had ever produced that node name. Found only by asking where
+  a *hypothetical* name would land. The self-test now checks the table's shape
+  rather than its behaviour on the inputs that happen to exist.
+- **Verify a check by breaking the thing it checks.** After adding the shadow
+  test I reintroduced the bug, confirmed it failed, and restored it. A check
+  that has never failed is a check nobody has tested — this is the "check
+  documented features actually work" lesson applied to the checks themselves.
+- **`cmd /c "vc.bat <command>"` from the Bash tool silently opens an
+  interactive shell** instead of running the command, and produces no error.
+  Use the **PowerShell tool** with
+  `cmd.exe /c "call `"$vc`" >nul 2>&1 && cd /d ... && <command>"` instead; that
+  works reliably. This cost a wasted 7-minute background build.
+- **The heredoc backslash trap from session 2 is still live and still bites.**
+  A `\n` inside a `<<'EOF'` Python heredoc reached the file as a real newline
+  and broke `ts_selftest.cpp` mid-build. The rule stands: **use the Write or
+  Edit tool for anything containing escapes.**
+
 ---
 
 ## 7. Numbers to quote (all reproducible from the committed code)
@@ -386,6 +425,7 @@ Added by session 2, in rough order of how much time they would have saved:
 | Claim | Value | Source |
 |---|---|---|
 | Upstream patch size | 174 lines, 7 files | `patches/01-instrument.patch` |
+| F20 naming fix size | 8 added, 13 removed, 1 file | `patches/02-name-attn-output.patch` |
 | Per-scope cost | 52.8 ns (2 clock reads + 1 store) | `ts_selftest` |
 | Level 3 overhead | +0.67% [+0.12, +1.67] | [`02`](02-overhead-methodology.md) |
 | Zero-overhead-when-off | 0 symbols, 864-byte archive | [`02`](02-overhead-methodology.md) §2 |
@@ -396,6 +436,16 @@ Added by session 2, in rough order of how much time they would have saved:
 | Barriers removed by ggml's one fusion | 49 of 461 per token, for no measurable throughput | [`FINDINGS`](FINDINGS.md) F15 |
 | Best speedup at any thread count | 2.21x F32 / 3.28x Q4_K_M, both at 6 threads | F10, F12 |
 | `lm_head` share, Qwen2.5-0.5B Q4_K_M | 34% of decode thread time | [`FINDINGS`](FINDINGS.md) F12 |
+| ...same tensor, Qwen3-8B, identical vocabulary | 10.5% | [`FINDINGS`](FINDINGS.md) F19 |
+| ...dolphin-mistral-7B, 32k vocabulary | 2.8% | [`FINDINGS`](FINDINGS.md) F21 |
+| Byte law, max error over 4 models | 0.3-0.5 points (0.5B: 2.9) | F19, F21 |
+| ...predicting from parameter counts instead | wrong by 1.1-7.2 points | F12, F19, F21 |
+| `ffn_down` Q6_K vs Q4_K layers, same shape | **1.419x measured, 1.458x predicted**, controls at 1.007/1.009 | [`FINDINGS`](FINDINGS.md) F19 |
+| `attn_v` (F16) vs `attn_k` (Q4_K), same shape | 2.911x, byte ratio 3.556x | [`FINDINGS`](FINDINGS.md) F19 |
+| Anonymous attention output projection | 7.1% of decode thread time, in all 7 `build_attn` overloads | [`FINDINGS`](FINDINGS.md) F20 |
+| Peak decode speedup, Qwen3-8B | 3.01x at 8 threads (0.5B: 3.28x at 6) | [`FINDINGS`](FINDINGS.md) F19 |
+| Prefill speedup, same model, 28 threads | **11.07x**, against 2.95x on decode | [`FINDINGS`](FINDINGS.md) F19 |
+| Barrier wait, Qwen3-8B at 6 threads | 5.6% (F6 measured 11.2% on the F32 model) | [`FINDINGS`](FINDINGS.md) F19 |
 | Phase time predicted from weight BYTES | within 2.9 points on a real quantized model | [`FINDINGS`](FINDINGS.md) F12 |
 | ...predicted from parameter counts | wrong by 7.2 points on the same model | [`FINDINGS`](FINDINGS.md) F12 |
 | Sampling + detokenization | 0.13% of a token | [`FINDINGS`](FINDINGS.md) F11 |
@@ -412,6 +462,10 @@ Added by session 2, in rough order of how much time they would have saved:
 Everything above is measured on **synthetic F32 weights unless the row names a
 real model**, MSVC Release, Windows 11, on an i7-14700HX (8 P-cores + 12
 E-cores). Say so whenever quoting them.
+
+**Four real models have now been measured** (Qwen2.5-0.5B, Qwen3-8B,
+dolphin-llama3-8B, dolphin-mistral-7B) and the F19/F21 rows come from those.
+The three 7-8B ones live in Ollama's blob store; paths are in section 3.
 
 All of it is 8 threads except the F10 and F12 rows, which are the sweeps
 themselves. The level-3 overhead figure is an 8-thread number too, which
