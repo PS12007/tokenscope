@@ -1122,10 +1122,12 @@ carry. Post I1 after G1; it is the payoff to G1's closing caveat.
 
 > The attention output projection in llama.cpp has **no name** in the graph.
 >
-> It's 7.1% of decode time on Qwen3 8B. Bigger than Qcur. It shows up in
-> profiles as `node_1182`.
+> It's 7.1% of decode time on Qwen3 8B — bigger than Qcur, 6.6x Kcur. In a
+> profile it shows up as `node_1182`.
 >
-> Here's why:
+> `build_attn` has seven overloads. None of them name it.
+>
+> Four have no naming call at all. The other three have this:
 >
 > ```c
 > if (wo) {
@@ -1137,27 +1139,52 @@ carry. Post I1 after G1; it is the payoff to G1's closing caveat.
 > }
 > ```
 >
-> The naming call is commented out — *and* it's inside the block guarded by the
-> **bias**, not the weight the matmul actually uses.
+> Commented out — *and* guarded by the **bias**, not by the weight the matmul
+> uses. So uncommenting it would still name nothing on any model without an
+> attention output bias.
 >
-> So uncommenting it still wouldn't name the node on any model without an
-> attention output bias. Which is most of them.
+> One line, in the block that does the matmul, fixes all seven.
 
 ---
 
-### N2b. The follow-up, if N2 gets traction
+### N2b. The receipt (follow-up)
 
-> To be clear about how that node was identified, since it has no name to read:
+> Proof it's the right node, since it has no name to read.
+>
+> Before the fix, that time sat in my profiler's "inferred from graph position"
+> bucket. After adding one line:
 >
 > ```
-> the anonymous nodes   328.63 ms
-> Qcur                  328.67 ms
+>                before        after
+> attn.out     (absent)     321.06 ms   6.7%
+> ~attn       328.63 ms      40.1 us    0.0%
 > ```
 >
-> `attn_output` and `attn_q` are both [4096,4096] Q4_K. Same shape, same dtype,
-> same op.
+> The whole bucket moved. `cb()` only assigns a name — nothing about the
+> computation changed.
+
+---
+
+### N2c. The one that bit me back
+
+> Found the bug. Wrote the fix. It named the node `kqv_wo`.
 >
-> 36 of them, one per layer, at a fixed graph offset. Agreeing to 0.01%.
+> My own profiler then filed it under **attention scoring** instead of the
+> output projection.
+>
+> My phase table matches prefixes, first match wins, and `"kq"` sat above
+> `"kqv_out"`. So `"kqv_out"` had been unreachable for the entire life of the
+> project. No model had ever hit it, so nothing complained.
+>
+> Fixed the order, then added a check that fails the build if any entry is ever
+> shadowed again — and verified the check by reintroducing the bug:
+>
+> ```
+> "kqv_out" is unreachable: "kqv" matches it first
+> [FAIL] no category-table prefix is shadowed by an earlier one
+> ```
+>
+> A check that has never failed is a check nobody has tested.
 
 ---
 

@@ -1948,13 +1948,15 @@ projections.
 
 ### Why they have no name
 
-`llama-graph.cpp`, in `build_attn`, which every attention-based architecture
-routes through:
+`build_attn` in `llama-graph.cpp` has **seven overloads**, one per attention
+input type, and every attention architecture routes through one of them. Not one
+of them names the output projection. There are two distinct reasons, and the
+first draft of this finding got them the wrong way round.
+
+**Three overloads** — the no-cache, the ISWA-K and the cross-attention ones —
+carry this:
 
 ```c
-    ggml_tensor * cur = build_attn_mha(q, k, v, kq_b, kq_mask, sinks, v_mla, 0, kq_scale, il);
-    cb(cur, "kqv_out", il);
-
     if (wo) {
         cur = build_lora_mm(wo, cur, wo_s);
     }
@@ -1968,19 +1970,24 @@ routes through:
     }
 ```
 
-Two separate faults, and the second is the one that matters:
+The naming call is commented out, **and** it is in a block guarded by the
+attention output *bias* rather than by the weight `wo` whose matmul it would
+name. Uncommenting it would still name nothing on any model without that bias.
+The leftover `if (wo_b) { }` is dead either way.
 
-1. The naming call is **commented out**.
-2. It is inside `if (wo_b)` — guarded by the attention output **bias**, not by
-   the weight `wo` that the matmul it names actually uses. Qwen3 has no
-   attention output bias, so `wo_b` is null and **uncommenting the line would
-   still not name the node on this model**, nor on Llama, Mistral, or any other
-   architecture without that bias.
+**The other four**, including `build_attn(llm_graph_input_attn_kv *)` — the one
+nearly every decoder-only model uses, Qwen3 included — have **no naming call at
+all**, not even a commented one.
 
-There is also a dead `if (wo_b) { }` block left behind, which is what a
-commented-out body in a guard leaves.
+So the node this finding measured is anonymous for the simpler of the two
+reasons. The mis-guarded block is real and worth fixing, but it is not the cause
+on the path that was profiled, and saying so was wrong.
 
-The fix is to move the call into the `if (wo)` block that performs the matmul:
+### The fix, applied and measured
+
+`patches/02-name-attn-output.patch`: move the call inside the `if (wo)` block
+that performs the matmul, in all seven overloads, and delete the three dead
+blocks. **8 lines added, 13 removed.**
 
 ```c
     if (wo) {
@@ -1988,6 +1995,29 @@ The fix is to move the call into the `if (wo)` block that performs the matmul:
         cb(cur, "kqv_wo", il);
     }
 ```
+
+Rebuilt and re-traced the same workload. `cb` only assigns a name, so nothing
+about the computation changes:
+
+```
+                    before          after
+  attn.out        (absent)       321.06 ms   6.7%
+  ~attn           328.63 ms       40.1 us    0.0%
+```
+
+**The whole bucket moved.** That converts the identification above from an
+inference about shapes into a demonstration: naming the node relocated exactly
+the time in question out of the graph-position fallback and into `attn.out`, and
+left 40 microseconds of genuinely unnamed nodes behind.
+
+The residual 2.3% between 328.63 and 321.06 ms is run-to-run variation — these
+are single 6-token traces, and the two runs measured 6.98 and 7.48 tok/s.
+
+**This also needed a fix on tokenscope's side**, which is how the dead entry in
+its own category table came to light: `"kqv_wo"` would have been classified as
+`attn.score`, because `{ "kq", ... }` sat above `{ "kqv_out", ... }` in a
+first-match-wins table and shadowed it. Both are fixed, and the self-test now
+fails if any entry is ever shadowed again.
 
 ### Why it is worth reporting
 
@@ -1997,23 +2027,35 @@ includes tokenscope without its graph-position fallback, and it includes
 `GGML_SCHED_DEBUG` and any profiling built on ggml's own names.
 
 F8 recorded that about 15% of graph nodes carry no meaningful name and treated
-it as a general property of ggml. It is partly that, but at least one of those
-anonymous nodes is anonymous **because of a specific two-line bug**, it is worth
-7% of decode time, and it affects every architecture. F8's framing was too
+it as a general property of ggml. It is partly that, but the single most
+expensive anonymous node is anonymous because of **an omission in seven
+overloads of one function**, it is worth 7% of decode time, and it affects every
+architecture that has an attention output projection. F8's framing was too
 resigned.
 
-This is now the best-evidenced item in the upstream draft
-([`03`](03-upstream-issue-draft.md)): a two-line fix, a named node worth 7% of
-decode, no behaviour change, and no performance cost — `cb` only sets a name.
+This is now the best-evidenced item for the upstream conversation
+([`03`](03-upstream-issue-draft.md)): a one-line-per-overload change that
+deletes more than it adds, a named node worth 7% of decode, no behaviour change
+and no measurable cost — `cb` assigns a name at graph-build time, which happens
+about once per run thanks to graph reuse (F1).
+
+Per llama.cpp's `AGENTS.md`, this goes to an **issue first**, not a PR.
 
 ### Caveats
 
-- The identification is by shape, dtype, count and graph spacing, not by reading
-  a name that does not exist. It is very strong but it is inference.
+- ~~The identification is inference from shape, dtype, count and spacing.~~
+  **No longer inference**: the patch was applied and the bucket moved from
+  `~attn` to `attn.out` wholesale. The shape argument is retained above because
+  it is what pointed at the answer before the patch existed.
 - Measured on Qwen3 8B. The 7.1% share is model-dependent; the naming defect is
   not, since `build_attn` is shared by every attention architecture.
-- Not yet tested against a model that *does* have `wo_b`, where the existing
-  guard would fire if the line were uncommented.
+- Not yet tested against a model that *does* have `wo_b` (an attention output
+  bias), which is the case where the existing mis-guarded block would have
+  fired. Qwen3 has none.
+- The patch is applied locally and measured; it has **not** been sent anywhere.
+  It touches seven overloads and the three dead blocks, and a maintainer may
+  reasonably want only the one-line-in-`if (wo)` part.
+
 ---
 
 ## Not yet measured
