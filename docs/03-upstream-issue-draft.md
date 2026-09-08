@@ -379,10 +379,11 @@ on every thread.
 Every interval contains zero. **The harness refused to certify either
 measurement**, because this machine's baseline IQR is wider than the 2% effect
 being tested — so the honest claim is "not resolvable at ±2-4% here", not a
-number. The same machine on a quieter day resolved level 3 as +0.67% [+0.12,
-+1.67] at 8 threads; its noise floor moved 5x between sessions on identical
-binaries, which is itself worth knowing before trusting anyone's sub-1%
-profiler-overhead claim.
+number. The same machine on quieter days resolved level 3 as +0.67% [+0.12,
++1.67] in session 1 and **+1.16% [+0.67, +1.87]** in session 5, both at 8
+threads; its noise floor moved 5x between sessions on identical binaries, which
+is itself worth knowing before trusting anyone's sub-1% profiler-overhead
+claim.
 
 I flag this because a barrier makes the graph pay the `max` of per-thread
 overhead rather than the mean, so I'd expect overhead to grow with thread count.

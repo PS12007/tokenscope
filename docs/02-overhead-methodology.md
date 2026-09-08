@@ -6,7 +6,7 @@ the parts that are not yet settled.
 | Claim | Status |
 |---|---|
 | Zero overhead when compiled out | **Established**, structurally |
-| Under 2% when enabled | **Established for every level.** Level 3, the full per-node timeline, measures +0.67% [+0.12, +1.67]. |
+| Under 2% when enabled | **Established for every level, static build, 8 threads.** Level 3, the full per-node timeline, measures **+1.16% [+0.67, +1.87]** (session 5, n=20, certified; supersedes session 1's +0.67% [+0.12, +1.67] — see FINDINGS F25). **The shared build is not covered**: its arms ran at a 2.22% noise floor and every interval spanned zero. |
 
 ---
 
@@ -292,6 +292,15 @@ Without that, session 3's `+0.67% [+0.12, +1.67]` would be a number with
 sixteen instrumentation sites behind it and no way to attribute it. With it, the
 progression 0.31% → 0.36% → 0.69% → 0.67% across arms B, C1, C2, C3 reads as a
 cost curve rather than a single opaque figure.
+
+**Session 5 re-ran the same workload at n=20 and got +1.16% [+0.67, +1.87] at
+level 3**, with level 0 at +0.23% [-0.20, +0.92] and prefill uncertified at
+every level. That is the current number; the session-1 figures above are kept
+because they are what the method section describes and because the difference
+between them — same binaries, same workload, two sessions — is itself the
+measurement of how much this machine moves. FINDINGS F25 has the full table and
+the reason the *shared* build's arms could not be compared against these ones at
+all.
 
 ### Remaining gaps in the overhead claim
 

@@ -303,7 +303,7 @@ where your time goes.
 | Constraint | How it is enforced | Status |
 |---|---|---|
 | **Zero overhead when disabled** | Everything behind `TOKENSCOPE_ENABLED`. Off ⇒ macros expand to nothing; no symbol, no branch, no storage. | ✅ verified against the symbol table |
-| **Under 2% when enabled** | Measured with interleaved arms and bootstrap CIs, not assumed. | ✅ all levels; level 3 is +0.67% [+0.12, +1.67] at 8 threads. Re-measured at 28 threads: +0.66% [-1.85, +4.18], which the harness declined to certify — see [F10](docs/FINDINGS.md) |
+| **Under 2% when enabled** | Measured with interleaved arms and bootstrap CIs, not assumed. | ✅ static build, 8 threads: level 3 is **+1.16% [+0.67, +1.87]**, re-measured and certified in session 5 ([F25](docs/FINDINGS.md)). At 28 threads: +0.66% [-1.85, +4.18], which the harness declined to certify — see [F10](docs/FINDINGS.md). **The shared build's overhead is still unmeasured**; its arms ran with a 2.22% noise floor and every interval spanned zero |
 | **No new dependencies** | C++17 standard library on the engine side. Python stdlib for analysis. | ✅ |
 | **No locks in the hot path** | Thread-local buffers, merged at flush. | ✅ |
 | **Deterministic, not sampled** | Explicitly placed scopes, so the trace is *interpretable* rather than statistical. | ✅ |
@@ -312,27 +312,32 @@ where your time goes.
 
 ### Measured cost
 
-24-layer / 768-embd / 220 M-param model, 8 threads, MSVC Release, 15 interleaved
+24-layer / 768-embd / 220 M-param model, 8 threads, MSVC Release, 20 interleaved
 repetitions per arm. Full method and caveats in
 [`docs/02-overhead-methodology.md`](docs/02-overhead-methodology.md).
 
 ```
-decode (tg256, 8 threads, 15 interleaved reps per arm)
+decode (tg256, 8 threads, 20 interleaved reps per arm)
   arm                       median tok/s     IQR   overhead vs A
   --------------------------------------------------------------------
-  A: compiled out                  42.41    0.7%                  -
-  B: in, level 0                   42.28    1.6%    +0.31%  [-1.13, +0.79]
-  C1: active level 1               42.26    2.3%    +0.36%  [-0.61, +1.80]
-  C2: active level 2               42.12    1.7%    +0.69%  [-0.01, +1.86]
-  C3: active level 3               42.13    1.1%    +0.67%  [+0.12, +1.67]
+  A: compiled out                  42.94    1.1%                  -
+  B: in, level 0                   42.84    0.8%    +0.23%  [-0.20, +0.92]
+  C1: active level 1               42.58    1.0%    +0.86%  [+0.34, +1.58]
+  C2: active level 2               42.70    1.2%    +0.56%  [+0.08, +1.54]
+  C3: active level 3               42.45    0.7%    +1.16%  [+0.67, +1.87]
 ```
 
-Levels 0–2 have intervals containing zero, so the honest reading there is "not
-distinguishable from zero". **Level 3 — every graph node event on every worker
-thread, ~2.9 million records over the run — is the first arm with a measurable
-effect: +0.67%, CI [+0.12, +1.67].** Both ends of that interval are inside the
-2% budget, which is the part that matters; the claim survives the pessimistic
-end of the measurement, not just the point estimate.
+Level 0 has an interval containing zero, so the honest reading there is "not
+distinguishable from zero" — which is what "compiled in but switched off"
+should cost. **Level 3 — every graph node event on every worker thread, ~2.9
+million records over the run — is +1.16%, CI [+0.67, +1.87].** Both ends of
+that interval are inside the 2% budget, which is the part that matters; the
+claim survives the pessimistic end of the measurement, not just the point
+estimate. Prefill is the control and stays uncertified at every level.
+
+This supersedes session 1's +0.67% [+0.12, +1.67], which session 2 then failed
+to reproduce twice on a noisier machine. Same workload, same thread count, same
+binary pair, rebuilt and re-run in session 5 ([F25](docs/FINDINGS.md)).
 
 And the number is not an artifact of a full buffer, which would make recording
 look cheap by doing less of it:

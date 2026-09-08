@@ -3146,6 +3146,130 @@ negative and is worth the run, but is not a result anybody would quote.
 
 ---
 
+## F25 — The static overhead certifies for the first time since session 1, and the shared build's noise floor ate its own answer
+
+**Workload:** `mid.gguf` (24L, F32, 220 M), 8 threads, pp512 / tg256, MSVC
+Release, `-n 20` interleaved per arm with the first rep discarded, five arms
+(compiled out / level 0 / levels 1, 2, 3), `tools/bench_overhead.py`. Two pairs,
+run back to back: shared first (792 s), static second (785 s).
+
+Section 5 item 7 has been unrunnable since session 4 for one reason — no
+`GGML_TOKENSCOPE=OFF` **shared** build existed, so there was nothing for the ON
+one to be compared against. `build-ts-shared-off` is that build. Both shared
+arms were rebuilt in the same session as it; both static arms reported
+`ninja: no work to do` against an unchanged tree.
+[`P25`](#p25--what-the-shared-builds-overhead-should-cost-written-while-the-harness-runs)
+holds the predictions, committed before any output was read.
+
+### The result
+
+**Static, decode.** Baseline IQR 1.06%, so the harness answered.
+
+```
+  arm                       median tok/s     IQR   overhead vs A
+  A: compiled out                  42.94    1.1%                  -
+  B: in, level 0                   42.84    0.8%    +0.23%  [-0.20, +0.92]
+  C1: active level 1               42.58    1.0%    +0.86%  [+0.34, +1.58]
+  C2: active level 2               42.70    1.2%    +0.56%  [+0.08, +1.54]
+  C3: active level 3               42.45    0.7%    +1.16%  [+0.67, +1.87]
+```
+
+**Level 3 is +1.16% [+0.67, +1.87], certified** — the first overhead number this
+project has been able to stand behind since session 1, after two refusals in
+session 2 and a whole gap-table row saying every quoted figure was the old one.
+It supersedes session 1's +0.67% [+0.12, +1.67]: same workload, same thread
+count, same machine, wider and higher, and this time with the level-0 arm and
+prefill both behaving as controls should.
+
+Prefill is the control and stays uncertified at every level (C3 +1.28% [-0.21,
++1.93]), which is the pattern that makes the decode number believable rather
+than a machine having a good day.
+
+**Shared, decode.** Baseline IQR 2.22%, and the harness said so:
+
+```
+  A: compiled out                  42.65    2.2%                  -
+  B: in, level 0                   42.68    2.0%    -0.08%  [-1.29, +1.47]
+  C1: active level 1               42.58    3.1%    +0.16%  [-1.28, +2.02]
+  C2: active level 2               42.64    1.6%    +0.02%  [-0.95, +1.38]
+  C3: active level 3               42.54    0.8%    +0.26%  [-0.68, +1.50]
+
+  baseline IQR is 2.22% of median.
+  NOTE: that is wider than the 2% budget being tested.
+```
+
+Every shared interval spans zero. The shared build's overhead is **still
+unmeasured**, and the row in the gap table stays.
+
+### Scoring the predictions
+
+| | claim | outcome |
+|---|---|---|
+| **P25.1** | shared >= static at the same level, by < 1.5x | **not tested.** The point estimates went the other way (+0.26% shared against +1.16% static at level 3) but the shared interval, [-0.68, +1.50], contains the static point estimate outright. Nothing was resolved in either direction |
+| **P25.2** | level 0 unresolvable in both builds | **held.** +0.23% [-0.20, +0.92] static, -0.08% [-1.29, +1.47] shared. Both span zero |
+| **P25.3** | at least one of the eight comparisons refused | **held**, and by more than predicted — the whole shared decode block was refused, and shared *prefill* produced C2 at -0.66% [-1.88, -0.12], an interval excluding zero in which the instrumented build is **faster** than the compiled-out one. That is not a result, it is the shape of structured noise, and it is worth more than the refusal notice as a warning |
+| **P25.4** | static level-3 point estimate under 2% on decode | **held**, +1.16% |
+
+P25.1 is the one worth dwelling on. It was not falsified and it was not
+confirmed; it was **unanswerable with the design that was run**, and the design
+was chosen before the run. That is a worse outcome than a wrong prediction,
+because a wrong prediction teaches something.
+
+### Why the design could not answer it, which is the transferable part
+
+`bench_overhead.py` interleaves arms **inside** one invocation, so thermal
+drift and background load hit A, B, C1, C2 and C3 equally. It has done that
+since session 1 and it is why the static block above is trustworthy.
+
+It does not interleave across invocations. The shared pair and the static pair
+were two separate runs, thirteen minutes apart, and the machine's baseline IQR
+between them moved by more than a factor of two — 2.22% then 1.06%. **The
+comparison P25.1 wanted is between two runs, and between-run noise is exactly
+what the harness's whole design avoids by never comparing between runs.**
+
+So the question "does the shared build cost more?" needs the four builds'
+arms interleaved **together in one invocation**: A_static, C3_static,
+A_shared, C3_shared, round-robin. That is a change to the harness, not a
+longer version of the run that was done. Session 1's lesson was
+"interleave the arms"; this one is **the arms are whatever you are comparing,
+and if your comparison spans two invocations you have not interleaved it**.
+
+The same trap caught F24 in a different disguise — there the two arms differed
+in *version*, here they differ in *time*. Both are the arms not being matched
+on something the design assumed was constant.
+
+### One observation the design does support, weakly
+
+Both A arms are uninstrumented builds of the same tree at the same commit,
+differing only in `BUILD_SHARED_LIBS`. Shared read 42.65 tg / 682.76 pp against
+static's 42.94 / 688.62 — the DLL build about **0.7% slower on decode and 0.9%
+on prefill**. That is the cost of DLL boundaries in llama.cpp, not of
+tokenscope, and it is *small*, which is mildly interesting given that a shared
+build gives up cross-module inlining entirely.
+
+It is also a between-run comparison, so it inherits everything in the section
+above. Take it as an order of magnitude and nothing more.
+
+### Caveats
+
+- **The binaries predate the same session's own instrumentation change.** All
+  four were built from the tree at commit `7149794`, before `ts_note_build`
+  (F26's provenance field) added one call per thread per graph. The numbers
+  above describe the code at that commit. The addition is off the node path and
+  guarded by `ts_g_level`, but "by inspection" is the phrase F22 got caught by,
+  so it is stated rather than dismissed.
+- One machine, one model, one thread count, one workload. F10 predicts overhead
+  grows with thread count and only 8 has ever been measured.
+- The shared arms are Visual Studio / MSBuild builds and the static arms are
+  Ninja builds, because that is how the two configurations have existed since
+  session 4. Within each pair both arms share a generator, so each pair's
+  internal comparison is clean; the cross-pair comparison has that difference
+  in it as well as the timing one.
+- Level 2 reading lower than level 1 in both pairs (+0.56% against +0.86%
+  static) is not a real ordering — the intervals overlap almost completely.
+
+---
+
 ## F26 — Every measurement in this project was taken on the OpenMP path, and five documents said the opposite
 
 **Workload:** none. This is a fact about the build, found by reading

@@ -97,11 +97,16 @@ commits from sessions 2 and 3 are pushed.
 - Thread-count sweep, 1 to 28, throughput from the uninstrumented build
   (FINDINGS F10).
 - Python analysis: summary, per-token, outliers-with-cause, per-layer, diff.
-- Overhead: level 3 was **+0.67% [+0.12, +1.67]** at 8 threads in session 1.
-  Re-measured in session 2 at 8 and 28 threads, the harness **refused to
-  certify either** because the machine's noise floor had moved (baseline IQR
-  2-4%, wider than the effect). Quote the session-1 number only with its
-  thread count, and expect to have to re-measure on a quiet machine.
+- Overhead: level 3 is **+1.16% [+0.67, +1.87]** at 8 threads, **static** build,
+  re-measured and certified in session 5 (F25), n=20. It was +0.67% [+0.12,
+  +1.67] in session 1; session 2 tried at 8 and 28 threads and the harness
+  **refused to certify either**, because the machine's noise floor had moved
+  (baseline IQR 2-4%, wider than the effect). Quote a number with its thread
+  count and its build, and expect to have to re-measure on a quiet machine.
+  **The shared build's overhead is still unmeasured** — its arms ran at a 2.22%
+  noise floor in session 5 and every interval spanned zero. F25 explains why the
+  fix is not "more reps": the shared and static pairs are separate invocations,
+  and `bench_overhead.py` only interleaves *within* one.
 - Zero-overhead-when-off verified against the symbol table.
 - **Shared-library builds work (F22).** Each module keeps its own `ts_tls`
   cache over one registry-owned buffer. `ts_dlltest` builds two binaries plus a
@@ -131,7 +136,7 @@ The short version:
 | No Perfetto screenshot | Blocks the README and several posts. **Still the best impact-to-effort item that needs no new code**, and the reference trace for it is now `examples/qwen3-8b-named-attnout.trace.json` |
 | ~~No thread pinning~~ | **Done (F14).** Mechanism confirmed: homogeneous cores drop spread 13%->2% and halve barrier wait. Pinning is not the fix |
 | Upstream issue not filed | Two issues now, and [`03`](03-upstream-issue-draft.md) says which goes first. **The F20 naming defect is not blocked on Linux** and should be filed on its own; the instrumentation proposal still is. **An agent must not write or file it** — see the box at the top of `03` |
-| Shared build's overhead never measured | F22 left the hot path unchanged *by inspection*, which is not a measurement. Needs a `GGML_TOKENSCOPE=OFF` shared build to compare against |
+| Shared build's overhead still unmeasured | The `GGML_TOKENSCOPE=OFF` shared build now exists (`build-ts-shared-off`, session 5) and the run happened — but at a 2.22% noise floor, so every interval spanned zero and the harness refused. **F25 says the fix is not more reps:** the shared and static pairs were two invocations and `bench_overhead.py` only interleaves within one, so the comparison the question needs has never actually been run |
 | F24 not raised upstream, and `mul_mat_id` untested | The +1.95% is one machine, one thread count, one model, and no NUMA hardware — and NUMA is what the constant was tuned for |
 
 ---
@@ -425,6 +430,12 @@ python tools/mulmat_chunking.py M.gguf -t 8,16,28    # NEW: matmul partitioning 
 python tools/imbalance_repeat.py -m M.gguf -t 8,16 -n 12 --ratio ffn_up/ffn_out
 python tools/mulmat_chunking.py M.gguf -t 16 --mult 2   # model a PATCHED build
 python tools/ab_throughput.py --a old.exe --b new.exe -m M.gguf -t 16 -n 20
+python tools/imbalance_repeat.py -m M.gguf --metric release   # NEW: the other
+                                        # half of --barriers, repeated (P27.2)
+python tools/spinup_probe.py -m M.gguf --windows 1:2,40:41    # NEW: is the big
+                                        # after-arrival barrier ours? (P28)
+python tools/trace_svg.py T.json -o docs/token.svg            # NEW: the README
+                                        # picture, from a trace, no Perfetto
 ```
 
 `--barriers` needs `TOKENSCOPE_LEVEL=3`. It matches the k-th barrier across
@@ -753,7 +764,9 @@ Added by session 4:
 | Upstream patch size | 174 lines, 7 files | `patches/01-instrument.patch` |
 | F20 naming fix size | 8 added, 13 removed, 1 file | `patches/02-name-attn-output.patch` |
 | Per-scope cost | 52.8 ns (2 clock reads + 1 store) | `ts_selftest` |
-| Level 3 overhead | +0.67% [+0.12, +1.67] | [`02`](02-overhead-methodology.md) |
+| Level 3 overhead, static, 8 threads | **+1.16% [+0.67, +1.87]**, certified, n=20 | [`FINDINGS`](FINDINGS.md) F25 |
+| ...same, session 1 | +0.67% [+0.12, +1.67] | [`02`](02-overhead-methodology.md) |
+| Level 3 overhead, shared build | **unmeasured** — every interval spanned zero at a 2.22% noise floor | [`FINDINGS`](FINDINGS.md) F25 |
 | Zero-overhead-when-off | 0 symbols, 864-byte archive | [`02`](02-overhead-methodology.md) §2 |
 | Shared-library build | links and traces correctly on MSVC; overhead unmeasured | [`FINDINGS`](FINDINGS.md) F22 |
 | Matmul arrival imbalance, work-stealing vs equal-slice | **0.34-0.56x** against 0.94-1.51; two comparisons with non-overlapping ranges, n=12 per arm | [`FINDINGS`](FINDINGS.md) F23 |
