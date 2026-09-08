@@ -25,7 +25,7 @@ match the tree — see the A/B trap in section 3.
 build works (**F22**) — then **re-scoped item 5 out from under itself (F23)**
 and **acted on the re-scoped version (F24)**, which produced the first
 throughput improvement this project has ever certified. Findings went F21 ->
-**F24**. 16 commits, all pushed, CI green on all three platforms. The F20
+**F24**. 18 commits, all pushed, CI green on all three platforms. The F20
 upstream issue is *not* filed: llama.cpp's `AGENTS.md` forbids an agent writing
 issue or PR text, so `docs/03` now holds an evidence pack to write from instead
 of a draft to paste.
