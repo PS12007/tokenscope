@@ -2522,69 +2522,89 @@ measurement should report both.
 **Session 4, 2026-09-07.** Testing [`P23`](#p23--ggmls-matmul-has-two-partitioning-modes-and-adding-threads-can-lose-you-the-good-one),
 written and committed before any of this was measured.
 
-**P23.1 holds but is nearly uninformative. P23.2, the sharp one, holds — and a
-cross-model control makes it much stronger than the prediction claimed. P23.3
-turned out to be untestable. And the single trace P23 built its baseline on
-would, replicated once, have inverted the conclusion.**
+**P23.1 holds but is nearly uninformative. P23.2, the sharp one, holds, with
+non-overlapping ranges on two independent comparisons. P23.3 turned out to be
+unmeasurable as written. P23.4 was a prediction about an anomaly that did not
+survive being measured properly, and is withdrawn along with it.**
+
+> **This section was rewritten once.** Its first version reported six runs per
+> arm and built an argument on a 28-thread "anomaly". Twelve runs per arm made
+> the anomaly disappear — it was sampling noise — and moved two other numbers
+> materially. The first version's *conclusion* survived; several of its numbers
+> did not. What that cost, and why the table below is uniformly n=12, is in
+> "The reproducibility problem" below, which is the more useful half of this
+> finding.
 
 ### The result
 
 `ffn_up` and `ffn_down` are the pair. Same phase, same layer, adjacent in the
 graph, the same parameter count, the same dtype, work within 0.6% of each other.
 What differs is `nr0` — 3072 against 768 on `mid.gguf` — and `nr0` is what
-decides which side of `nchunk0 * nchunk1 < nth * 4` the matmul falls on. So for
-a **fixed model** the pair's shapes are fixed and only the *mode* changes with
+decides which side of `nchunk0 * nchunk1 < nth * 4` a matmul falls on. So for a
+**fixed model** the pair's shapes are fixed and only the *mode* changes with
 thread count, which is the comparison P23.2 asked for.
 
-Arrival imbalance per unit work, `ffn_up` ÷ `ffn_down`, median of 6 identical
-runs at each point:
+Arrival imbalance per unit work, `ffn_up` ÷ `ffn_down`. **Median of 12 identical
+runs at every point**, with the full range, because the ranges are the story:
 
-| model | threads | `ffn_up` mode | `ffn_down` mode | ratio | range over 6 runs |
-|---|---|---|---|---|---|
-| `mid.gguf` F32 | 8 | **dynamic** | static | **0.330** | 0.244 – 0.591 |
-| `mid.gguf` F32 | 16 | static | static | **1.001** | 0.807 – 1.182 |
-| Qwen2.5-0.5B Q4_K_M | 16 | **dynamic** | static | **0.293** | 0.199 – 0.422 |
-| Qwen2.5-0.5B Q4_K_M | 28 | static | static | **1.353** | 0.696 – 1.696 |
+| model | threads | `ffn_up` mode | ratio | range over 12 runs |
+|---|---|---|---|---|
+| `mid.gguf` F32 | 8 | **dynamic** | **0.557** | 0.253 – 1.350 |
+| `mid.gguf` F32 | 16 | static | 0.967 | 0.685 – 1.358 |
+| `mid.gguf` F32 | 20, pinned 1/core | static | 0.944 | 0.677 – 1.823 |
+| `mid.gguf` F32 | 28 | static | 1.041 | 0.439 – 1.217 |
+| Qwen2.5-0.5B Q4_K_M | 16 | **dynamic** | **0.338** | 0.265 – 0.406 |
+| Qwen2.5-0.5B Q4_K_M | 28 | static | 1.505 | 0.983 – 1.879 |
 
-**Read rows two and three together.** Both are at *sixteen threads*. One gives
-1.001 and the other 0.293. Thread count is identical, the machine is identical,
-the analysis is identical; what differs is that `mid`'s `ffn_up` is 48 natural
-chunks and falls below the 64-chunk threshold at 16 threads, while Qwen's is 76
-and does not. That is the control the original prediction did not think to ask
-for, and it separates *mode* from *thread count* about as cleanly as this
-machine allows.
+Every arm in which `ffn_up` self-balances sits below 0.56. Every arm in which it
+does not sits above 0.94. **Two comparisons have non-overlapping ranges**, which
+is what carries this:
 
-Within each model the story is the same and runs the other way in time: the
-ratio sits near 0.3 while `ffn_up` self-balances and jumps to ~1.0 the moment it
-stops. **A matmul that steals work has about a third the arrival imbalance per
-unit of work of one that does not.**
+- **Within Qwen**, 16 threads against 28: 0.265–0.406 against 0.983–1.879. Same
+  model, same tensors, same machine. The only thing that changed is that
+  `ffn_up`'s 76 natural chunks stopped clearing the threshold when it rose from
+  64 to 112.
+- **Across models at a fixed 16 threads**, Qwen against `mid`: 0.265–0.406
+  against 0.685–1.358. Same thread count, same machine, same analysis. `mid`'s
+  `ffn_up` is 48 chunks and falls below the 64 threshold; Qwen's is 76 and does
+  not.
 
-The underlying numbers, medians of the same 6 runs:
+The second is the control the original prediction did not think to ask for, and
+it is the one that separates *mode* from *thread count* — the first comparison
+alone could be explained by 28 threads simply being worse than 16.
+
+`mid.gguf` at 8 threads is the weakest row: right direction, but a range of
+0.253–1.350 that overlaps everything. It is reported rather than dropped.
+
+Underlying medians, same 12 runs:
 
 ```
-mid.gguf         t=8   ffn_up 0.061 (dyn)  ffn_gate 0.083 (dyn)  ffn_down 0.159 (sta)  attn_out 0.191 (sta)
-                 t=16  ffn_up 0.204 (sta)  ffn_gate 0.208 (sta)  ffn_down 0.205 (sta)  attn_out 0.199 (sta)
-Qwen2.5-0.5B     t=16  ffn_up 0.068 (dyn)  ffn_gate 0.079 (dyn)  ffn_down 0.234 (sta)
-                 t=28  ffn_up 0.234 (sta)  ffn_gate 0.249 (sta)  ffn_down 0.183 (sta)
+mid.gguf     t=8   ffn_up 0.056 (dyn)  ffn_gate 0.034 (dyn)  ffn_down 0.095 (sta)  attn_out 0.090 (sta)
+             t=16  ffn_up 0.210 (sta)  ffn_gate 0.226 (sta)  ffn_down 0.214 (sta)  attn_out 0.222 (sta)
+             t=28  ffn_up 0.137 (sta)  ffn_gate 0.156 (sta)  ffn_down 0.145 (sta)  attn_out 0.157 (sta)
+Qwen 0.5B    t=16  ffn_up 0.072 (dyn)  ffn_gate 0.065 (dyn)  ffn_down 0.214 (sta)
+             t=28  ffn_up 0.270 (sta)  ffn_gate 0.300 (sta)  ffn_down 0.195 (sta)
 ```
 
-At `mid` t=16 the four values are 0.199–0.208 — a spread of 4%, after two of
-them arrived from 0.061 and 0.083. They do not merely rise; they **converge on
-the static value**, which is what "the mode is the variable" predicts and what a
+At every all-static row the values converge: `mid` t=16 spans 0.210–0.226 across
+four nodes, t=28 spans 0.137–0.157. They do not merely rise, they **land on the
+static value**, which is what "the mode is the variable" predicts and what a
 general thread-count effect does not.
+
+**A matmul that steals work carries roughly a third to a half the arrival
+imbalance per unit of work of one handed an equal slice.**
 
 ### P23.1: technically right, and it is the control that says so
 
 Predicted `ffn_up` and `ffn_gate` imbalance/work above 0.10 at 16 threads.
-Measured 0.204 and 0.208. Held.
+Measured 0.210 and 0.226. Held.
 
 But `ffn_down` and `attn_out` were static at *both* thread counts and rose just
-as far — 0.159 → 0.205 and 0.191 → 0.199 in medians, and in the single-run data
-that first suggested this, 0.023 → 0.271 and 0.028 → 0.214. **A prediction that
-a number goes up, in a regime where every comparable number also goes up, is
-worth very little.** P23.1 was written as the headline and P23.2 as its refinement;
-the refinement is the entire result. Noted for the next time a prediction is
-drafted: state it as a ratio against a control wherever the control exists.
+as far — 0.095 → 0.214 and 0.090 → 0.222. **A prediction that a number goes up,
+in a regime where every comparable number also goes up, is worth very little.**
+P23.1 was written as the headline and P23.2 as its refinement; the refinement is
+the entire result. Noted for the next prediction: state it as a ratio against a
+control wherever a control exists.
 
 ### P23.3: not falsified, not confirmed, unmeasurable as written
 
@@ -2598,61 +2618,78 @@ The prediction was written from the tensor table without checking that the
 quantity it names exists for that node. **A prediction has to be about something
 the instrument can return**, which is a cheaper check than the one it replaces.
 
-### The reproducibility problem, which nearly produced the wrong answer
+### P23.4 and the anomaly that was not there
 
-P23's baseline table came from a single committed trace,
-`examples/mid-24L-L3-tok10-11.trace.json`, and read `ffn_up`/`ffn_down` = 0.554
+The first version of this finding reported `mid.gguf` at 28 threads as an
+anomaly: both nodes static, and a ratio of **0.558** where ~1.0 was expected.
+P23.4 was then written and committed, predicting that pinning 20 threads one per
+physical core would restore it to 0.8–1.2 — on the theory that 28 logical
+threads over 20 physical cores introduces SMT contention as a second mechanism.
+
+The 20-thread pinned run gives **0.944**, inside the predicted band. But by then
+the premise was gone: re-running the 28-thread arm at twelve repetitions instead
+of six gives **1.041**, not 0.558. **There was no anomaly.** It was a six-run
+median that happened to land low, in an arm whose range turned out to be
+0.439–1.217.
+
+So P23.4 is not scored. It predicted the resolution of something that did not
+need resolving, and its test — while consistent with everything else here — was
+answered by re-measuring the original number rather than by the intervention it
+proposed.
+
+The SMT question it was invented for remains genuinely open and this machine
+cannot settle it. Separating SMT contention from core heterogeneity needs two
+arms at the same thread count, one sharing physical cores and one not, in a
+regime where `ffn_up` is static. Static needs ≥16 threads; 16 threads without
+SMT needs more than the 8 P-cores available, so the no-SMT arm must include
+E-cores and the arms then differ in core *type* as well. **The confound is in the
+hardware, not in the experiment design**, and it should be tested somewhere with
+more homogeneous cores.
+
+### The reproducibility problem, which is the transferable half
+
+P23's baseline came from a single committed trace,
+`examples/mid-24L-L3-tok10-11.trace.json`, reading `ffn_up`/`ffn_down` = 0.554
 at 8 threads. The first fresh trace at the same thread count, same model, same
 binary, gave **1.086** — which reads exactly like the mode not mattering, and
-was written down as "P23.2 falsified" before the repeats were run.
+was written down as "P23.2 falsified" before any repeats were run.
 
-Six repeats put the median at 0.330 with a range of 0.244–0.591. **Both single
-traces were outliers, in opposite directions.** The spread of the underlying
-per-node quantity over identical runs:
+That is three separate occasions in one session where a median moved enough to
+change the conclusion:
 
-| | 8 threads | 16 threads |
-|---|---|---|
-| `ffn_up` | 2.7× | 1.3× |
-| `ffn_down` | **5.9×** | 1.3× |
-| `attn_out` | **6.3×** | 1.2× |
+| quantity | n=1 | n=6 | n=12 |
+|---|---|---|---|
+| `mid` t=8 ratio | 1.086 (and 0.554 from the committed trace) | 0.330 | **0.557** |
+| `mid` t=28 ratio | 0.996 | 0.558 → *called an anomaly* | **1.041** |
+| `mid` t=20 pinned ratio | — | 0.747 → *outside predicted band* | **0.944** |
 
-Up to 6.3× between the smallest and largest of six identical runs at 8 threads,
-and a well-behaved 1.1–1.3× at 16. The low-thread-count numbers are the noisy
-ones, which is the opposite of the intuition that more threads means more noise.
+Every one of those n=6 columns was used, at the time, to say something the n=12
+column does not support. The spread of the underlying per-node quantity over
+identical runs explains why:
 
-So: **every per-node imbalance figure quoted in this repo from a single trace
-should be read as one draw, not as a measurement.** That includes F9's table, and
-the P23 baseline table above, which is left in place unedited because the
-correction is more useful than a tidy record. It does not affect F9's
-*structural* claims — which threads get work, and why — since those are about row
-counts and not about timing.
+| | 8 threads | 16 threads | 28 threads |
+|---|---|---|---|
+| `ffn_up` | 3.7× | 1.5× | 4.0× |
+| `ffn_down` | **8.5×** | 1.4× | 2.5× |
+| `attn_out` | 6.4× | 1.3× | 2.9× |
 
-### The anomaly: 28 threads on `mid.gguf` does not fit
+Up to **8.5×** between the smallest and largest of twelve identical runs. The
+16-thread arm is the well-behaved one at 1.3–1.5×, and the 8-thread arm is the
+worst — the opposite of the intuition that more threads means more noise.
 
-`mid.gguf` at 28 threads has both nodes static and so should give ~1.0 like its
-16-thread row. It gives **0.558** (range 0.488–1.023). Qwen at 28 gives 1.353,
-so this is not "28 threads breaks the analysis".
+So: **every per-node imbalance figure in this repo that came from a single trace
+should be read as one draw, not as a measurement.** That includes F9's table. It
+does not affect F9's *structural* claims — which threads get work, and why —
+since those are about row counts rather than timing, and it does not affect any
+throughput number, which all come from the uninstrumented build and were always
+repeated.
 
-No claim about the cause. The most likely candidate is that 28 threads on this
-machine is 28 logical cores over **20 physical** ones — 8 P-cores with SMT plus
-12 E-cores — so at 28 the threads stop being merely unequal and start contending
-in pairs, which is a second kind of heterogeneity and one that scales with how
-many rows each thread holds.
-
-**P23.4, written before the test is run.** If SMT contention is what breaks the
-ratio at 28 threads, then removing it should restore it. `-C 0x0FFF5555
---cpu-strict 1` gives **20 threads, one per physical core** — the 8 P-core
-primaries plus all 12 E-cores — and at 20 threads `ffn_up` is still static
-(48 chunks against a threshold of 80), so both nodes of the pair are in the same
-mode exactly as at 28.
-
-**Predict the ratio returns to ~1.0 at 20 pinned threads**, in the 0.8–1.2 band
-the 16-thread rows occupy. Falsified if it stays near 0.558, which would say SMT
-is not the second mechanism and something about this model at high thread counts
-is, leaving the anomaly open.
-
-Note this test cannot distinguish "SMT pairing" from "20 threads rather than 28"
-on its own, since it changes both. It is a first cut, not a clean separation.
+This project already had the discipline. `bench_overhead.py` interleaves arms and
+bootstraps confidence intervals, and the harness has refused to certify a result
+six times across four sessions because the noise exceeded the effect. That
+machinery was built for throughput and never applied to numbers read *out of
+traces*, which were treated as exact because the tracing is exact. The tracing
+is exact. The machine underneath it is not.
 
 ### What this does to section 5 item 5
 
@@ -2680,10 +2717,13 @@ F23 does not kill it, but it moves the target:
 3. **The cheap experiment is now obvious and was not before.** Lower the
    multiplier, or make `chunk_size` adapt to `nth` instead of holding at 64, and
    the flip moves or stops happening. That is a one-line change to a heuristic
-   with a comment admitting it was tuned empirically on NUMA
+   whose own comment admits it was tuned empirically on NUMA
    ("*In theory, chunking should be just as useful on NUMA and non NUMA systems,
-   but testing disagreed with that*"), which is a much easier thing to propose
+   but testing disagreed with that*"), which is a far easier thing to propose
    than reworking row assignment across every op — and it is testable here.
+
+4. **Whatever is proposed, it needs n≥12 per arm.** On this evidence a six-run
+   comparison of this quantity cannot tell a 3× effect from noise reliably.
 
 Not attempted in this session. Written down so item 5 is re-scoped by evidence
 rather than by memory.
@@ -2691,26 +2731,27 @@ rather than by memory.
 ### Caveats
 
 - **One machine**, i7-14700HX, 8 P + 12 E, Windows/MSVC, ggml's own threadpool
-  and not OpenMP. The mode logic is platform-independent source, but every
-  imbalance number here is this machine's.
+  and not OpenMP. The mode logic is platform-independent source; every imbalance
+  number here is this machine's.
 - **Two models**, both small and dense, F32 and Q4_K_M. The 8B was not run: its
-  `ffn_up` is 192 chunks and stays dynamic to 28 threads, so it offers no flip to
-  observe on this machine — which is itself the point that the flip depends on
-  shape.
-- Medians of 6, and the ranges are given because they are wide. Nothing here is
-  a confidence interval and the 6 runs were not interleaved between arms the way
-  `bench_overhead.py` interleaves; a determined version of this would randomize
-  the order.
+  `ffn_up` is 192 chunks and stays dynamic through 28 threads, so it offers no
+  flip to observe on this machine — which is itself the point that the flip
+  depends on shape.
+- Medians of 12 with ranges given. These are **not** confidence intervals, and
+  the runs were not interleaved between arms the way `bench_overhead.py`
+  interleaves; a determined version would randomize arm order and bootstrap.
+  Two comparisons have non-overlapping ranges, which is the strongest statement
+  the data supports without that.
 - `imbalance / work` is a ratio of two quantities from the same trace, so it is
-  insensitive to the machine being globally fast or slow that minute. That is why
-  it is used instead of raw imbalance — but it is not immune, as the 5.9× spread
-  at 8 threads shows.
-- The pairing argument needs `ffn_up` and `ffn_down` to be comparable in
-  everything but mode. They are equal in parameters, dtype, phase and layer, and
-  measured within 0.6% on work — but `ffn_down` reads the SwiGLU output while
-  `ffn_up` reads the layer norm, so their inputs differ in provenance if not in
-  size. The cross-model control at fixed thread count is what makes the argument,
-  not the pairing alone.
+  insensitive to the machine being globally fast or slow that minute. That is
+  why it is used instead of raw imbalance — and the 8.5× spread shows it is not
+  immune.
+- The pairing argument needs `ffn_up` and `ffn_down` comparable in everything but
+  mode. They are equal in parameters, dtype, phase and layer, and measured within
+  0.6% on work — but `ffn_down` reads the SwiGLU output while `ffn_up` reads the
+  layer norm, so their inputs differ in provenance if not in size. The
+  cross-model control at fixed thread count is what makes the argument, not the
+  pairing alone.
 
 ---
 

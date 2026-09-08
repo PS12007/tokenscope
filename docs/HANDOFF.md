@@ -11,11 +11,19 @@ matmul that is only half true. Above `nchunk0 * nchunk1 >= nth * 4` threads
 steal chunks from an atomic counter, and a matmul in that mode carries about a
 third the arrival imbalance per unit work. So ggml already solves core
 heterogeneity for big matmuls, by a method that needs no model of core speed —
-but the threshold contains `nth`, so **adding threads can turn it off**. Six
-runs at each point, two models, with a cross-model control at a fixed thread
-count. The measurement also found that single-trace per-node imbalance varies by
-up to 6.3× between identical runs, which is worth knowing before quoting any of
-them.
+but the threshold contains `nth`, so **adding threads can turn it off**. Twelve
+runs at each of six points, two models, with a cross-model control at a fixed
+thread count; two of the comparisons have non-overlapping ranges.
+
+**Read F23's reproducibility section even if you skip the rest.** Getting there
+took three wrong turns, each caused by trusting too few runs: a single trace
+inverted the conclusion, a six-run median invented a "28-thread anomaly" that
+does not exist, and another six-run median put a prediction outside its band
+that twelve runs put inside it. Per-node imbalance spreads up to **8.5×** across
+identical runs. `bench_overhead.py` has interleaved arms and bootstrapped CIs
+since session 1 — that discipline was never applied to numbers read *out of
+traces*, which got treated as exact because the tracing is exact. The tracing is
+exact. The machine is not.
 
 On F22 specifically: F18 had called it a genuine incompatibility between the hot path's
 raw thread-local and the registry's need for one instance across DLLs — both
@@ -361,7 +369,8 @@ the 8B is F19/F21) and added a new one at the top that did not exist before.
    half true**: `ggml_compute_forward_mul_mat` steals work from a shared atomic
    counter whenever `nchunk0 * nchunk1 >= nth * 4`, and a matmul in that mode has
    about **a third** the arrival imbalance per unit work of one that is not
-   (0.293–0.330 against 1.0, two models, six runs each). Work stealing needs no
+   (0.34–0.56 against 0.94–1.51, two models, **twelve runs per arm**, two of the
+   comparisons with non-overlapping ranges). Work stealing needs no
    model of core speed, so for large matmuls ggml already solves what
    proportional assignment was going to solve, and solves it better.
 
@@ -372,13 +381,18 @@ the 8B is F19/F21) and added a new one at the top that did not exist before.
    make `chunk_size` adapt to `nth`, and see whether the flip stops costing.
    `tools/mulmat_chunking.py` says which matmuls flip and where, from the GGUF
    alone. **Still do it before proposing anything upstream** — F15 remains what
-   happens when a plausible fix goes out unmeasured, and F23's own 28-thread row
-   does not fit its story yet.
+   happens when a plausible fix goes out unmeasured — and **budget n≥12 runs per
+   arm**, because on this evidence six cannot tell a 3× effect from noise.
 
-   Two things F23 leaves open and cheap: the 28-thread anomaly on `mid.gguf`
-   (test with `-C` masks for 20 threads, one per physical core), and the ops that
-   are *not* matmul, which do still use the flat `dr = (nr + nth - 1)/nth` that
-   F14's 2.88× applies to.
+   Two things F23 leaves open. The ops that are *not* matmul still use the flat
+   `dr = (nr + nth - 1)/nth` that F14's 2.88× applies to, and they are where
+   proportional assignment might still have a case. And SMT is unseparated from
+   core heterogeneity: telling them apart needs two arms at one thread count,
+   one sharing physical cores and one not, with `ffn_up` static — which needs
+   ≥16 threads, and 16 threads without SMT needs more than this machine's 8
+   P-cores, so the no-SMT arm has to bring in E-cores and the arms then differ
+   in core type too. **The confound is in the hardware.** It wants a machine
+   with homogeneous cores.
 6. ~~**Fix the shared-library build (F18).**~~ **Done in session 4 (F22).** What
    is left of it: the shared build's **overhead has never been measured** (the
    hot path is unchanged by inspection, but that is not a measurement), and the
@@ -518,14 +532,19 @@ Added by session 4:
   quotes: `python -c "...markdown with \`code\` spans..."` silently deleted two
   spans from HANDOFF and reported success, exactly the shape of the session-2
   backslash trap. Markdown is full of backticks. Use the Edit tool for it.
-- **One trace is one draw.** F23's whole conclusion inverted between the first
-  measurement and the sixth. A single trace said the effect did not exist; six
-  identical runs put the median a third of the way to the opposite conclusion,
-  and the two single traces were outliers in *opposite* directions. Per-node
-  imbalance varies by up to 6.3× run to run at 8 threads. This project already
-  knew not to trust one throughput number — `bench_overhead.py` exists for
-  exactly that — and then trusted one *trace-derived ratio* for a whole session
-  anyway. **The same discipline has to apply to numbers read out of traces.**
+- **One trace is one draw, and six are not many more.** This cost three wrong
+  turns in one session. A single trace inverted F23's conclusion. Six runs then
+  produced a "28-thread anomaly" that does not exist — twelve runs give 1.041
+  where six gave 0.558 — and **a whole prediction (P23.4) was written, committed
+  and tested to explain it** before re-measuring showed there was nothing there.
+  Six runs also put P23.4's own answer outside its predicted band at 0.747 where
+  twelve give 0.944. Per-node imbalance spreads up to **8.5×** between identical
+  runs. This project already knew not to trust one throughput number —
+  `bench_overhead.py` has interleaved arms and bootstrap CIs, and has refused to
+  certify six times — and then trusted trace-derived ratios at n=1 and n=6
+  anyway, because the tracing is exact so the numbers *looked* exact.
+  **Before explaining a surprising number, re-measure it.** That is cheaper than
+  the prediction it saves you writing.
 - **Predict ratios against a control, not levels.** P23.1 predicted a number
   would rise, in a regime where every comparable number also rose; it held and
   meant almost nothing. P23.2 predicted a ratio against a node that did not
@@ -548,8 +567,8 @@ Added by session 4:
 | Level 3 overhead | +0.67% [+0.12, +1.67] | [`02`](02-overhead-methodology.md) |
 | Zero-overhead-when-off | 0 symbols, 864-byte archive | [`02`](02-overhead-methodology.md) §2 |
 | Shared-library build | links and traces correctly on MSVC; overhead unmeasured | [`FINDINGS`](FINDINGS.md) F22 |
-| Matmul arrival imbalance, work-stealing vs equal-slice | **0.29-0.33x**, two models, 6 runs each | [`FINDINGS`](FINDINGS.md) F23 |
-| Per-node imbalance, spread over 6 identical runs | up to **6.3x** at 8 threads, 1.3x at 16 | [`FINDINGS`](FINDINGS.md) F23 |
+| Matmul arrival imbalance, work-stealing vs equal-slice | **0.34-0.56x** against 0.94-1.51; two comparisons with non-overlapping ranges, n=12 per arm | [`FINDINGS`](FINDINGS.md) F23 |
+| Per-node imbalance, spread over 12 identical runs | up to **8.5x** at 8 threads, 1.3-1.5x at 16 | [`FINDINGS`](FINDINGS.md) F23 |
 | Barrier wait | 11.2% of worker thread time | [`FINDINGS`](FINDINGS.md) F6 |
 | ...of which arrival imbalance | 83.7% (spin-up excluded) | [`FINDINGS`](FINDINGS.md) F9 |
 | Barriers behind single-threaded nodes | 120 of 412 per token | [`FINDINGS`](FINDINGS.md) F9 |
