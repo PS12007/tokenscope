@@ -356,7 +356,7 @@ where your time goes.
 | Constraint | How it is enforced | Status |
 |---|---|---|
 | **Zero overhead when disabled** | Everything behind `TOKENSCOPE_ENABLED`. Off ⇒ macros expand to nothing; no symbol, no branch, no storage. | ✅ verified against the symbol table |
-| **Under 2% when enabled** | Measured with interleaved arms and bootstrap CIs, not assumed. | ✅ 8 threads, level 3: **shared build +0.87% [+0.55, +1.19]**, certified in session 6 ([F30](docs/FINDINGS.md)) — and the static build's **+1.16% [+0.67, +1.87]** from session 5 ([F25](docs/FINDINGS.md)). At 28 threads: +0.66% [-1.85, +4.18], which the harness declined to certify — see [F10](docs/FINDINGS.md) |
+| **Under 2% when enabled** | Measured with interleaved arms and bootstrap CIs, not assumed. | ✅ 8 threads, level 3, **static and shared both between +0.3% and +1.2%** — static +1.16% [+0.86, +1.37] and shared +0.31% [+0.01, +0.52] in one invocation ([F31](docs/FINDINGS.md)), static +1.16% [+0.67, +1.87] in session 5 ([F25](docs/FINDINGS.md)). **Quote the range, not one interval:** F31 re-measured F30's shared figure on unrebuilt binaries two hours later and got a *non-overlapping* interval, so the bootstrap CI is a within-run interval and understates the real spread. At 28 threads: +0.66% [-1.85, +4.18], uncertified — see [F10](docs/FINDINGS.md) |
 | **No new dependencies** | C++17 standard library on the engine side. Python stdlib for analysis. | ✅ |
 | **No locks in the hot path** | Thread-local buffers, merged at flush. | ✅ |
 | **Deterministic, not sampled** | Explicitly placed scopes, so the trace is *interpretable* rather than statistical. | ✅ |
@@ -392,23 +392,35 @@ This supersedes session 1's +0.67% [+0.12, +1.67], which session 2 then failed
 to reproduce twice on a noisier machine. Same workload, same thread count, same
 binary pair, rebuilt and re-run in session 5 ([F25](docs/FINDINGS.md)).
 
-**The shared build costs the same, and that took a harness change to find out**
-([F30](docs/FINDINGS.md)). `BUILD_SHARED_LIBS=ON` at level 3 is **+0.87%
-[+0.55, +1.19]**, certified — which is the measurement behind F22's claim that
-per-module `ts_tls` caching keeps a cross-DLL call off the hot path. Session 5
-tried to compare the two builds and could not, because it ran them as two
-invocations thirteen minutes apart and the machine's noise floor moved by more
-than the effect in between. `bench_overhead.py` now round-robins every arm of
-every build pair together, which is the only way that comparison is a
-comparison. The difference between the two builds' overheads is **+0.36pp
-[-0.32, +1.17]** — still not resolved away from zero, but bounded for the
-first time.
+**The shared build costs the same, and finding that out cost two harness
+changes and one retracted number** ([F30](docs/FINDINGS.md),
+[F31](docs/FINDINGS.md)). `bench_overhead.py` now round-robins every arm of
+every build pair in one invocation, because session 5 tried to compare two
+builds across two invocations thirteen minutes apart and the noise floor moved
+more than the effect in between.
 
-The same run retired a number this README never printed: session 5 had the
-compiled-out shared build 0.7% slower than the static one, hedged hard.
-Interleaved, it is **-0.22% [-0.79, +0.26]** on decode — consistent with zero,
-and the opposite sign. On this workload llama.cpp's shared build costs nothing
-measurable, despite giving up cross-module inlining across three DLLs.
+The best statement of the answer is not a ratio. Across three builds — static,
+Ninja-shared and MSBuild-shared — measured together at level 3:
+
+```
+decode, median tok/s      static   nshared    shared    spread
+  A: compiled out          46.19     46.11     45.93     0.58%
+  C3: active level 3       45.66     45.73     45.78     0.27%
+```
+
+**The instrumented builds all run at the same speed; the differences live in
+the baselines.** Level 3 costs enough to dominate whatever linkage does, so
+"what does it cost me to profile" comes out the same in all three, to a quarter
+of a percent. Overhead-as-a-ratio has a denominator that varies more than its
+numerator, which is why the shared build posts the *lowest* overhead — its
+baseline is slower, not its instrumentation cheaper.
+
+And a warning worth more than the number. F31 re-measured F30's shared figure
+on the **same unrebuilt binaries** two hours later and got a **non-overlapping
+interval** — +0.87% [+0.55, +1.19] against +0.31% [+0.01, +0.52], both
+"certified". The bootstrap resamples within one invocation and knows nothing
+about the next one. Treat any single interval here as a lower bound on the
+uncertainty.
 
 And the number is not an artifact of a full buffer, which would make recording
 look cheap by doing less of it:
