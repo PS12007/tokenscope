@@ -4162,6 +4162,23 @@ remove.
 
 ## F30 — The shared build's overhead certifies at +0.87%, the static build's does not, and F25's DLL penalty was noise
 
+> **Corrected by [`F31`](#f31--two-certified-intervals-for-one-quantity-that-do-not-overlap-and-level-3-turns-out-to-be-a-leveller), later the same session.
+> The headline `+0.87% [+0.55, +1.19]` is over-precise.** F31 re-measured the
+> same quantity on the same unrebuilt binaries about two hours later and got
+> `+0.31% [+0.01, +0.52]` — an interval that does not overlap this one, from
+> the same harness, both "certified". The `+0.36pp` difference of overheads
+> below re-measured at `-0.85pp [-1.16, -0.45]`, outside its own interval and
+> excluding zero on the other side.
+>
+> What survives: the shared build's overhead is **measured** and is of the same
+> order as the static build's, somewhere around 0.3-1.2% at level 3 on this
+> machine; the retirement of F25's DLL penalty (F31 finds the compiled-out
+> arms differing by well under 1% too); and every methodological point below.
+> What does not survive is the precision. The bootstrap interval is a
+> *within-invocation* interval and this project had not previously tested it
+> across invocations. Read F31 before quoting any number from here.
+
+
 **Workload:** `mid.gguf` (24L, F32, 220 M), 8 threads, pp512 / tg256, MSVC
 19.44 Release, `-n 20` interleaved with the first rep discarded, **six arms
 across two build pairs in one invocation**, 899 s, `tools/bench_overhead.py`.
@@ -4410,6 +4427,172 @@ round — rotation spreads that evenly across arms over the whole run, which is
 weaker than eliminating it. And all three pairs are MSVC on one machine, so
 "generator does not matter" would mean it does not matter *here*, which is the
 standing limitation on everything in this repo.
+
+---
+
+## F31 — Two certified intervals for one quantity that do not overlap, and level 3 turns out to be a leveller
+
+**Workload:** `mid.gguf` (24L, F32, 220 M), 8 threads, pp512 / tg256, MSVC
+19.44 Release, `-n 20`, **nine arms across three build pairs in one
+invocation**, rotating order, 1339 s, `tools/bench_overhead.py`.
+[`P31`](#p31--separating-linkage-from-generator-which-f30-could-not) holds the
+predictions, committed before the run.
+
+Three pairs: `static` (Ninja, `BUILD_SHARED_LIBS=OFF`), `nshared` (Ninja,
+`ON` — new), `shared` (Visual Studio, `ON`). `nshared` vs `static` isolates
+linkage; `shared` vs `nshared` isolates generator.
+
+**This finding contradicts [`F30`](#f30--the-shared-builds-overhead-certifies-at-087-the-static-builds-does-not-and-f25s-dll-penalty-was-noise),
+published earlier the same session.** That is the most important thing in it and
+it is treated as the result rather than as a caveat.
+
+### The result
+
+```
+decode (tg)
+  arm                               median tok/s     IQR   overhead vs A
+  A: compiled out [static]                 46.19    0.3%                  -
+  B: in, level 0 [static]                  46.06    0.5%    +0.27%  [-0.07, +0.52]
+  C3: active level 3 [static]              45.66    0.5%    +1.16%  [+0.86, +1.37]
+
+  A: compiled out [nshared]                46.11    0.4%                  -
+  B: in, level 0 [nshared]                 46.09    0.3%    +0.05%  [-0.17, +0.25]
+  C3: active level 3 [nshared]             45.73    0.4%    +0.84%  [+0.60, +1.04]
+
+  A: compiled out [shared]                 45.93    0.4%                  -
+  B: in, level 0 [shared]                  45.95    0.7%    -0.06%  [-0.48, +0.35]
+  C3: active level 3 [shared]              45.78    0.2%    +0.31%  [+0.01, +0.52]
+```
+
+All three level-3 overheads certify. **They also disagree with each other, and
+the static one reproduces F25's `+1.16%` to the second decimal** — which is
+either reassuring or a coincidence, and with what follows it is impossible to
+say which.
+
+### The part that invalidates a published number
+
+The `shared` pair's binaries were **not rebuilt** between F30 and F31. Same
+executables, same DLLs, same model, same machine, same protocol, about two
+hours apart:
+
+| | level-3 overhead, decode | A arm | C3 arm |
+|---|---|---|---|
+| F30 | **+0.87% [+0.55, +1.19]** | 46.03 | 45.63 |
+| F31 | **+0.31% [+0.01, +0.52]** | 45.93 | 45.78 |
+
+**The two intervals do not overlap.** Both were "certified" — both had baseline
+IQRs well under the 2% gate, both excluded zero, both came out of the harness
+that has refused seven times in five sessions precisely so that its answers
+could be trusted.
+
+The static pair does the same thing in the other direction: +0.50% [-0.23,
++1.05] in F30 against +1.16% [+0.86, +1.37] in F31, overlapping only in their
+last 0.2pp.
+
+So the honest reading of F30's headline is that **`+0.87% [+0.55, +1.19]` was
+over-precise**, and the correct statement about the shared build's level-3
+overhead on this machine is something like *"between roughly 0.3% and 1.2%,
+and a single run's interval understates that."* A correction is recorded in F30
+itself rather than only here.
+
+### Why the bootstrap does not know this
+
+`bootstrap_ratio_ci` resamples the measurements *within* one invocation. It
+therefore estimates "if I re-drew these 19 runs from the same afternoon, how
+much would the median move" — which is a real question and not the question
+anyone is asking. The quantity people want is "if I ran this again tomorrow",
+and nothing in the harness estimates it.
+
+This project has now demonstrated the same gap three times, in three places:
+**F23** found per-node imbalance spreading 8.5x across identical runs, after
+treating trace numbers as exact because the tracing is exact; **F25** found the
+noise floor moving by a factor of two within one day; and **F31** finds two
+non-overlapping certified intervals for one quantity. Each time the tooling was
+statistically careful *inside* its own sample and silent about the sample being
+one sample.
+
+The fix is not a wider interval, it is **repetition at the level of the
+invocation** — run the whole thing three times and report the spread of the
+point estimates alongside the bootstrap. That is 45 minutes for the run above
+and it is the obvious next thing.
+
+### What the three explanations are, and that they are not separated
+
+F30 and F31 differ in three ways at once, which is the same disease F30
+diagnosed in F25:
+
+1. **Arm order** — F30 used a fixed order, F31 rotates (`9ec7c82`).
+2. **Round length** — six arms against nine, so ~45 s against ~68 s per round.
+3. **Time** — two hours apart, on a machine F30 itself showed drifting 6.9%
+   between sessions.
+
+The rotation hypothesis is attractive and unproven. In F30's fixed order
+`A_static` ran first in every round and `C3_shared` ran last; the arms at the
+front absorbed an extra warm-up round, which would depress `A_static` and so
+*understate* static's overhead, and if the end of a round runs warmer that would
+depress `C3_shared` and *overstate* shared's. Both F30 numbers moved in exactly
+those directions. That is a coherent story that fits, which is not the same as
+evidence — F23's "28-thread anomaly" was also a coherent story that fitted.
+
+Under rotation the artifact is gone: in F31 no arm's first retained rep is
+systematically depressed, where in F30 all three static arms sat 3 tok/s low.
+
+### Scoring the predictions
+
+| | claim | outcome |
+|---|---|---|
+| **P31.1** | pure linkage consistent with zero, point under 0.5% | **held**, narrowly. `A_nshared` vs `A_static` is +0.17% [-0.00, +0.40] on decode — the lower bound is zero to two decimals — and -0.12% [-0.30, +0.22] on prefill |
+| **P31.2** | pure generator consistent with zero | **failed on decode.** `A_shared` vs `A_nshared` is **+0.40% [+0.14, +0.69]**, excluding zero: the MSBuild shared build is slower than the Ninja shared build with identical linkage, identical flags and the same `cl.exe`. On prefill it is -0.29% [-0.61, +0.10] — spanning zero and pointing the other way. This is the prediction P31 said it would least like to be wrong about |
+| **P31.3** | three overheads in +0.4%..+1.3%, the two shared pairs clustering | **failed on both specifics.** +1.16%, +0.84%, +0.31%: the shared pair is below the floor, and the two shared pairs (0.84, 0.31) are further apart than `nshared` and `static` (0.84, 1.16). The predicted mechanism also has the sign backwards — both shared builds show *less* overhead, not more |
+| **P31.4** | F30's +0.36pp re-measures inside [-0.32, +1.17] | **failed.** It is -0.85pp [-1.16, -0.45], outside that interval and excluding zero on the other side. P31 called this the only prediction that could falsify a published result, and it did |
+| **P31.5** | baseline IQRs across pairs more similar than F30's 5x | **held, decisively.** 0.32% / 0.37% / 0.40% on decode — a 1.25x spread against F30's 5x — and the per-round warm-up artifact is absent. The rotation fix works |
+
+Two held, three failed. P31.3's failure is the one that taught something, below.
+
+### Level 3 is a leveller, which reframes the whole question
+
+P31.3 got the sign wrong because the question was the wrong shape. Look at the
+absolute medians rather than the ratios:
+
+| decode | static | nshared | shared | spread |
+|---|---|---|---|---|
+| A (compiled out) | 46.19 | 46.11 | 45.93 | **0.58%** |
+| C3 (level 3) | 45.66 | 45.73 | 45.78 | **0.27%** |
+
+and prefill is starker — A spreads 0.41% and C3 spreads **0.06%**.
+
+**The instrumented builds all run at the same speed. The differences live
+entirely in the baselines.** At level 3 the instrumentation costs enough to
+dominate whatever linkage and generator do, and the three builds converge.
+
+That means "overhead", as this harness defines it — each build against its own
+compiled-out arm — **is a ratio whose denominator varies more than its
+numerator**. The shared build shows the lowest overhead not because
+instrumenting it is cheaper but because its baseline is slower. P25.1 as
+originally posed ("does the shared build's overhead exceed the static build's?")
+partly asks about the baselines, and F30 answered it in those terms without
+noticing.
+
+The better-posed question is whether the *instrumented* builds differ, and the
+answer is that they barely do: 45.66 / 45.73 / 45.78 tok/s, a quarter of a
+percent apart, across static, Ninja-shared and MSBuild-shared. If what you want
+to know is "what does it cost me to profile", that convergence is the useful
+result, and it is more favourable to the shared build than F30's framing was.
+
+### Caveats
+
+- Three pairs, one machine, one model, one thread count. Everything above is
+  MSVC 19.44 on an i7-14700HX.
+- The generator effect in P31.2 shows on decode and not prefill, with opposite
+  signs. A codegen difference should appear more on the compute-bound phase, and
+  it does not, so the likelier mechanism is link order changing code and data
+  layout — untested, and stated as a guess.
+- `nshared` was built and first used in the same session, so it has no history.
+  The three-way agreement of its C3 arm with the other two is the only evidence
+  it behaves.
+- Nine arms make a ~68 s round. A transient shorter than a round still lands
+  unevenly within it; rotation spreads that across arms over the run rather than
+  removing it.
 
 ---
 
