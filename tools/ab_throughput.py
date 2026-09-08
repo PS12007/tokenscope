@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import collections
 import csv
+import json
 import io
 import os
 import statistics
@@ -91,6 +92,10 @@ def main() -> int:
                          "of its intervals, for one quantity on unrebuilt "
                          "binaries, that did not overlap. Use 3 or more before "
                          "quoting any number from this tool")
+    ap.add_argument("--json-out", default=None,
+                    help="write every measurement, per block, to this file. "
+                         "Without it a contaminated run cannot be diagnosed "
+                         "after the fact -- which cost F33 a re-run")
     args = ap.parse_args()
 
     for path in (args.a, args.b):
@@ -102,10 +107,12 @@ def main() -> int:
 
     res = collections.defaultdict(lambda: collections.defaultdict(list))
     per_block = collections.defaultdict(list)      # test -> [point estimate]
+    block_raw = []                                 # per block, every measurement
     arms = {"a": args.a, "b": args.b}
 
     for blk in range(args.blocks):
         cur = collections.defaultdict(lambda: collections.defaultdict(list))
+        block_raw.append(cur)
         for i in range(args.rounds):
             # which arm leads flips each round, and the block index offsets it,
             # so block 2 does not repeat block 1's lead pattern
@@ -167,6 +174,15 @@ def main() -> int:
 
     print("  A control workload that also moves means the comparison is wrong, not")
     print("  that the change is good. Check the binaries differ only as intended.")
+
+    if args.json_out:
+        with open(args.json_out, "w", encoding="utf-8") as f:
+            json.dump({"config": vars(args),
+                       "pooled": {k: dict(v) for k, v in res.items()},
+                       "block_points": dict(per_block),
+                       "blocks": [{k: dict(v) for k, v in b.items()}
+                                  for b in block_raw]}, f, indent=2)
+        print("\n  raw -> %s" % args.json_out)
     return 0
 
 
