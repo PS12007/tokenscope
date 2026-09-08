@@ -109,6 +109,11 @@ struct registry {
     uint64_t                                    t_epoch      = 0;
     double                                      ticks_per_us = 1000.0;
     std::string                                 clock_name   = "steady_clock";
+    // How the module running the node loop was built. -1 until a compute
+    // thread reports it, which is the honest value for a trace that never
+    // entered ggml at all (the self-test's, for one). See F26.
+    std::atomic<int>                            build_threading{-1};
+    std::atomic<int>                            build_linkage{-1};
     // capture window
     uint32_t                                    tok_lo = 0;
     uint32_t                                    tok_hi = 0xFFFFFFFFu;
@@ -393,6 +398,16 @@ extern "C" TS_API void ts_graph_end(void) { /* reserved */ }
 // Sizes this thread's level-2 accumulators for the current graph. Called once
 // per graph per thread, OUTSIDE the node loop: the level-2 mode's whole point
 // is that it never allocates while a graph is running. docs/01, "Risk 2".
+// Records the build facts the node loop knows and this file cannot. Every
+// worker writes the same two compile-time constants from the same translation
+// unit, so the stores race benignly and a mutex here would be a lock taken on
+// a per-graph path to protect a constant. F26.
+extern "C" TS_API void ts_note_build(int threading, int shared_linkage) {
+    registry & r = reg();
+    r.build_threading.store(threading, std::memory_order_relaxed);
+    r.build_linkage.store(shared_linkage, std::memory_order_relaxed);
+}
+
 extern "C" TS_API void ts_thread_prepare(uint32_t n_nodes) {
     if (ts_g_level != TS_LEVEL_AGG) return;
     ts_buffer * b = ts_buffer_get();
@@ -743,7 +758,19 @@ extern "C" TS_API void ts_flush(const char * path) {
         out += std::to_string(r.budget_bytes >> 20);
         out += ",\"ring\":";
         out += r.ring ? "true" : "false";
-        out += "}}";
+        // How the node loop was built, reported by the node loop itself. F26.
+        // "unrecorded" is what an old trace, or a run that never reached ggml,
+        // honestly says -- it is not a synonym for any of the other three.
+        const int th = r.build_threading.load(std::memory_order_relaxed);
+        out += ",\"threading\":\"";
+        out += th == 1 ? "openmp"
+             : th == 2 ? "ggml-threadpool (openmp available, unused)"
+             : th == 0 ? "ggml-threadpool"
+                       : "unrecorded";
+        const int lk = r.build_linkage.load(std::memory_order_relaxed);
+        out += "\",\"compute_linkage\":\"";
+        out += lk == 1 ? "shared" : lk == 0 ? "static" : "unrecorded";
+        out += "\"}}";
     }
 
     out += "\n]\n";

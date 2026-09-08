@@ -152,6 +152,15 @@ int main(int argc, char ** argv) {
 
     // 4. output -------------------------------------------------------------
     std::printf("\n4. trace output\n");
+
+    // The build facts the node loop reports (F26). TS_THREAD_PREPARE is the
+    // macro ggml actually calls, so exercise it; then overwrite with a pair of
+    // values this translation unit could not have produced on its own, so the
+    // assertion below proves the trace carries what the CALLER said rather
+    // than what tokenscope.cpp assumed. That distinction is the entire finding.
+    TS_THREAD_PREPARE(0);
+    ts_note_build(2, 1);
+
     ts_flush(out_path);
 
     std::FILE * f = std::fopen(out_path, "rb");
@@ -178,6 +187,10 @@ int main(int argc, char ** argv) {
     check(data.find("\"cat\":\"decode\"") != std::string::npos, "decode token slices present");
     check(data.find("\"cat\":\"prefill\"") != std::string::npos, "prefill token slice present");
     check(data.find("\"dropped\":0") != std::string::npos, "provenance record reports zero drops");
+    check(data.find("\"threading\":\"ggml-threadpool (openmp available, unused)\"") != std::string::npos,
+          "provenance carries the threading path the caller reported");
+    check(data.find("\"compute_linkage\":\"shared\"") != std::string::npos,
+          "provenance carries the linkage the caller reported");
 
     // The category table is ordered by hand and the first match wins, so an
     // entry that a shorter entry already covers is dead code that silently

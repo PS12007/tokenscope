@@ -62,6 +62,15 @@ default is the boring correct thing. The tool records which clock produced a
 trace in the trace metadata, because a trace whose provenance you cannot
 establish is not evidence.
 
+**And the same argument applies to more than the clock.** Since session 5 the
+provenance record also carries `threading` — whether `ggml_barrier` was
+`#pragma omp barrier` or ggml's own spin-wait — and `compute_linkage`, static
+or shared. Both are reported *by the translation unit that runs the node loop*,
+via `TS_THREAD_PREPARE`, not decided inside `tokenscope.cpp`, because only the
+former is authoritative. [`F26`](FINDINGS.md) is what happens without it: four
+sessions of documents describing every barrier number as coming from a code
+path none of them came from, with nothing in any trace able to say otherwise.
+
 ### Reading fewer clocks than there are scopes
 
 The single best overhead optimization is structural rather than micro. In the

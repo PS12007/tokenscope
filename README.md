@@ -67,6 +67,7 @@ $ python tools/trace_analyze.py run.trace.json
 
 === run.trace.json ===
     clock=steady_clock  level=1  threads=1  dropped=0
+    threading=openmp  compute_linkage=static
 
 prefill: 2 batch(es), 1681.4 ms
 

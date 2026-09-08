@@ -249,6 +249,13 @@ TS_API void ts_thread_prepare(uint32_t n_nodes);
 // ts_token_begin already maintains ts_g_capture from this; exposed for tests.
 TS_API int ts_token_selected(void);
 
+// Records how the module running the node loop was built, so the trace says it
+// instead of the reader assuming it. See TS_BUILD_THREADING below for why the
+// values have to come from the caller and not from this file. Called once per
+// thread per graph, off the node path; every caller writes the same constants,
+// so the store is deliberately unsynchronised.
+TS_API void ts_note_build(int threading, int shared_linkage);
+
 // ---------------------------------------------------------------------------
 // The hot path.
 // ---------------------------------------------------------------------------
@@ -414,7 +421,43 @@ public:
 //
 // Four naive reads per node collapse to two. docs/01 section 2.
 // ---------------------------------------------------------------------------
-#define TS_THREAD_PREPARE(n) ts_thread_prepare((uint32_t)(n))
+// Which threading path the node loop was compiled for, and whether the module
+// containing it is a separate shared object. Both are resolved where the macro
+// is USED -- inside the translation unit that also contains `ggml_barrier` --
+// because that is the only place the answer is authoritative. Deciding it
+// inside tokenscope.cpp would answer a question about tokenscope.cpp.
+//
+// This exists because of FINDINGS F26: for four sessions the docs said every
+// barrier number here came from ggml's own spin-wait threadpool, and every one
+// of them came from `#pragma omp barrier`. No trace could have contradicted
+// that, because no trace recorded it. docs/00 said "the profiler must record
+// which" from the start; this is that, three sessions late.
+//
+// Testing GGML_USE_OPENMP is not a ggml dependency in the linkage sense -- no
+// ggml symbol is referenced -- and the `_OPENMP` arm exists to distinguish
+// "ggml is not using OpenMP" from "this compiler has no OpenMP", which are
+// different build mistakes.
+#if defined(GGML_USE_OPENMP)
+#  define TS_BUILD_THREADING 1    // ggml_barrier is #pragma omp barrier
+#elif defined(_OPENMP)
+#  define TS_BUILD_THREADING 2    // OpenMP is available, ggml is not using it
+#else
+#  define TS_BUILD_THREADING 0    // ggml's own threadpool, atomic spin-wait
+#endif
+
+#if defined(TOKENSCOPE_STATIC)
+#  define TS_BUILD_LINKAGE 0
+#else
+#  define TS_BUILD_LINKAGE 1
+#endif
+
+#define TS_THREAD_PREPARE(n)                                                  \
+    do {                                                                      \
+        if (ts_g_level) {                                                     \
+            ts_note_build(TS_BUILD_THREADING, TS_BUILD_LINKAGE);              \
+            ts_thread_prepare((uint32_t)(n));                                 \
+        }                                                                     \
+    } while (0)
 
 #define TS_NODE_LOOP_DECL()                                                   \
     uint64_t ts_t_mark = ts_g_level >= TS_LEVEL_AGG ? ts_now() : 0

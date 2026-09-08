@@ -301,6 +301,13 @@ This is where the hardest and most valuable part of the project lives.
 Which one you get is a build flag, and it changes the shape of the trace. The
 profiler must record which.
 
+**It does now, since session 5** — `threading` in every trace's provenance
+record, reported by the translation unit that contains `ggml_barrier` rather
+than inferred anywhere else. This paragraph was written in session 1 and was
+right; nothing acted on it until [`F26`](FINDINGS.md) found four sessions of
+findings labelled with the wrong branch. **A design note that names a risk and
+is never implemented is a prediction, and this one came true.**
+
 ### The per-node execution loop — **the primary Tier 2 site**
 
 **`ggml/src/ggml-cpu/ggml-cpu.c:3129-3159`**

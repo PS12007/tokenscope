@@ -221,6 +221,11 @@ def report_summary(tr: Trace) -> None:
         m = tr.meta
         print(f"    clock={m.get('clock')}  level={m.get('level')}  "
               f"threads={m.get('threads')}  dropped={m.get('dropped')}")
+        # Printed unconditionally, including "unrecorded", because the whole
+        # point of F26 is that the reader was assuming a value. A field you
+        # only print when it is interesting is a field nobody checks.
+        print(f"    threading={m.get('threading', 'unrecorded')}  "
+              f"compute_linkage={m.get('compute_linkage', 'unrecorded')}")
         if m.get("dropped", 0):
             print("    WARNING: events were dropped. Totals below are a lower bound.")
 

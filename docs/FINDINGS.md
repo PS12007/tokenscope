@@ -3263,6 +3263,144 @@ every number quoted here too. That one the documents had right.
 
 ---
 
+## P27 — Two barrier implementations on one machine: predictions
+
+**Dated 2026-09-08, session 5. Written and committed before the `GGML_OPENMP=OFF`
+builds exist.** [`F26`](#f26--every-measurement-in-this-project-was-taken-on-the-openmp-path-and-five-documents-said-the-opposite)
+found that the spin-wait path — the one this project spent four sessions
+believing it was measuring — has never been run here at all. It is one CMake
+flag away, which makes "how much does a barrier *cost* figure depend on the
+barrier implementation?" answerable on this machine instead of blocked behind
+Linux.
+
+That question has been open since session 1. The standing caveat says F6's
+11.2%, F9's imbalance/release split, F10's rise to 22.9% and F14's halving
+"measure one barrier implementation" and might not transfer. Nobody has ever
+put a number on *might*.
+
+### The arms
+
+Two more static Ninja builds, `-DGGML_OPENMP=OFF`, otherwise identical to the
+existing pair and built in the same session as their comparisons:
+
+```
+build-ts-noomp-on    GGML_TOKENSCOPE=ON  GGML_OPENMP=OFF   traces
+build-ts-noomp-off   GGML_TOKENSCOPE=OFF GGML_OPENMP=OFF   throughput
+```
+
+Verification that the flag took, before any measurement: `llama-bench.exe` must
+**not** import `VCOMP140.DLL`, and the new provenance field must read
+`threading=ggml-threadpool`. Both are checks that could come out wrong, which is
+the only kind worth running.
+
+### Three things change at once, and only one of them is the barrier
+
+This is the trap from session 3 — "two mechanisms can move at once and you will
+model one" — so all three go on the record before the measurement:
+
+1. **The barrier.** `#pragma omp barrier` (`_vcomp_barrier`) against the atomic
+   spin-wait on `n_barrier_passed` with `ggml_thread_cpu_relax()`.
+2. **Fork/join per graph.** The OpenMP path enters `#pragma omp parallel
+   num_threads(n)` once per graph — one `_vcomp_fork` per token in decode. The
+   non-OpenMP path wakes persistent workers through
+   `ggml_graph_compute_kickoff`. Both cost something; they are not the same
+   something.
+3. **A syscall per thread per graph, on the OpenMP path only.**
+   `ggml_graph_compute` calls `ggml_thread_apply_priority(threadpool->prio)`
+   *inside* the parallel region (`ggml-cpu.c:3440`), so every thread runs it at
+   the start of every graph. On Windows at the default `GGML_SCHED_PRIO_NORMAL`
+   that function still calls `SetThreadInformation(..., ThreadPowerThrottling,
+   ...)` before its early return — a kernel transition, `n_threads` of them per
+   token. The non-OpenMP path calls it once per thread at threadpool creation
+   (`:3384`) and on resume (`:3253`, `:3305`).
+
+Point 3 was found while writing this and is the reason P27.4 exists. It is a
+**fixed per-graph cost proportional to thread count**, which is a different
+shape from anything the barrier does, and it is the one that could be
+interesting upstream on its own.
+
+### P27.1 — arrival imbalance is unchanged. This is the control.
+
+`--barriers` splits barrier time into arrival imbalance and release latency.
+Imbalance is set by how work is divided among threads, and the division is
+identical source in both builds — `mul_mat`'s chunking and the flat `dr` for
+everything else are untouched by `GGML_USE_OPENMP`.
+
+**Prediction: the per-node arrival-imbalance figures agree within the run-to-run
+spread F23 measured for them, which is wide — up to 8.5x at 8 threads, 1.3-1.5x
+at 16.** So this control is only informative at 16 threads or above, and n>=12
+per arm, both of which F23 paid to learn.
+
+If imbalance *does* move, something is wrong with the comparison rather than
+interesting about barriers.
+
+### P27.2 — release latency is lower on the spin-wait path
+
+A thread in the spin-wait polls one relaxed atomic in a `ggml_thread_cpu_relax()`
+loop and leaves within tens of nanoseconds of the last arrival. `_vcomp_barrier`
+is a library call into a runtime whose release policy is undocumented and which
+implements a 2002 specification.
+
+**Prediction: median release latency in the non-OpenMP build is lower, by at
+least 20%, at 8 threads on `mid.gguf` at level 3.** Direction plus a size, so it
+can fail two ways.
+
+The reasoning is not one-sided, which is why the size is modest: at 8 threads on
+28 logical CPUs nothing is oversubscribed, so a spin-then-park runtime never
+reaches the park, and both are then spinning on something.
+
+### P27.3 — decode throughput at 8 threads moves by less than 3%
+
+F15 removed 10.6% of the barriers and changed throughput by nothing measurable.
+F14 established decode is bandwidth-bound. Whatever the barrier does differently,
+decode at 8 threads is the workload least able to show it.
+
+**Prediction: |difference| < 3% on tg256, and there is a real chance
+`ab_throughput.py` declines to certify it at all** — which would be the sixth
+time this project's harness has said no, and consistent with every other attempt
+to move decode by changing how threads wait.
+
+### P27.4 — the gap grows with thread count, and grows more on a small model
+
+The interesting prediction, and the one that follows from mechanism 3 rather
+than from the barrier.
+
+Mechanisms 2 and 3 are **fixed costs per graph**; mechanism 3 scales with
+`n_threads` on top of that. A graph is one decode token. So the OpenMP path's
+extra cost per token is roughly `n_threads * (one SetThreadInformation) +
+(one fork/join)`, independent of how much arithmetic the token needs.
+
+Two consequences, both testable here:
+
+- **28 threads shows a larger gap than 8**, in favour of the non-OpenMP build.
+- **`tiny.gguf` shows a larger relative gap than `mid.gguf`**, because the same
+  fixed microseconds sit on top of a much shorter token. `tiny.gguf` is 34 MB
+  and 8 layers; if a token there costs ~1 ms and 28 syscalls cost ~2 us each,
+  that is ~5% — an effect a whole order of magnitude above anything the barrier
+  is expected to do.
+
+**Prediction: measured as (noomp tok/s / omp tok/s), the ratio is ordered
+`tiny@28 > tiny@8 >= mid@28 > mid@8`, and at least the first and last differ by
+more than their intervals.** If that ordering holds it is a statement about
+per-graph fixed cost, not about barriers, and the barrier question is then
+answered by P27.1 and P27.2 alone.
+
+### What would make this uninteresting
+
+Everything within noise everywhere. That is a real possibility at 8 threads on
+`mid.gguf` and it is why the design includes 28 threads and `tiny.gguf` — a
+null result at one operating point is a claim about that point, which is the
+lesson F14 cost.
+
+### What it would change if P27.2 holds and P27.4 does not
+
+The standing caveat gets a number. "Barrier cost figures may not transfer" would
+become "barrier cost figures shift by roughly X% between two implementations on
+one machine, so treat F9's split as accurate to that", which is a caveat a
+reader can act on instead of one they can only worry about.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
