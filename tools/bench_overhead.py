@@ -26,7 +26,12 @@ Method:
   - medians and IQR, not means and stdev: tok/s has a hard ceiling and a long
     slow tail, so the mean tracks outliers that are not the effect
   - the overhead figure is a bootstrap confidence interval, so the claim reads
-    "1.2% [0.9, 1.6]" rather than "1.2%"
+    "1.2% [0.9, 1.6]" rather than "1.2%". Read that interval as RESOLVED
+    WITHIN THIS RUN, never as reproducible: it resamples one invocation's
+    runs, drift makes them correlated, and a naive bootstrap on correlated
+    samples reads narrower than the truth. This project called such intervals
+    "certified" for five sessions before F31 put two non-overlapping ones for
+    the same quantity side by side
   - if the baseline arm's own spread is wider than the effect, the honest
     output is "this machine cannot resolve it", not a number
   - and with --blocks N the whole round-robin runs N times, reporting the
@@ -384,6 +389,16 @@ def main() -> int:
             print("  NOTE: that is wider than the 2% budget being tested.")
             print("  This machine cannot resolve a 2% effect right now. Close")
             print("  background work, pin threads, and rerun before quoting a number.")
+        elif len(blocks) < 2:
+            # F31. An interval that clears the gate is RESOLVED WITHIN THIS RUN
+            # and nothing more. Two of them, for one quantity on unrebuilt
+            # binaries two hours apart, came out non-overlapping. The project
+            # called such intervals "certified" for five sessions and the word
+            # promised reproducibility the method never tested.
+            print("  Intervals above are RESOLVED WITHIN THIS RUN. That is not")
+            print("  reproducibility: the bootstrap resamples these runs only, and")
+            print("  drift makes them correlated, so it reads narrower than the")
+            print("  truth. Re-run with --blocks 3 before quoting an interval.")
         print()
 
         # -- between-block spread ------------------------------------------
