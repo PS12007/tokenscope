@@ -4331,6 +4331,88 @@ instrumentation cheaper — they are two different days, and the days differ by
 
 ---
 
+## P31 — Separating linkage from generator, which F30 could not
+
+**Dated 2026-09-08, session 6. Written and committed before the run.**
+[`F30`](#f30--the-shared-builds-overhead-certifies-at-087-the-static-builds-does-not-and-f25s-dll-penalty-was-noise)
+answered section 5 item 7 and left one caveat that
+[`P30`](#p30--what-the-interleaved-four-arm-run-should-say-written-before-it-runs)
+had named in advance: the static pair is built by Ninja and the shared pair by
+the Visual Studio generator, so **every cross-pair number in F30 has linkage and
+generator in it together**. F25 stated the same caveat and neither session could
+do anything about it, because with one pair per invocation there was no way to
+hold one of the two constant.
+
+With N pairs there is. `build-ts-nshared-on` and `build-ts-nshared-off` are new:
+`BUILD_SHARED_LIBS=ON` under **Ninja**, otherwise identical to the VS shared
+pair. Three pairs in one round-robin then give two clean contrasts and one
+confounded one:
+
+| contrast | holds constant | isolates |
+|---|---|---|
+| `nshared` vs `static` | generator (Ninja) | **linkage** |
+| `shared` vs `nshared` | linkage (shared) | **generator** |
+| `shared` vs `static` | nothing | what F30 measured |
+
+### What the build files already say
+
+The flags are equivalent, which is worth checking before predicting rather than
+after. Ninja compiles `ggml-cpu.c` with `/O2 /Ob2 /arch:AVX2 -MD /DNDEBUG`; the
+VS project sets `Optimization=MaxSpeed`, `InlineFunctionExpansion=AnySuitable`,
+`EnableEnhancedInstructionSet=AdvancedVectorExtensions2`,
+`RuntimeLibrary=MultiThreadedDLL` and `NDEBUG` — the same four things under
+different names, from the same CMake configuration and the same `cl.exe`
+19.44. So the *expectation* is no generator effect, and the reason to measure
+is that "by inspection" is the phrase F22 got caught by.
+
+### The predictions
+
+**P31.1 — the pure linkage contrast is consistent with zero, like the
+confounded one was.** `A_nshared` against `A_static` on decode: interval
+containing zero, point estimate under 0.5% in absolute value. F30 already found
+the confounded version at -0.22% [-0.79, +0.26], and for that to be hiding a
+real linkage cost, a real generator effect would have to be cancelling it
+almost exactly — possible, but it would be a coincidence, and predicting a
+coincidence is not a prediction.
+
+**P31.2 — the pure generator contrast is consistent with zero too, and this is
+the one I would least like to be wrong about.** Same flags, same compiler, same
+source. If this comes back non-zero and excluding zero, then MSBuild and Ninja
+are not interchangeable on this project, which would put a footnote on **every
+cross-generator number this repo has ever printed**, including F30's.
+
+**P31.3 — the three level-3 overheads all land between +0.4% and +1.3%, and the
+two shared pairs agree with each other more closely than either agrees with
+static.** The mechanism from P30 says the shared builds pay four `dllimport`
+loads per record that the static build does not; if that is real at all, the
+two shared pairs should sit together and slightly above static. Point estimates
+only — I do not expect the intervals to separate.
+
+**P31.4 — F30's +0.36pp re-measures inside its own interval.** The
+`shared - static` difference of overheads was +0.36pp [-0.32, +1.17]. A
+re-measurement of the same quantity in a fresh invocation should land inside
+that, and if it does not, F30's number was a one-run artifact. This is the only
+prediction here that can falsify a published result.
+
+**P31.5 — the baseline IQRs across the three pairs come out more similar than
+F30's did.** F30's static pair ran at 1.40% and its shared pair at 0.28%,
+almost entirely because one extra warm-up round hit whichever arms held the
+first slots. Arm order now rotates (`9ec7c82`). If rotation works, the spread
+of baseline IQRs across pairs should be visibly tighter than 5x. **This is a
+test of the fix, not of the builds**, and it is the reason to state it as a
+prediction rather than just look afterwards.
+
+### What this cannot settle
+
+Nine arms in a round is a round of roughly seven minutes, so a transient
+shorter than one round but longer than one run still lands unevenly *within* a
+round — rotation spreads that evenly across arms over the whole run, which is
+weaker than eliminating it. And all three pairs are MSVC on one machine, so
+"generator does not matter" would mean it does not matter *here*, which is the
+standing limitation on everything in this repo.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
