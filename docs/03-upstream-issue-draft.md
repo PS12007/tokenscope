@@ -68,6 +68,139 @@ invalidate.
 
 ---
 
+---
+
+## Ready to paste: the F20 issue
+
+**Status: not filed.** This is the final text. Read it, check the two open
+questions at the bottom are ones you are happy to answer, and file it yourself
+at https://github.com/ggml-org/llama.cpp/issues/new — bug report template.
+
+Before filing, re-check the three things that go stale:
+
+- [ ] `build_attn` still has seven overloads and still does not call `cb` on the
+      output projection. The pin here is `4d91760`; re-read
+      `src/llama-graph.cpp` at current `master` first.
+- [ ] `CONTRIBUTING.md` and `AGENTS.md` — AGENTS.md asks for an issue before a
+      PR, and asks that the contributor own the change and be able to defend it
+      unaided. That second part is the real bar for filing.
+- [ ] Nobody has filed it already. Search issues and PRs for `kqv_wo`,
+      `build_attn` naming, `cb(cur`.
+
+---
+
+**Title:** `build_attn` never names the attention output projection, so the
+largest node in the attention block is anonymous in every graph
+
+---
+
+### Summary
+
+`llm_graph_context::build_attn` has seven overloads. None of them calls `cb()`
+on the result of the attention output projection (`wo`) matmul, so that node
+reaches the graph with a default name like `node_27` instead of a meaningful
+one.
+
+On Qwen3-8B Q4_K_M it is **7.1% of decode thread time** — the single largest node
+in the attention block, larger than `Qcur` and about 6.6× `Kcur`. Anything that
+groups graph nodes by name therefore attributes it to nothing: that includes
+`GGML_SCHED_DEBUG` output and any profiling or analysis built on ggml names.
+
+### Detail
+
+Three of the seven overloads (the no-cache, ISWA-K and cross-attention ones)
+carry this:
+
+```c
+    if (wo) {
+        cur = build_lora_mm(wo, cur, wo_s);
+    }
+
+    if (wo_b) {
+        //cb(cur, "kqv_wo", il);
+    }
+
+    if (wo_b) {
+        cur = ggml_add(ctx0, cur, wo_b);
+    }
+```
+
+Two things are off. The naming call is commented out, and it sits in a block
+guarded by the output *bias* `wo_b` rather than by the weight `wo` whose matmul
+it would be naming — so even uncommented it would name nothing on any model
+without an attention output bias. The leftover `if (wo_b) { }` is dead either
+way.
+
+The other four overloads — including `build_attn(llm_graph_input_attn_kv *)`,
+which is the path nearly every decoder-only model takes — have no naming call at
+all, not even a commented one. That is the path where I measured this.
+
+### How I identified the node
+
+The profiler I was using falls back to graph position when a node has no name,
+and reported a 7.1% bucket of anonymous nodes: `node_27`, `node_62`, `node_97`,
+… spaced exactly 35 apart, one per layer, all `MUL_MAT`.
+
+`attn_output` and `attn_q` on this model are both `[4096, 4096]` Q4_K — same
+shape, same dtype, same op — so they should cost the same:
+
+```
+  anonymous nodes (36, one per layer)   328.63 ms
+  Qcur MUL_MAT                          328.67 ms
+```
+
+0.01% apart.
+
+### Suggested fix
+
+Move the call inside the `if (wo)` block that performs the matmul, in all seven
+overloads, and delete the three dead `if (wo_b) { }` blocks. **8 lines added, 13
+removed.**
+
+```c
+    if (wo) {
+        cur = build_lora_mm(wo, cur, wo_s);
+        cb(cur, "kqv_wo", il);
+    }
+```
+
+I have this applied locally and rebuilt. `cb()` only assigns a name, so nothing
+about the computation changes, and graph reuse means it runs about once per run
+rather than per token. Re-tracing the identical workload:
+
+```
+                    before          after
+  attention output (absent)      321.06 ms   6.7%
+  anonymous        328.63 ms       40.1 us    0.0%
+```
+
+The whole bucket moves. That turns the shape argument above into a
+demonstration: naming the node relocated exactly the time in question, and left
+40 µs of genuinely unnamed nodes behind. (The 2.3% between 328.63 and 321.06 is
+run-to-run variation — single 6-token traces, 6.98 vs 7.48 tok/s.)
+
+I picked `kqv_wo` because it is the name the commented-out call already used.
+Happy to use whatever fits your conventions better.
+
+### Environment
+
+Qwen3-8B Q4_K_M, CPU backend, 6 threads, Windows/MSVC 19.44, `BUILD_SHARED_LIBS=OFF`,
+llama.cpp at `4d91760`. The naming omission itself is architecture-independent
+and platform-independent — it is a graph-construction path, and every
+architecture with an attention output projection goes through one of the seven
+overloads.
+
+### Questions
+
+1. Is `kqv_wo` the name you would want, or does it clash with something?
+2. Are the three `if (wo_b) { }` blocks with the commented-out `cb` deliberate —
+   a naming call someone intended to restore — or leftovers I can delete?
+
+I am happy to open a PR if you would like this fixed; filing as an issue first
+per `AGENTS.md`.
+
+---
+
 ## Target
 
 `ggml-org/llama.cpp` → Issues → "Feature request" template.

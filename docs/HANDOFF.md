@@ -90,7 +90,7 @@ The short version:
 | ~~Sampling / tokenizer scopes not written~~ | **Done (F11).** `llama-cli` is now built in `build-ts-on`. Sampling + detokenization are 0.13% of a token |
 | ~~Context-shift behaviour~~ | **Done (F16).** 4 spikes in 699 tokens at `-c 256`, 1.13-1.34x median |
 | Concurrent sequences / server workload | The last untested prediction in F2, and F16 says it is still plausible: the head-pointer trick that makes `find_slot` O(1) is much weaker with many streams |
-| ~~Larger real model~~ | **Done (F19, F21).** Three more real models measured, to 8.19 B. Biggest is now 8.19 B; **no MoE model at all**, which is the clearest remaining gap |
+| ~~Larger real model~~ | **Done (F19, F21).** Three more real models measured, to 8.19 B. Biggest is now 8.19 B; **no MoE model at all**, which is the clearest remaining gap. Session 4 asked and was told **not to download one** — it needs several GB and free RAM is ~7 GB against the 8B's 4.86 GiB. Ask again rather than assuming |
 | No Perfetto screenshot | Blocks the README and several posts. **Still the best impact-to-effort item that needs no new code**, and the reference trace for it is now `examples/qwen3-8b-named-attnout.trace.json` |
 | ~~No thread pinning~~ | **Done (F14).** Mechanism confirmed: homogeneous cores drop spread 13%->2% and halve barrier wait. Pinning is not the fix |
 | Upstream issue not filed | Two issues now, and [`03`](03-upstream-issue-draft.md) says which goes first. **The F20 naming defect is not blocked on Linux** and should be filed on its own; the instrumentation proposal still is |
@@ -342,9 +342,17 @@ went undetected for a session purely because nothing here ever built a DLL.
 Session 3 closed items 3 and 4 (concurrent sequences had already gone in F17;
 the 8B is F19/F21) and added a new one at the top that did not exist before.
 
-1. **File the F20 naming issue.** New, and first because it is the only piece of
-   this work that is *not* blocked on Linux, and the smallest thing a maintainer
-   could say yes to. `patches/02-name-attn-output.patch` is applied and measured;
+1. **File the F20 naming issue.** First because it is the only piece of this
+   work that is *not* blocked on Linux, and the smallest thing a maintainer
+   could say yes to. **The issue text is written and ready to paste** — see
+   [`03`](03-upstream-issue-draft.md), "Ready to paste: the F20 issue". It was
+   deliberately *not* filed: it goes out publicly under the repo owner's name,
+   and llama.cpp's `AGENTS.md` asks that the contributor be able to defend the
+   change unaided, which is a bar for a person and not for a session. The draft
+   opens with three things to re-check first, because all three go stale: that
+   `build_attn` still has seven overloads and still does not name the output
+   projection at current `master` (the measurement is pinned at `4d91760`), that
+   `CONTRIBUTING.md` has not changed, and that nobody has filed it already. `patches/02-name-attn-output.patch` is applied and measured;
    [`03`](03-upstream-issue-draft.md) has the framing. llama.cpp's `AGENTS.md`
    asks for an issue before a PR **and** asks that the contributor own the change
    and be able to defend it unaided — which for a change this size is a fair bar
