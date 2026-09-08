@@ -273,6 +273,10 @@ C:\-CS\TLI profiler\
 │   │                      bin\Release\llama-bench.exe  (needs --config Release)
 │   ├── build-ts-shared-off\  NEW in session 5. Same as build-ts-shared with
 │   │                      GGML_TOKENSCOPE=OFF. Item 7 could not run without it
+│   ├── build-ts-nshared-on\   NEW in session 6, F31. ninja, BUILD_SHARED_LIBS=ON
+│   │                      + GGML_TOKENSCOPE=ON. Exists to hold the generator
+│   │                      constant against build-ts-shared, which is MSBuild
+│   ├── build-ts-nshared-off\  NEW in session 6, F31. Same, TOKENSCOPE=OFF
 │   ├── build-ts-noomp-on\    NEW in session 5, F27. ninja, static,
 │   │                      GGML_OPENMP=OFF + GGML_TOKENSCOPE=ON
 │   └── build-ts-noomp-off\   NEW in session 5, F27. GGML_OPENMP=OFF + OFF, the
