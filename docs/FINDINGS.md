@@ -2755,6 +2755,124 @@ rather than by memory.
 
 ---
 
+## P24 — Lowering ggml's chunking threshold: predictions, and the protocol, before the build
+
+**Dated 2026-09-07, session 4. Written and committed before the patched binary
+exists.** [`F23`](#f23--ggml-already-solves-core-heterogeneity-for-big-matmuls-and-a-thread-count-can-take-that-away)
+ended by naming this as the experiment to run before proposing anything
+upstream, and [`F15`](#f15--removing-106-of-the-barriers-changes-throughput-by-nothing-measurable)
+is what happens when a plausible fix goes out unmeasured.
+
+### The change
+
+One line, in `ggml_compute_forward_mul_mat` only:
+
+```c
+-    if (nchunk0 * nchunk1 < nth * 4 || ggml_is_numa()) {
++    if (nchunk0 * nchunk1 < nth * 2 || ggml_is_numa()) {
+```
+
+**`ggml_compute_forward_mul_mat_id` is deliberately left alone.** It carries the
+identical threshold at `ggml-cpu.c:1698` and it is the MoE path — for which this
+machine has no model, so it cannot be tested here. Changing an untested code path
+is the F15 mistake with extra steps.
+
+Modelled with `tools/mulmat_chunking.py --mult 2`, on `mid.gguf` at 16 threads:
+
+```
+                stock (nth*4)   patched (nth*2)
+  ffn_gate        static/16        dynamic       <- flips
+  ffn_up          static/16        dynamic       <- flips
+  ffn_down        static/16        static/16     <- control, 12 chunks < 32
+  attn_output     static/16        static/16     <- control
+  output           dynamic         dynamic       <- was never static
+```
+
+`ffn_up` is 48 natural chunks: below 64 (`16*4`), at or above 32 (`16*2`). So it
+returns to work stealing with about 3 chunks per thread, while `ffn_down` at 12
+chunks stays static in both arms. **That is F23's exact pair, with the mode moved
+by a source change instead of by a thread count** — which is the one way of
+varying it that F23 could not use.
+
+### Protocol, fixed now so it cannot be chosen after seeing the numbers
+
+- **Imbalance: n=12 per arm**, `mid.gguf`, 16 threads, level 3,
+  `TOKENSCOPE_TOKENS=10:11`, via `tools/imbalance_repeat.py`. F23 measured six to
+  be too few by a wide margin, three separate times.
+- **Throughput comes from the uninstrumented build**, `build-ts-off`, never from
+  a trace. A traced token carries the recording cost on the token being measured;
+  this project nearly reported a 21% degradation that was pure noise for exactly
+  that reason.
+- **The two throughput arms are interleaved.** `build-ts-off` is a static build,
+  so `llama-bench.exe` is self-contained: the stock binary is copied aside, the
+  patched one built, and the two are then run alternately in the same session
+  rather than in two blocks. Consecutive-block A/B on this machine is what F23's
+  reproducibility section is about.
+- Free memory checked before and after; any run that pages is discarded.
+
+### P24.1 — the mode flips back, and the imbalance follows
+
+Stock at 16 threads, n=12 medians: `ffn_up` 0.210, `ffn_down` 0.214, ratio 0.967.
+The dynamic-mode arms elsewhere in F23 sit at 0.056–0.072 with ratios of
+0.338–0.557.
+
+**Predict `ffn_up` imbalance/work falls below 0.12, and the `ffn_up`/`ffn_down`
+ratio falls below 0.6.** Falsified if the ratio stays above 0.8, which would say
+the mode is not what F23 thinks it is — and would put F23's own conclusion in
+question, since this is the same claim tested a different way.
+
+Weaker than F23's arms in one respect, stated up front: 3 chunks per thread is
+thin. Work stealing with 48 chunks over 16 threads can only ever redistribute in
+units of a third of a thread's share, so **the effect should be smaller than the
+0.338 seen where chunks were plentiful.** A ratio landing at 0.6–0.8 would be
+consistent with the mechanism and weak evidence for it; below 0.6 is the call.
+
+### P24.2 — and the throughput does not move measurably
+
+**Predict the change is under 2%, and that the honest report is "not
+measurable".** Falsified by an improvement above 3%.
+
+This is a prediction of a null, and it is the one I hold most confidently, for
+reasons this project has already established:
+
+- [`F9`](#f9) put the **upper bound on removing all elementwise barrier
+  imbalance at 1.34% of graph wall time.** The imbalance addressed here is a
+  subset of a different node class, but the order of magnitude is the point.
+- [`F15`](#f15) removed 10.6% of all barriers per token and moved throughput by
+  nothing measurable, in three regimes.
+- Arrival imbalance is thread-time idled, not wall time added. Threads that
+  arrive early wait at a barrier they were going to wait at anyway; the node ends
+  when the *slowest* thread ends, and work stealing only helps if it moves work
+  off that thread specifically.
+- `mid.gguf` is F32 and 220 M parameters, so decode at 16 threads is closer to
+  bandwidth-bound than compute-bound, and [`F14`](#f14) found core heterogeneity
+  stops mattering in that regime.
+
+**If P24.1 holds and P24.2 also holds, that is the interesting outcome, not a
+disappointing one.** It would say the threshold governs a real and measurable
+property of the schedule that does not reach the user — which is precisely what
+should be established *before* a maintainer is asked to look at a patch, and
+precisely what F15 wishes someone had established for op fusion.
+
+### P24.3 — the controls do not move
+
+`ffn_down` and `attn_output` are static in both arms. **Predict their
+imbalance/work medians stay inside the stock n=12 ranges** (`ffn_down`
+0.205–0.291, `attn_out` 0.186–0.240). Falsified if either shifts outside, which
+would mean the patch changed something other than the two nodes it was aimed at
+— most likely by changing how much barrier time is available to be attributed
+anywhere, and would make P24.1 hard to read.
+
+### What would make this uninteresting
+
+If the patched build changes `output`/`lm_head` or any node the model says
+should be untouched, the one-line change is not doing the one thing it looks
+like it does, and the whole comparison is confounded. `mulmat_chunking.py --mult`
+says which nodes should move; anything else moving is a finding about the model
+being wrong, and gets reported as one.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:

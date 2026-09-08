@@ -77,18 +77,22 @@ MATMUL_ROLES = [
 ]
 
 
-def chunking(nr0: int, nr1: int, nth: int):
+def chunking(nr0: int, nr1: int, nth: int, mult: int = 4):
     """ggml_compute_forward_mul_mat's chunk plan. Returns (mode, nchunk, busy).
 
     `busy` is how many threads can get work at all -- which is the number of
     chunks when there are fewer chunks than threads, and nth otherwise.
+
+    `mult` is the 4 in `nth * 4`. It is a parameter so this can model a patched
+    build as well as a stock one -- see P24, which lowers it and measures what
+    happens. Anything but 4 is NOT what upstream does.
     """
     chunk_size = 64 if (nr0 == 1 or nr1 == 1) else 16
 
     nchunk0 = (nr0 + chunk_size - 1) // chunk_size
     nchunk1 = (nr1 + chunk_size - 1) // chunk_size
 
-    if nchunk0 * nchunk1 < nth * 4:
+    if nchunk0 * nchunk1 < nth * mult:
         # The static fallback: one chunk per thread, equal rows each.
         nchunk0 = nth if nr0 > nr1 else 1
         nchunk1 = 1 if nr0 > nr1 else nth
@@ -132,7 +136,7 @@ def collect_matmuls(path: str):
     return reader, rows
 
 
-def report(rows, nth_list, nr1: int):
+def report(rows, nth_list, nr1: int, mult: int = 4):
     width = max(len(r["role"]) for r in rows) + 2
 
     header = f"  {'matmul':<{width}}{'nr0':>8}{'chunks':>9}"
@@ -148,7 +152,7 @@ def report(rows, nth_list, nr1: int):
         line = f"  {r['role']:<{width}}{r['nr0']:>8}{nat:>9}"
         modes = []
         for nth in nth_list:
-            mode, total, busy = chunking(r["nr0"], nr1, nth)
+            mode, total, busy = chunking(r["nr0"], nr1, nth, mult)
             modes.append(mode)
             tag = "dynamic" if mode == "dynamic" else f"static/{busy}"
             line += f"{tag:>12}"
@@ -162,7 +166,7 @@ def report(rows, nth_list, nr1: int):
     dyn_at = [nth for nth in nth_list]
     for nth in dyn_at:
         n_dyn = sum(1 for r in rows
-                    if chunking(r["nr0"], nr1, nth)[0] == "dynamic")
+                    if chunking(r["nr0"], nr1, nth, mult)[0] == "dynamic")
         print(f"  at {nth:>3} threads: {n_dyn} of {len(rows)} matmul roles "
               f"self-balance, {len(rows) - n_dyn} take equal slices")
 
@@ -185,6 +189,10 @@ def main() -> int:
                     help="comma-separated thread counts (default 8)")
     ap.add_argument("--batch", type=int, default=1,
                     help="tokens in the batch; 1 is decode (default 1)")
+    ap.add_argument("--mult", type=int, default=4,
+                    help="the 4 in ggml's nth*4 threshold. Only 4 is what "
+                         "upstream does; other values model a patched build "
+                         "(P24)")
     args = ap.parse_args()
 
     nth_list = [int(x) for x in args.threads.split(",") if x.strip()]
@@ -214,9 +222,10 @@ def main() -> int:
 
     print(f"=== {os.path.basename(args.model)} ===")
     print(f"    arch={arch_s}  batch={args.batch}  "
-          f"(nr1={args.batch}, chunk_size={64 if args.batch == 1 else 16})")
+          f"(nr1={args.batch}, chunk_size={64 if args.batch == 1 else 16})"
+          + ("" if args.mult == 4 else f"  THRESHOLD nth*{args.mult} (PATCHED, not upstream)"))
     print()
-    report(rows, nth_list, args.batch)
+    report(rows, nth_list, args.batch, args.mult)
     return 0
 
 
