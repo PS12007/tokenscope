@@ -115,6 +115,15 @@ struct ts_buffer {
     uint32_t           n;      // records used in the current chunk
     uint32_t           cap;    // records available in the current chunk
 
+    // Host-scope nesting depth. It lives HERE, in the registry-owned buffer,
+    // rather than in a thread-local of its own, because host scopes nest across
+    // module boundaries: a decode scope in libllama contains node scopes
+    // recorded from libggml-cpu. Each module has its own `ts_tls` cache (see
+    // below) but they all point at this one buffer, so this counter is the
+    // thread's, not the module's. Touched only by host scopes, never by the
+    // per-node path.
+    uint32_t           depth;
+
     // cold
     void *   chunks;           // opaque: owning chunk list
     uint64_t dropped;          // events lost to the budget
@@ -138,23 +147,50 @@ TS_API extern uint16_t ts_g_graph;   // current graph epoch
 // range comparison would put two more loads in the node loop for no benefit.
 TS_API extern int ts_g_capture;
 
-extern
+// ---------------------------------------------------------------------------
+// The thread-local cache, and why it is `static` rather than exported.
+//
+// MSVC refuses `__declspec(dllexport)` on data with thread storage duration
+// (C2492) -- not "discourages", refuses. So with BUILD_SHARED_LIBS=ON a single
+// exported `ts_tls` is not expressible at all, and ggml-cpu.dll failed to link
+// against it. See FINDINGS F18.
+//
+// The way out: `ts_tls` is only ever a CACHE. The buffer it points at is owned
+// by the registry in ggml-base, which is exported and therefore single-instance
+// across the process. So each module compiles its own copy of the pointer and
+// fills it by calling the exported ts_thread_init(), which hands back the
+// registry's existing buffer for this thread if there is one. Two modules, two
+// pointers, one buffer -- and ts_flush walks the registry, so it finds every
+// record regardless of which module's cache recorded it.
+//
+// This keeps the hot path exactly as docs/01 designed it: one load of a plain
+// `__declspec(thread)` pointer with a constant initializer, no
+// __dyn_tls_on_demand_init guard, and no cross-DLL call. The cost moves to
+// thread setup, which is where it belongs.
+//
+// Because ts_thread_init() can only ever assign to its OWN module's copy, every
+// caller must write the result back to its own. The accessors below do that;
+// nothing else should touch ts_tls directly.
+//
+// `static` in a header means one copy per translation unit, not per module,
+// which is a handful of extra pointer-sized TLS slots and one extra cold call
+// per TU per thread. That is the entire cost of this scheme.
+//
+// The number of copies does not affect correctness, which is worth stating
+// because it is the obvious objection. An inline function that touches an
+// internal-linkage variable is COMDAT-folded by the linker, so several TUs may
+// silently end up sharing one slot -- and that is fine here, because the slot
+// is a cache whose only possible values are null or this thread's one buffer.
+// Fold them all together or keep them all apart and the observable behaviour is
+// the same; only the number of cold ts_thread_init() calls changes.
+// ---------------------------------------------------------------------------
+static
 #ifdef _MSC_VER
 __declspec(thread)
 #else
 __thread
 #endif
-struct ts_buffer * ts_tls;
-
-// Host-scope nesting depth. Thread-local, plain integer, constant initializer:
-// the same MSVC-DLL constraint that applies to ts_tls applies here.
-extern
-#ifdef _MSC_VER
-__declspec(thread)
-#else
-__thread
-#endif
-uint32_t ts_depth;
+struct ts_buffer * ts_tls = 0;
 
 #define TS_ACTIVE (ts_g_level != TS_LEVEL_OFF)
 
@@ -216,13 +252,33 @@ TS_API int ts_token_selected(void);
 // ---------------------------------------------------------------------------
 // The hot path.
 // ---------------------------------------------------------------------------
-TS_SINLINE struct ts_record * ts_reserve(void) {
-    if (TS_UNLIKELY(!ts_g_capture)) return 0;
+// This module's view of the calling thread's buffer, initialising it on first
+// use. The write-back to `ts_tls` is the whole point: ts_thread_init() lives in
+// ggml-base and can only assign to ggml-base's copy of the cache, so a caller
+// that did not store the result would call it again on every single event --
+// correct, but at the cost of a cross-DLL call on the hot path, which is
+// exactly what this design exists to avoid.
+TS_SINLINE struct ts_buffer * ts_buffer_get(void) {
     struct ts_buffer * b = ts_tls;
     if (TS_UNLIKELY(b == 0)) {
         b = ts_thread_init();
         if (TS_UNLIKELY(b == 0)) return 0;
+        ts_tls = b;
     }
+    return b;
+}
+
+// The host-scope depth counter for this thread, or 0 if there is no buffer
+// (level OFF, where depth is never read). Not on the per-node path.
+TS_SINLINE uint32_t * ts_depth_slot(void) {
+    struct ts_buffer * b = ts_buffer_get();
+    return b ? &b->depth : 0;
+}
+
+TS_SINLINE struct ts_record * ts_reserve(void) {
+    if (TS_UNLIKELY(!ts_g_capture)) return 0;
+    struct ts_buffer * b = ts_buffer_get();
+    if (TS_UNLIKELY(b == 0)) return 0;
     if (TS_UNLIKELY(b->n == b->cap)) {
         return ts_grow(b);
     }
@@ -246,7 +302,11 @@ TS_SINLINE void ts_emit(uint64_t t0, uint64_t t1, uint32_t ref, uint8_t kind, ui
 // One add, no growth, exact totals. docs/01 section 6.
 TS_SINLINE void ts_acc(uint32_t node_n, uint64_t dur, int is_wait) {
     if (TS_UNLIKELY(!ts_g_capture)) return;
-    struct ts_buffer * b = ts_tls;
+    // ts_buffer_get, not a bare `ts_tls` read: ts_thread_prepare() sized the
+    // accumulators through ggml-base's copy of the cache, so this module's copy
+    // can still be null on the first node even though the thread has a buffer.
+    // Reading ts_tls directly here would silently record nothing at level 2.
+    struct ts_buffer * b = ts_buffer_get();
     if (TS_UNLIKELY(b == 0 || node_n >= b->acc_n)) return;
     if (is_wait) b->acc_wait[node_n] += dur;
     else         b->acc_work[node_n] += dur;
@@ -269,11 +329,18 @@ public:
         // next begins" from "contains the next" -- which silently reparents a
         // sibling and makes self-time attribution wrong. One increment is a
         // cheaper fix than an epsilon that has to be right on every machine.
-        if (m_t0) m_depth = ts_depth++;
+        // The slot is cached rather than looked up again in the destructor, so
+        // the increment and the decrement provably act on the same counter.
+        // The buffer address is stable for the life of the thread -- ts_grow
+        // replaces `data`, never the ts_buffer itself -- so holding it is safe.
+        if (m_t0) {
+            m_slot = ts_depth_slot();
+            if (m_slot) m_depth = (*m_slot)++;
+        }
     }
     TS_INLINE ~scope() {
         if (m_t0) {
-            --ts_depth;
+            if (m_slot) --(*m_slot);
             ts_emit(m_t0, ts_now(), m_id, TS_KIND_HOST,
                     m_depth > 255 ? 255 : (uint8_t) m_depth);
         }
@@ -281,9 +348,10 @@ public:
     scope(const scope &) = delete;
     scope & operator=(const scope &) = delete;
 private:
-    uint32_t m_id;
-    uint64_t m_t0;
-    uint32_t m_depth = 0;
+    uint32_t   m_id;
+    uint64_t   m_t0;
+    uint32_t   m_depth = 0;
+    uint32_t * m_slot  = 0;
 };
 
 // A token (or prefill batch) boundary. RAII because llama_context::decode has

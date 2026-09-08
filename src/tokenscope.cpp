@@ -42,15 +42,13 @@ TS_API int      ts_g_level = TS_LEVEL_OFF;
 TS_API uint32_t ts_g_token = 0;
 TS_API uint16_t ts_g_graph = 0;
 TS_API int      ts_g_capture = 1;
-
-#ifdef _MSC_VER
-__declspec(thread) ts_buffer * ts_tls = nullptr;
-__declspec(thread) uint32_t    ts_depth = 0;
-#else
-__thread ts_buffer * ts_tls = nullptr;
-__thread uint32_t    ts_depth = 0;
-#endif
 }
+
+// `ts_tls` used to be defined here and exported. It is not exported any more --
+// MSVC forbids dllexport on thread-storage data (C2492), which broke the shared
+// library build outright. It is now a `static` per-module cache defined in the
+// header, and the nesting depth it used to sit beside moved into ts_buffer.
+// FINDINGS F18 has the full reasoning; tokenscope.h has the summary.
 
 namespace {
 
@@ -70,6 +68,25 @@ struct thread_state {
     std::vector<uint64_t>                acc_wait;
     std::string                          name;
 };
+
+// The thread's owning state, as seen by ggml-base ALONE.
+//
+// This translation unit is compiled into exactly one module, so unlike the
+// header's `ts_tls` -- of which every module and indeed every TU has a copy --
+// this really is one slot per thread per process. That is what makes
+// ts_thread_init() idempotent: when a second module asks for this thread's
+// buffer it must be handed the FIRST module's buffer, not a fresh one. Without
+// it, N modules would produce N thread_states per thread, N sets of records
+// under N trace thread ids, and N times the memory budget consumed.
+//
+// Raw pointer, constant initializer: the registry owns the shared_ptr and never
+// releases it, so this cannot dangle, and there is no dynamic initializer for
+// MSVC to guard.
+#ifdef _MSC_VER
+__declspec(thread) struct thread_state * ts_owner = nullptr;
+#else
+__thread struct thread_state * ts_owner = nullptr;
+#endif
 
 struct graph_info {
     uint32_t                 n_nodes = 0;
@@ -229,6 +246,13 @@ extern "C" TS_API ts_buffer * ts_thread_init(void) {
     ts_init_from_env();
     if (ts_g_level == TS_LEVEL_OFF) return nullptr;
 
+    // Idempotent per thread. Every module calls this once to fill its own copy
+    // of the ts_tls cache, and all of them must arrive at the same buffer.
+    if (ts_owner) {
+        ts_tls = &ts_owner->buf;
+        return ts_tls;
+    }
+
     registry & r = reg();
     auto st = std::make_shared<thread_state>();
 
@@ -252,7 +276,8 @@ extern "C" TS_API ts_buffer * ts_thread_init(void) {
         r.threads.push_back(st);
     }
 
-    ts_tls = &st->buf;
+    ts_owner = st.get();
+    ts_tls   = &st->buf;
     return ts_tls;
 }
 
@@ -370,8 +395,8 @@ extern "C" TS_API void ts_graph_end(void) { /* reserved */ }
 // is that it never allocates while a graph is running. docs/01, "Risk 2".
 extern "C" TS_API void ts_thread_prepare(uint32_t n_nodes) {
     if (ts_g_level != TS_LEVEL_AGG) return;
-    ts_buffer * b = ts_tls;
-    if (!b) { b = ts_thread_init(); if (!b) return; }
+    ts_buffer * b = ts_buffer_get();
+    if (!b) return;
     auto * st = static_cast<thread_state *>(b->chunks);
     if (!st) return;
     if (st->acc_work.size() < n_nodes) {
