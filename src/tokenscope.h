@@ -220,6 +220,12 @@ TS_API struct ts_record * ts_grow(struct ts_buffer * b);
 TS_API uint32_t ts_intern(const char * name);
 
 TS_API void ts_init_from_env(void);
+
+// Parses a TOKENSCOPE_TOKENS window ("N", "N-M" or "N:M"). Returns 1 on a
+// complete parse and 0 on anything else, trailing characters included, so a
+// typo becomes a warning instead of a narrower capture nobody notices.
+// Exposed because the self-test drives it directly. FINDINGS F29.
+TS_API int ts_parse_token_window(const char * s, uint32_t * lo, uint32_t * hi);
 TS_API void ts_token_begin(int is_prefill, uint32_t n_tokens);
 TS_API void ts_token_end(void);
 TS_API void ts_flush(const char * path);

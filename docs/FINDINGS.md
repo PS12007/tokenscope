@@ -2817,6 +2817,10 @@ varying it that F23 could not use.
 - **Imbalance: n=12 per arm**, `mid.gguf`, 16 threads, level 3,
   `TOKENSCOPE_TOKENS=10:11`, via `tools/imbalance_repeat.py`. F23 measured six to
   be too few by a wide margin, three separate times.
+  *(Session 5 note: at the time this was written `10:11` parsed as token 10
+  alone — [`F29`](#f29--tokenscope_tokens1011-captured-one-token-and-had-done-so-since-session-4).
+  Both arms used it, so the comparison holds; the capture was half the size it
+  says here.)*
 - **Throughput comes from the uninstrumented build**, `build-ts-off`, never from
   a trace. A traced token carries the recording cost on the token being measured;
   this project nearly reported a 21% degradation that was pure noise for exactly
@@ -3522,6 +3526,84 @@ most of what sessions 3 and 4 used. **The imbalance figures are unaffected**:
 imbalance is measured between arrival timestamps, and the artifact is entirely
 in the after-arrival term. F23 and F24 rest on imbalance, so they should
 survive intact. That prediction is part of this one.
+
+---
+
+## F29 — `TOKENSCOPE_TOKENS=10:11` captured one token, and had done so since session 4
+
+**Workload:** none. Found by reading the parser while writing
+[`P28`](#p28--the-thread-pool-spin-up-barrier-is-probably-tokenscopes-own-allocator),
+reproduced against the same C runtime the binaries use before anything was
+changed.
+
+The window parser was two `sscanf` calls in order:
+
+```c
+if (std::sscanf(win, "%u-%u", &lo, &hi) == 2) { r.tok_lo = lo; r.tok_hi = hi; }
+else if (std::sscanf(win, "%u", &lo) == 1)    { r.tok_lo = lo; r.tok_hi = lo; }
+```
+
+`sscanf` stops at the first character the format does not match and returns how
+many conversions it completed. It does not care what is left over. So for
+`"10:11"` the first call fails at the literal `-`, returns 1, and the second
+call succeeds with `lo = 10` — giving `tok_lo = tok_hi = 10`, a window of **one
+token**, with no error anywhere.
+
+Reproduced before fixing, through `msvcrt`'s own `sscanf`:
+
+```
+10:11    %u-%u -> n=1 lo=10 hi=0   |  %u -> n=1 lo=10
+10-11    %u-%u -> n=2 lo=10 hi=11  |  %u -> n=1 lo=10
+```
+
+### Where it mattered
+
+`tools/imbalance_repeat.py` has had `--tokens` defaulting to `"10:11"` since it
+was written in session 4, and every F23 and F24 imbalance run used that default.
+Each of those runs captured **token 10 only**, not tokens 10 and 11.
+
+The committed reference trace `mid-24L-L3-tok10-11.trace.json` is *not*
+affected — it carries two captured tokens, so it was produced with the hyphen
+form by hand. The colon form appears in exactly two places: that tool's default
+and P24's protocol paragraph, which quotes the tool.
+
+### What it does and does not invalidate
+
+**F23 and F24 stand.** Both rest on *ratios between nodes inside one trace* —
+`ffn_up` against `ffn_out`, patched against stock — and both arms of every
+comparison used the identical window, so halving the capture halves both sides.
+What changes is that "twelve runs of two tokens" was twelve runs of one, which
+is half the data per run and makes the wide spreads F23 documented (up to 8.5x
+between identical runs) less surprising than they looked.
+
+It also means F23's ranges were, if anything, pessimistic: the same tool now
+gathers twice the barriers per run for the same wall time.
+
+### The fix
+
+`ts_parse_token_window()` is now a separate exported function that parses
+`N`, `N-M` and `N:M` and **refuses everything else**, including trailing
+characters, reversed bounds, and spaces around the separator. `ts_init_from_env`
+prints a warning and captures the whole run when it refuses, because a typo
+that silently narrows the capture window is worse than one that ignores it.
+
+The self-test drives it directly with nine cases, five of which must be
+refused. That is the shape this project keeps arriving at: the assertions worth
+writing are the ones about inputs the code should *reject*, since the accepted
+ones tend to be the ones somebody already tried by hand.
+
+### Why nobody noticed
+
+A trace with one captured token instead of two looks completely normal. It has
+tokens, it has barriers, it has nodes, every percentage is well-formed, and the
+only visible difference is that a number in a report reads `1 of 25` instead of
+`2 of 25` in a line most readers skim. There is no failure to see.
+
+This is the same shape as the dead category-table entry in F20 and the
+`kv.slot-search` scope in F16: **a silent narrowing produces valid-looking
+output, so it is only ever found by reading the code that produced it, never by
+looking at the result.** Three instances now, which is enough to call it the
+project's characteristic bug rather than three unlucky ones.
 
 ---
 

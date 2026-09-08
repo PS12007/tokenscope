@@ -208,6 +208,32 @@ static void calibrate_clock(registry & r) {
 #endif
 }
 
+// Parses a TOKENSCOPE_TOKENS window. Returns 1 and fills *lo/*hi on success,
+// 0 on anything it does not fully understand -- trailing characters included.
+//
+// It is a separate function so the self-test can drive it directly, and it is
+// strict because the version it replaces was not: `"%u-%u"` then `"%u"` meant
+// that `10:11` matched the second pattern, set lo = hi = 10, and captured ONE
+// token while every document in the repo said two. sscanf ignores what it does
+// not consume, so there was no error to notice. FINDINGS F29.
+extern "C" TS_API int ts_parse_token_window(const char * s,
+                                            uint32_t * lo, uint32_t * hi) {
+    if (!s || !lo || !hi) return 0;
+    unsigned a = 0, b = 0;
+    char sep = 0, extra = 0;
+    const int n = std::sscanf(s, "%u%c%u%c", &a, &sep, &b, &extra);
+    if (n == 1) {                                     // "10"
+        *lo = *hi = (uint32_t) a;
+        return 1;
+    }
+    if (n == 3 && (sep == '-' || sep == ':') && b >= a) {   // "10-11", "10:11"
+        *lo = (uint32_t) a;
+        *hi = (uint32_t) b;
+        return 1;
+    }
+    return 0;
+}
+
 extern "C" TS_API void ts_init_from_env(void) {
     static std::once_flag once;
     std::call_once(once, [] {
@@ -237,9 +263,16 @@ extern "C" TS_API void ts_init_from_env(void) {
 
         const char * win = env_or("TOKENSCOPE_TOKENS", "");
         if (*win) {
-            unsigned lo = 0, hi = 0;
-            if (std::sscanf(win, "%u-%u", &lo, &hi) == 2) { r.tok_lo = lo; r.tok_hi = hi; }
-            else if (std::sscanf(win, "%u", &lo) == 1)    { r.tok_lo = lo; r.tok_hi = lo; }
+            uint32_t lo = 0, hi = 0;
+            if (ts_parse_token_window(win, &lo, &hi)) {
+                r.tok_lo = lo;
+                r.tok_hi = hi;
+            } else {
+                std::fprintf(stderr,
+                    "tokenscope: TOKENSCOPE_TOKENS='%s' is not N, N-M or N:M. "
+                    "Capturing every token rather than guessing at a window.\n",
+                    win);
+            }
         }
     });
 }

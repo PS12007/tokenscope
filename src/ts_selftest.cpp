@@ -201,6 +201,37 @@ int main(int argc, char ** argv) {
         check(shadowed == 0, "no category-table prefix is shadowed by an earlier one");
     }
 
+    // TOKENSCOPE_TOKENS parsing. "10:11" used to fall through to a bare "%u"
+    // and capture one token while the docs, the tools and the trace filenames
+    // all said two -- silently, because sscanf does not care what it leaves
+    // behind. The cases that matter are the ones that must be REFUSED.
+    std::printf("\n5. capture-window parsing\n");
+    {
+        struct { const char * in; int ok; uint32_t lo, hi; } cases[] = {
+            { "10",      1, 10, 10 },
+            { "10-11",   1, 10, 11 },
+            { "10:11",   1, 10, 11 },
+            { "8-13",    1,  8, 13 },
+            { "10:11x",  0,  0,  0 },
+            { "10 - 11", 0,  0,  0 },
+            { "11-10",   0,  0,  0 },
+            { "",        0,  0,  0 },
+            { "abc",     0,  0,  0 },
+        };
+        int bad = 0;
+        for (const auto & c : cases) {
+            uint32_t lo = 0xFFFFFFFFu, hi = 0xFFFFFFFFu;
+            const int got = ts_parse_token_window(c.in, &lo, &hi);
+            const bool fine = got == c.ok && (!c.ok || (lo == c.lo && hi == c.hi));
+            if (!fine) {
+                ++bad;
+                std::printf("    '%s' -> ok=%d lo=%u hi=%u, expected ok=%d lo=%u hi=%u\n",
+                            c.in, got, lo, hi, c.ok, c.lo, c.hi);
+            }
+        }
+        check(bad == 0, "every capture-window form parses or is refused as specified");
+    }
+
     std::printf("\n%s (%d failure%s)\n",
         g_failures == 0 ? "PASS" : "FAIL", g_failures, g_failures == 1 ? "" : "s");
     return g_failures == 0 ? 0 : 1;

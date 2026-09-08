@@ -382,7 +382,7 @@ Then drop `run.trace.json` onto [ui.perfetto.dev](https://ui.perfetto.dev).
 | `TOKENSCOPE_OUT` | — | trace path; flushed at exit. Unset ⇒ nothing written |
 | `TOKENSCOPE_BUDGET_MB` | `256` | total record budget across all threads. Allocated in **1 MiB chunks per thread**, so a budget below `threads x 1 MiB` leaves some threads with no buffer at all — they record nothing and every attempt is counted as a drop |
 | `TOKENSCOPE_RING` | `0` | keep the *last* events instead of the first (drops are still counted). **Only takes effect once a thread has filled a whole 1 MiB chunk (~43,700 records).** Below that, or if the budget was too small for the thread to get its first chunk, this flag does nothing — verified, and worth knowing because a tight budget is exactly when you would reach for it |
-| `TOKENSCOPE_TOKENS` | all | capture window, e.g. `340-345`. Token slices are still recorded for the whole run; only the scopes inside them are windowed. |
+| `TOKENSCOPE_TOKENS` | all | capture window: `N`, `N-M` or `N:M`, e.g. `340-345`. Token slices are still recorded for the whole run; only the scopes inside them are windowed. Anything else warns on stderr and captures everything, rather than narrowing the window to whatever the parser happened to salvage ([`F29`](docs/FINDINGS.md)). |
 
 ## How it is put together
 
