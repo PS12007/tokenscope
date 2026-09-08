@@ -635,6 +635,9 @@ the 8B is F19/F21) and added a new one at the top that did not exist before.
    at level 3, 8 threads, n=20, with level 0 spanning zero and prefill
    uncertified as controls. `build-ts-shared-off` now exists, so the shared arm
    ran too — and every one of its intervals spanned zero at a 2.22% noise floor.
+   A third run at the end of the session, on the post-F28 binaries, was refused
+   outright at a 3.78% floor: the current tree's overhead is **unmeasured**, and
+   +1.16% describes the tree at commit `7149794`.
 
    **The remaining work is a harness change, not a longer run.** F25's
    post-mortem: `bench_overhead.py` interleaves arms *inside* one invocation,
@@ -893,7 +896,7 @@ Added by session 5, in rough order of how much they would have saved:
 | Upstream patch size | 174 lines, 7 files | `patches/01-instrument.patch` |
 | F20 naming fix size | 8 added, 13 removed, 1 file | `patches/02-name-attn-output.patch` |
 | Per-scope cost | 52.8 ns (2 clock reads + 1 store) | `ts_selftest` |
-| Level 3 overhead, static, 8 threads | **+1.16% [+0.67, +1.87]**, certified, n=20 | [`FINDINGS`](FINDINGS.md) F25 |
+| Level 3 overhead, static, 8 threads | **+1.16% [+0.67, +1.87]**, certified, n=20 — **as of commit `7149794`**; a re-run on the post-F28 tree was refused at a 3.78% noise floor | [`FINDINGS`](FINDINGS.md) F25 |
 | ...same, session 1 | +0.67% [+0.12, +1.67] | [`02`](02-overhead-methodology.md) |
 | Level 3 overhead, shared build | **unmeasured** — every interval spanned zero at a 2.22% noise floor | [`FINDINGS`](FINDINGS.md) F25 |
 | Zero-overhead-when-off | 0 symbols, 864-byte archive | [`02`](02-overhead-methodology.md) §2 |

@@ -3265,10 +3265,23 @@ above. Take it as an order of magnitude and nothing more.
 
 - **The binaries predate the same session's own instrumentation change.** All
   four were built from the tree at commit `7149794`, before `ts_note_build`
-  (F26's provenance field) added one call per thread per graph. The numbers
-  above describe the code at that commit. The addition is off the node path and
-  guarded by `ts_g_level`, but "by inspection" is the phrase F22 got caught by,
-  so it is stated rather than dismissed.
+  (F26's provenance field) added one call per thread per graph and before F28
+  moved the buffer allocation. The numbers above describe the code at that
+  commit. The addition is off the node path and guarded by `ts_g_level`, but "by
+  inspection" is the phrase F22 got caught by, so it is stated rather than
+  dismissed.
+
+  **It was re-run at the end of session 5 on the post-F28 binaries, and the
+  harness refused the whole table.** Baseline IQR 3.78% on decode and 2.97% on
+  prefill, against 1.06% and 0.99% earlier the same day on the same binaries'
+  predecessors; every interval spans zero and every point estimate is negative,
+  which is what noise looks like when it is wider than the effect. That is the
+  seventh refusal in five sessions, it says nothing about whether the new code
+  costs more or less, and it is a third independent demonstration of the thing
+  this finding is really about: **on this machine the noise floor moves by more
+  than the quantity being measured, within a single day.** `+1.16% [+0.67,
+  +1.87]` stands as the best measurement of the instrumentation as of `7149794`,
+  and the current tree's overhead is unmeasured.
 - One machine, one model, one thread count, one workload. F10 predicts overhead
   grows with thread count and only 8 has ever been measured.
 - The shared arms are Visual Studio / MSBuild builds and the static arms are
