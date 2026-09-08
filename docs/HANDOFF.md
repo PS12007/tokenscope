@@ -1,6 +1,6 @@
 # HANDOFF — state of the project, and what to do next
 
-Updated at the **end of session 5 (2026-09-08)**. Everything here is either a
+Updated **during session 6 (2026-09-08)**. Everything here is either a
 fact about the current tree or an explicit next step. Read this first when
 picking the project back up.
 
@@ -29,6 +29,27 @@ provenance record now carries `threading` and `compute_linkage`, and
 looks strange, read that line before theorising — the field exists because four
 sessions of documents described every barrier figure here as coming from a code
 path none of them came from (**F26**).
+
+**Session 6 so far, in one paragraph.** Closed section 5 item 7, which F25 had
+called "the single cheapest unfinished thing in this list", and it was.
+`bench_overhead.py` now takes N build pairs and round-robins every arm of every
+pair in one invocation, which is what F25's post-mortem said the question
+needed and what no amount of extra reps could supply. The answer: **the shared
+build's level-3 overhead is +0.87% [+0.55, +1.19], certified** — the first
+measurement behind F22's inspection-only claim that per-module `ts_tls` caching
+keeps a cross-DLL call off the hot path. P25.1, the difference between the two
+builds, comes out **bounded but unresolved at +0.36pp [-0.32, +1.17]**, which
+is a weaker claim than a value and a much stronger one than F25's "nothing was
+resolved in either direction". Three other things fell out. F25's tentative
+"the shared build is 0.7% slower" is **wrong in sign** once interleaved
+(-0.22% [-0.79, +0.26]) — the hedge on it was justified. The harness's own
+protocol had a flaw nobody was looking for: **arm order within a round was
+fixed**, so a transient shorter than a round hit the same arms every time, and
+in F30's run one extra warm-up round cost the static pair its certification;
+order now rotates. And the compiled-out static arm read **42.94 tok/s in
+session 5 and 45.92 in session 6** — same code, same machine, +6.9%, about six
+times the effect being resolved, which is the sharpest statement this project
+has of why cross-session comparisons of absolute throughput are worthless here.
 
 **Session 5 in one paragraph.** Five findings, **F25 through F29**, and the
 theme is that four of the five are the project auditing itself. It began by
@@ -132,15 +153,17 @@ commits from sessions 2 and 3 are pushed.
   (FINDINGS F10).
 - Python analysis: summary, per-token, outliers-with-cause, per-layer, diff.
 - Overhead: level 3 is **+1.16% [+0.67, +1.87]** at 8 threads, **static** build,
-  re-measured and certified in session 5 (F25), n=20. It was +0.67% [+0.12,
+  certified in session 5 (F25), n=20; and **+0.87% [+0.55, +1.19]** for the
+  **shared** build, certified in session 6 (F30). It was +0.67% [+0.12,
   +1.67] in session 1; session 2 tried at 8 and 28 threads and the harness
   **refused to certify either**, because the machine's noise floor had moved
   (baseline IQR 2-4%, wider than the effect). Quote a number with its thread
   count and its build, and expect to have to re-measure on a quiet machine.
-  **The shared build's overhead is still unmeasured** — its arms ran at a 2.22%
-  noise floor in session 5 and every interval spanned zero. F25 explains why the
-  fix is not "more reps": the shared and static pairs are separate invocations,
-  and `bench_overhead.py` only interleaves *within* one.
+  **The two cannot be compared across sessions** — F30 found the compiled-out
+  static arm reading 42.94 tok/s in session 5 and 45.92 in session 6, the same
+  code on the same machine, which is ~6x the effect being resolved. Within F30's
+  single invocation the difference of overheads is **+0.36pp [-0.32, +1.17]**:
+  bounded, not resolved.
 - Zero-overhead-when-off verified against the symbol table.
 - **Shared-library builds work (F22).** Each module keeps its own `ts_tls`
   cache over one registry-owned buffer. `ts_dlltest` builds two binaries plus a
@@ -170,7 +193,7 @@ The short version:
 | ~~No Perfetto screenshot~~ | **Sidestepped in session 5.** `tools/trace_svg.py` renders one token from a committed trace as a theme-aware SVG, and the README opens with it. That is better than a screenshot for a repo -- it is text, it diffs, and anyone who clones can regenerate it -- but it is **not** the Perfetto UI, and a post that wants to show the UI still wants a screenshot |
 | ~~No thread pinning~~ | **Done (F14).** Mechanism confirmed: homogeneous cores drop spread 13%->2% and halve barrier wait. Pinning is not the fix |
 | Upstream issue not filed | Two issues now, and [`03`](03-upstream-issue-draft.md) says which goes first. **The F20 naming defect is not blocked on Linux** and should be filed on its own; the instrumentation proposal still is. **An agent must not write or file it** — see the box at the top of `03` |
-| Shared build's overhead still unmeasured | The `GGML_TOKENSCOPE=OFF` shared build now exists (`build-ts-shared-off`, session 5) and the run happened — but at a 2.22% noise floor, so every interval spanned zero and the harness refused. **F25 says the fix is not more reps:** the shared and static pairs were two invocations and `bench_overhead.py` only interleaves within one, so the comparison the question needs has never actually been run |
+| ~~Shared build's overhead still unmeasured~~ | **Done (F30).** +0.87% [+0.55, +1.19] at level 3, certified. F25 was right that the fix was a harness change and not more reps: `bench_overhead.py` now takes N build pairs with `--pair` and round-robins every arm of every pair together. What is *still* open is the difference between the builds, which came out bounded but unresolved at +0.36pp [-0.32, +1.17] |
 | F24 not raised upstream, and `mul_mat_id` untested | The +1.95% is one machine, one thread count, one model, and no NUMA hardware — and NUMA is what the constant was tuned for |
 
 ---
@@ -475,9 +498,21 @@ python tools/imbalance_repeat.py -m M.gguf --metric release   # NEW: the other
                                         # half of --barriers, repeated (P27.2)
 python tools/spinup_probe.py -m M.gguf --windows 1:2,40:41    # NEW: is the big
                                         # after-arrival barrier ours? (P28)
-python tools/trace_svg.py T.json -o docs/token.svg            # NEW: the README
+python tools/trace_svg.py T.json -o docs/token.svg            # the README
                                         # picture, from a trace, no Perfetto
+python tools/bench_overhead.py -m M.gguf -n 20 -t 8 --levels 3     --pair static=../llama.cpp/build-ts-off/bin,../llama.cpp/build-ts-on/bin     --pair shared=../llama.cpp/build-ts-shared-off/bin/Release,../llama.cpp/build-ts-shared/bin/Release
+                                        # NEW: N build pairs, every arm of every
+                                        # pair in ONE round-robin (F30). This is
+                                        # the only way a cross-build comparison
+                                        # is interleaved at all
 ```
+
+`--pair` is repeatable and each pair is scored against **its own** compiled-out
+arm. With more than one pair you also get the difference of overheads with its
+own bootstrap CI, and the compiled-out arms against each other -- which measures
+DLL cost in llama.cpp, not in tokenscope. `--bin-off`/`--bin-on` still work.
+Arm order rotates each round since F30; `--no-rotate` restores the old fixed
+order if you need to reproduce a pre-`9ec7c82` number.
 
 `--barriers` needs `TOKENSCOPE_LEVEL=3`. It matches the k-th barrier across
 threads, which is exact because node and barrier scopes strictly alternate and
@@ -630,24 +665,32 @@ the 8B is F19/F21) and added a new one at the top that did not exist before.
    hot path is unchanged by inspection, but that is not a measurement), and the
    GCC/ELF behaviour still needs checking alongside item 2. Both fold into
    items 2 and 7 rather than standing on their own.
-7. **Measure the shared build's overhead.** *Half done in session 5 (F25).*
-   The static re-measurement is finished and certified: **+1.16% [+0.67, +1.87]**
-   at level 3, 8 threads, n=20, with level 0 spanning zero and prefill
-   uncertified as controls. `build-ts-shared-off` now exists, so the shared arm
-   ran too — and every one of its intervals spanned zero at a 2.22% noise floor.
-   A third run at the end of the session, on the post-F28 binaries, was refused
-   outright at a 3.78% floor: the current tree's overhead is **unmeasured**, and
-   +1.16% describes the tree at commit `7149794`.
+7. ~~**Measure the shared build's overhead.**~~ **Done in session 6 (F30).**
+   `BUILD_SHARED_LIBS=ON` at level 3, 8 threads, is **+0.87% [+0.55, +1.19]**,
+   certified — the measurement behind F22's inspection-only claim that
+   per-module `ts_tls` caching keeps a cross-DLL call off the hot path. The
+   static figure from F25 stands at **+1.16% [+0.67, +1.87]**.
 
-   **The remaining work is a harness change, not a longer run.** F25's
-   post-mortem: `bench_overhead.py` interleaves arms *inside* one invocation,
-   the shared and static pairs were two invocations thirteen minutes apart, and
-   the machine's baseline IQR moved by a factor of two between them. To answer
-   "does the shared build cost more?", the four builds' arms have to be
-   interleaved **together in one invocation** — `A_static, C3_static, A_shared,
-   C3_shared` round-robin. That is maybe thirty lines in `bench_overhead.py`
-   (it already takes two bin dirs; it needs N) and it is the single cheapest
-   unfinished thing in this list.
+   F25 was right that the fix was a harness change. `bench_overhead.py` takes
+   `--pair NAME=OFF_DIR,ON_DIR` repeatably and round-robins every arm of every
+   pair in one invocation, and it reports two things a single pair cannot: the
+   **difference of overheads** with its own bootstrap interval, and the
+   **compiled-out arms against each other**, which measures what DLL boundaries
+   cost llama.cpp rather than anything about tokenscope.
+
+   Two things are left, and both are small. The difference of overheads is
+   **+0.36pp [-0.32, +1.17]** — bounded but not resolved away from zero, and
+   resolving it needs either a quieter machine or many more reps, and is not
+   obviously worth either. And **the two pairs still use different generators**
+   (Ninja for static, Visual Studio for shared), which P30 named in advance as
+   the confound this design cannot remove; a Ninja shared build would remove it
+   for maybe twenty minutes of configure-and-build.
+
+   F30 also found and fixed a flaw in the harness's own protocol: arm order
+   within a round was fixed, so any transient shorter than a round landed on the
+   same arms every time. It cost the static pair its certification in F30's run.
+   Order now rotates each round. **Any overhead number taken before commit
+   `9ec7c82` was measured with a fixed order.**
 
 8. **F27 is the biggest unexploited result in the repo, and it needs a second
    machine before it means anything general.** Turning `GGML_OPENMP` off costs
