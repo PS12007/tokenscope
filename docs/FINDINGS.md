@@ -4063,6 +4063,103 @@ project's characteristic bug rather than three unlucky ones.
 
 ---
 
+## P30 — What the interleaved four-arm run should say, written before it runs
+
+**Dated 2026-09-08, session 6. Written and committed before the harness was
+pointed at the real builds.** [`F25`](#f25--the-static-overhead-certifies-for-the-first-time-since-session-1-and-the-shared-builds-noise-floor-ate-its-own-answer)
+ended with a design fault rather than a wrong number: P25.1 asked whether the
+shared build's overhead exceeds the static build's, and the run that was
+supposed to answer it put the two halves of the comparison in two invocations
+thirteen minutes apart. `bench_overhead.py` now takes N build pairs and
+round-robins every arm of every pair together, so the question is askable for
+the first time.
+
+These predictions are the point of writing them down: P25.1 was *unanswerable*,
+which F25 called a worse outcome than being wrong, because a wrong prediction
+teaches something. This one should at least be capable of being wrong.
+
+### The mechanism, which is narrower than "DLLs are slower"
+
+The hot path is `TS_SINLINE` in both builds and inlines identically. `ts_now()`
+is `__rdtsc()`. `ts_tls` is a `__declspec(thread)` pointer that each module
+caches for itself — that is exactly what F22 built, and it means the buffer
+lookup costs the same either way.
+
+What does *not* inline across a DLL boundary is the four globals. In
+`tokenscope.h` they are
+
+```c
+TS_API extern int      ts_g_level;
+TS_API extern int      ts_g_capture;
+TS_API extern uint32_t ts_g_token;
+TS_API extern uint16_t ts_g_graph;
+```
+
+and `TS_API` is `__declspec(dllimport)` in every consuming module. A read of an
+imported global is **two dependent loads** — fetch the address from the import
+table, then the value — where the static build has one load from a fixed
+address, usually folded into the instruction that uses it.
+
+Count them per event: `ts_g_capture` in `ts_reserve`, `ts_g_token` and
+`ts_g_graph` in `ts_emit`, and `ts_g_level` on every scope entry and exit. So
+roughly four extra dependent loads per record, all from one import-table cache
+line that is about as hot as memory gets, and several of them hoistable out of
+a loop by the optimiser.
+
+That gives a **direction with confidence and a magnitude with none**: shared
+should cost at least as much as static, by a margin small enough that this
+machine will probably not resolve it.
+
+### The predictions
+
+**P30.1 — the difference of overheads at level 3 is positive but its interval
+spans zero.** Shared minus static, on decode, in percentage points: positive
+point estimate, interval containing 0. The mechanism above is real but it is
+four L1 hits against a 24-byte record write and an `__rdtsc`, and F25's static
+level-3 overhead was only +1.16% to begin with. A margin that is a fraction of
+that is below what a 1% noise floor resolves. **Predicted point estimate under
++0.5pp.**
+
+**P30.2 — level 0 stays unresolvable in both builds, and its difference too.**
+Arm B is the residual-branch test, and under `dllimport` the residual branch is
+the *most* affected thing per unit work — it is a bare `ts_g_level` read with no
+record write to hide behind. If any arm shows the linkage cost, this is the one.
+It will still span zero, because the branch is predicted and the whole arm was
++0.23% [-0.20, +0.92] statically.
+
+**P30.3 — the compiled-out arms differ, and this is the number that comes out
+sharpest.** A_shared against A_static contains no tokenscope code at all; it is
+llama.cpp losing cross-module inlining across `ggml.dll`, `ggml-cpu.dll` and
+`llama.dll`, which is a far larger surface than four imported globals. F25 saw
+0.7% on decode and 0.9% on prefill and could only call it "an order of magnitude
+and nothing more", because it was a between-run comparison. Interleaved, I
+expect **0.5% to 1.5% on decode with an interval excluding zero** — the first
+properly-measured statement about DLL cost in this repo, and note that it is a
+fact about llama.cpp rather than about this profiler.
+
+**P30.4 — prefill shows a larger DLL penalty than decode.** Decode is
+bandwidth-bound (F14) and prefill is compute-bound, so lost inlining should
+matter more where the CPU is the constraint. F25's aside had it the same way
+round, 0.9% against 0.7%, from a comparison too weak to lean on.
+
+**P30.5 — at least one block is refused.** This has happened in every session
+since session 1 and the harness has now refused seven times. Six arms a round
+makes each round longer than F25's five, so the run is longer and there is more
+of the day for the machine to drift through.
+
+### What would falsify the mechanism rather than the numbers
+
+If the shared build comes out **faster** at level 3 with an interval excluding
+zero, the `dllimport` story is wrong and something else is going on — most
+likely that the two builds' compilers made different inlining decisions
+somewhere off the tokenscope path, which would make the whole four-arm design
+measure a confound instead of linkage. The static pair is `ninja`/`cl` and the
+shared pair is the Visual Studio generator; both are MSVC 19.44 Release, but
+they are not the same command line, and that is a caveat this design cannot
+remove.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
