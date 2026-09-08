@@ -4596,6 +4596,63 @@ result, and it is more favourable to the shared build than F30's framing was.
 
 ---
 
+## P32 — What F24 looks like once the interval can see between-run drift
+
+**Dated 2026-09-08, session 6. Written and committed before the re-measurement.**
+[`F31`](#f31--two-certified-intervals-for-one-quantity-that-do-not-overlap-and-level-3-turns-out-to-be-a-leveller)
+established that this project's bootstrap intervals are *within-run* intervals.
+[`F24`](#f24--one-line-195-decode-and-the-first-certified-speedup-in-this-project)
+— **+1.95% [+1.59, +2.35]**, the only throughput improvement this project has
+ever claimed and the one thing in it a maintainer might act on — was measured
+that way, at one block, with a half-width of 0.38pp.
+
+F30 and F31 disagreed about a level-3 overhead by **0.66pp**. If a comparable
+drift term sits under F24, its stated interval is roughly half as wide as it
+should be. This run measures that instead of assuming it: same protocol as F24
+(`mid.gguf`, 16 threads, tg64, pp64 as the control, `--reps 3`, 20 rounds per
+arm), now `--blocks 3`, both arms rebuilt in this session.
+
+### Verification done before predicting
+
+Two stock builds of the same tree differ by **4 bytes** — the PE timestamp at
+`0x110` and one word at `0x3e2ed4`. So MSVC is reproducible here and byte
+comparison is a usable check, which is worth knowing given F24's own history of
+comparing an arm against a stale binary.
+
+Stock against patched differ by **1,137,994 bytes**, spanning `0x130` to
+`0x45bc78`. One constant changed, a quarter of the image moved. Most of that is
+almost certainly downstream address shift rather than different decisions, but
+it means **code layout is not held constant between the arms**, and layout alone
+can move throughput by around a percent on this kind of workload. That is an
+alternative explanation for F24 that no run of this design can exclude, and it
+is written down here rather than discovered later.
+
+### The predictions
+
+**P32.1 — the block-to-block spread exceeds F24's whole stated interval width
+(0.76pp).** F30/F31 gave 0.66pp on a quantity a third the size. Predicted
+spread across three blocks: **0.5pp to 1.5pp**.
+
+**P32.2 — the t interval still excludes zero, so F24's conclusion survives while
+its precision does not.** The effect is ~2% against a drift term of ~0.5pp; even
+at t=4.303 for three blocks that should clear zero. This is the prediction that
+decides whether F24 is repairable or retracted.
+
+**P32.3 — the mean of the block estimates lands within 0.6pp of +1.95%.** If it
+comes back at, say, +0.9%, then the original number was not merely over-precise
+but wrong, and the layout confound above moves from a caveat to a suspect.
+
+**P32.4 — the pp64 control stays unresolved on the t interval.** It was -0.81%
+[-2.44, +0.35] originally. A control that resolves would mean the comparison is
+broken, and with a wider interval it should be even harder to resolve.
+
+**P32.5 — the bootstrap interval on the pooled data is narrower than the t
+interval.** Nearly tautological given F31, but it is the direct demonstration on
+the project's flagship number, and if it comes out false the whole diagnosis is
+wrong.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
