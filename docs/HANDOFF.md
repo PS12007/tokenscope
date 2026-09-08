@@ -1,8 +1,16 @@
 # HANDOFF — state of the project, and what to do next
 
-Updated at the end of **session 3 (2026-09-06)**. Everything here is either a
-fact about the current tree or an explicit next step. Read this first when
-picking the project back up.
+Updated during **session 4 (2026-09-07)**. Everything here is either a fact
+about the current tree or an explicit next step. Read this first when picking
+the project back up.
+
+**Session 4 so far.** Closed section 5 item 6: the shared-library build works
+(**F22**). F18 had called it a genuine incompatibility between the hot path's
+raw thread-local and the registry's need for one instance across DLLs — both
+true, but `ts_tls` is a cache and the buffer is the state, so the cache never
+needed to be single-instance. Each module now keeps its own and they all resolve
+to one registry-owned buffer; the hot path is unchanged. MSVC only, and the
+shared build's overhead is still unmeasured.
 
 **Session 3 in one paragraph.** Ran the 8B that section 5 item 4 was waiting on
 — it was already on the machine, pulled by Ollama, no download needed. Wrote six
@@ -57,7 +65,7 @@ The short version:
 |---|---|
 | Linux / GCC never built or measured | Everything so far is MSVC on Windows, and F9/F10 both measured the non-OpenMP barrier path |
 | ~~No real quantized model~~ | **Done (F12).** Qwen2.5-0.5B Q4_K_M is in `models/`, gitignored. Largest real model measured is 630 M params |
-| **Shared-library build is BROKEN** | **Not untested any more (F18): `ggml-cpu.dll` fails to link on `ts_tls`, and MSVC forbids `dllexport` on a `__declspec(thread)` variable (C2492). Blocks in-tree adoption; two candidate fixes in F18** |
+| ~~Shared-library build is BROKEN~~ | **Fixed (F22).** F18's option 2, implemented and verified: each module caches its own `ts_tls`, all resolving to one registry-owned buffer. `BUILD_SHARED_LIBS=ON` links and traces correctly. **MSVC only — GCC/Clang untested**, and the shared build's overhead has never been measured |
 | ~~Sampling / tokenizer scopes not written~~ | **Done (F11).** `llama-cli` is now built in `build-ts-on`. Sampling + detokenization are 0.13% of a token |
 | ~~Context-shift behaviour~~ | **Done (F16).** 4 spikes in 699 tokens at `-c 256`, 1.13-1.34x median |
 | Concurrent sequences / server workload | The last untested prediction in F2, and F16 says it is still plausible: the head-pointer trick that makes `find_slot` O(1) is much weaker with many streams |
@@ -131,8 +139,9 @@ call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build
 C:\-CS\TLI profiler\
 ├── tokenscope\            the repo
 ├── llama.cpp\             upstream clone, pinned at 4d91760, patched in place
-│   ├── build-ts-on\       GGML_TOKENSCOPE=ON
-│   └── build-ts-off\      GGML_TOKENSCOPE=OFF   (baseline arm; keep it)
+│   ├── build-ts-on\       GGML_TOKENSCOPE=ON,  static  (ninja, bin\)
+│   ├── build-ts-off\      GGML_TOKENSCOPE=OFF, static  (baseline arm; keep it)
+│   └── build-ts-shared\   BUILD_SHARED_LIBS=ON (VS generator, bin\Release\)
 └── models\
     ├── tiny.gguf          8L,  34 MB   synthetic F32
     ├── mid.gguf           24L, 840 MB  synthetic F32
@@ -225,6 +234,12 @@ cmake -S ../llama.cpp -B ../llama.cpp/build-ts-on  -DCMAKE_BUILD_TYPE=Release \
 cmake --build ../llama.cpp/build-ts-on --target llama-bench
 
 # same with -DGGML_TOKENSCOPE=OFF into build-ts-off
+
+# The shared-library arm (F22). Visual Studio generator, so --build needs
+# --config Release; the default is Debug and it will silently give you one.
+cmake -S ../llama.cpp -B ../llama.cpp/build-ts-shared -DBUILD_SHARED_LIBS=ON \
+      -DGGML_TOKENSCOPE=ON -DLLAMA_BUILD_TESTS=OFF -DLLAMA_CURL=OFF
+cmake --build ../llama.cpp/build-ts-shared --config Release --target llama-bench
 
 python tools/make_tiny_model.py --llama-cpp ../llama.cpp -o ../models/mid.gguf \
        --layers 24 --embd 768 --heads 12 --heads-kv 4 --vocab 8192
@@ -328,10 +343,11 @@ the 8B is F19/F21) and added a new one at the top that did not exist before.
    unmeasured. Note F19 narrows where it matters: at 8B the heterogeneity
    penalty vanishes into the bandwidth wall, so this is a prefill and
    small-model fix, not a universal one.
-6. **Fix the shared-library build (F18).** Unchanged, still a blocker for
-   in-tree adoption, and the per-DLL-TLS-with-shared-registry option is still
-   the one I would try. **Re-measure level 3 overhead after**, and check the
-   GCC/ELF behaviour at the same time as item 2.
+6. ~~**Fix the shared-library build (F18).**~~ **Done in session 4 (F22).** What
+   is left of it: the shared build's **overhead has never been measured** (the
+   hot path is unchanged by inspection, but that is not a measurement), and the
+   GCC/ELF behaviour still needs checking alongside item 2. Both fold into
+   items 2 and 7 rather than standing on their own.
 7. **Re-measure overhead on a quiet machine.** The harness refused to certify
    twice in session 2 and nothing has changed. Every quoted overhead number is
    still the session-1 8-thread one.
@@ -431,6 +447,39 @@ Added by session 3:
   and broke `ts_selftest.cpp` mid-build. The rule stands: **use the Write or
   Edit tool for anything containing escapes.**
 
+Added by session 4:
+
+- **When two requirements conflict, check whether they are really about the same
+  object.** F18 stated a genuine incompatibility: the hot path needs a raw
+  thread-local, the registry needs one instance across DLLs, and MSVC will not
+  let one variable be both. Both halves were true and the conclusion did not
+  follow, because `ts_tls` is a *cache* and the registry-owned buffer is the
+  *state*. Nothing ever required the cache to be single-instance. The fix took
+  an hour; the framing was the whole problem, and it sat unexamined for a
+  session because "genuine incompatibility" reads like a finished thought.
+- **The dangerous part of a small change is what it makes load-bearing.** The
+  edit is ~40 lines. It also silently turned `ts_thread_init` into something
+  that must be idempotent, made every caller responsible for writing the result
+  back, and — worst — would have made level 2 record *no node data at all* in
+  shared builds, with a valid trace, zero drops and no warning. That last one
+  was found by asking "who initializes this, and in which module?", not by any
+  test. **After changing where state lives, re-derive the initialization order
+  for every reader of it.**
+- **Reproduce the failure before fixing it.** One command, and it converts "it
+  builds" from a hope into evidence. The `LNK1120` is in F22 for the same
+  reason.
+- **Verify a shared-state fix by counting, not by looking.** The trace says four
+  worker threads at `-t 4`. Had the DLLs each built their own per-thread state,
+  it would say eight — the records would all still be present, the trace would
+  still parse, and every per-thread percentage would be computed on half a
+  thread. A count that *could* have come out wrong is worth more than a table
+  that looks right.
+- **`Select-String` on a here-string of Python is not worth it.** Inline Python
+  through the PowerShell tool mangled quotes twice. The session-2 rule
+  generalizes: **anything with escapes or quoting goes in a file via the Write
+  tool**, then gets run. This applies to PowerShell here-strings as much as bash
+  heredocs.
+
 ---
 
 ## 7. Numbers to quote (all reproducible from the committed code)
@@ -442,6 +491,7 @@ Added by session 3:
 | Per-scope cost | 52.8 ns (2 clock reads + 1 store) | `ts_selftest` |
 | Level 3 overhead | +0.67% [+0.12, +1.67] | [`02`](02-overhead-methodology.md) |
 | Zero-overhead-when-off | 0 symbols, 864-byte archive | [`02`](02-overhead-methodology.md) §2 |
+| Shared-library build | links and traces correctly on MSVC; overhead unmeasured | [`FINDINGS`](FINDINGS.md) F22 |
 | Barrier wait | 11.2% of worker thread time | [`FINDINGS`](FINDINGS.md) F6 |
 | ...of which arrival imbalance | 83.7% (spin-up excluded) | [`FINDINGS`](FINDINGS.md) F9 |
 | Barriers behind single-threaded nodes | 120 of 412 per token | [`FINDINGS`](FINDINGS.md) F9 |

@@ -2144,6 +2144,154 @@ nothing else needs to be known:
   projection is named there as well, not just on Qwen3.
 ---
 
+## F22 — The shared-library build works, because the thread-local was never the thing that had to be shared
+
+**Session 4, 2026-09-07.** [F18](#f18--the-shared-library-build-does-not-link-and-msvc-says-the-obvious-fix-is-illegal)
+left `BUILD_SHARED_LIBS=ON` broken with two candidate fixes and neither
+implemented. Option 2 is now implemented and measured. The configuration builds,
+links, runs, and produces a trace containing records from two different DLLs.
+
+Reproduced first, so that "it links now" means something:
+
+```
+ggml-cpu.c.obj : error LNK2019: unresolved external symbol ts_tls
+                 referenced in function ggml_graph_compute_thread
+ggml-cpu.dll   : fatal error LNK1120: 1 unresolved externals
+```
+
+### The reframing that makes it easy
+
+F18 stated the conflict as a genuine incompatibility, and it is one *for a
+single variable*: `docs/01` needs `ts_tls` to be a raw `__declspec(thread)`
+pointer with a constant initializer, so that reading it does not go through
+MSVC's `__dyn_tls_on_demand_init` guard; the registry needs one instance visible
+to `ggml-cpu` and to `llama`. MSVC will not export thread-storage data, so those
+cannot both hold.
+
+They do not have to. **`ts_tls` is a cache, not state.** The state is the
+`ts_buffer`, which the registry owns and which `ts_flush` reaches by walking the
+registry rather than by walking any thread-local. The only two values `ts_tls`
+can ever hold are null and the address of this thread's one buffer. So the
+number of copies of `ts_tls` in the process does not matter at all — what
+matters is that they all resolve to the same buffer.
+
+So each module compiles its own `ts_tls` (a `static` in the header) and fills it
+by calling the exported `ts_thread_init()`. Two modules, two pointers, one
+buffer. The hot path is byte-for-byte the design `docs/01` argued for: one load
+of a plain thread-local, no guard, no cross-DLL call. Option 1's exported
+accessor would have put a non-inlinable cross-DLL call on the hottest path in
+the project, executed twice per node per thread at level 3, which is why F18
+preferred option 2 and why that preference was right.
+
+The cost moves to thread setup, and amounts to one extra cold call per
+translation unit per thread.
+
+### Three consequences that had to be handled, two of them silent
+
+The change is small. What it makes load-bearing is not.
+
+**1. `ts_thread_init()` has to become idempotent per thread.** Every module
+calls it once, and every module has to be handed the *same* buffer. Without
+that, N modules produce N `thread_state`s per thread — N sets of records under N
+trace thread ids, and N times the memory budget consumed. A thread-local in
+`tokenscope.cpp` holds the owning state; that TU is compiled into exactly one
+module, so unlike the header's cache it genuinely is one slot per thread per
+process.
+
+**2. Every caller must write the result back.** `ts_thread_init()` can only
+assign to its own module's copy of the cache. A caller that ignored the return
+value would call it again on every event — correct, but a cross-DLL call on the
+hot path, i.e. option 1 by accident.
+
+**3. `ts_acc` would have silently recorded nothing at level 2.** This is the one
+worth writing down. It used to bail on a null `ts_tls`:
+
+```c
+struct ts_buffer * b = ts_tls;
+if (b == 0 || node_n >= b->acc_n) return;
+```
+
+That was correct when `ts_tls` was one symbol, because `ts_thread_prepare()` set
+it before the node loop began. With a per-module cache, `ts_thread_prepare()`
+runs in `ggml-base` and fills *ggml-base's* copy; `ts_acc` runs in `ggml-cpu`
+and reads a copy that is still null on the first node. Level 2 would have
+produced a trace, with host scopes, zero drops, no warning, and no node data —
+failing in exactly the shape this project has twice decided is the worst
+available failure. Caught by reasoning about the initialization order rather
+than by a test, and then tested.
+
+**And `ts_depth` moved into `ts_buffer`.** It hit the same C2492 and had to
+leave the header either way. Per-module would have made it report each module's
+nesting rather than the thread's — host scopes already nest across *translation
+units* today (`kv.find-slot` inside `kv.slot-search`, `graph-compute` inside
+`decode`) and would nest across modules the moment ggml grows a host scope. The
+buffer is the thing that is genuinely per-thread and genuinely shared, so the
+counter belongs in it.
+
+### What was verified
+
+| Check | Result |
+|---|---|
+| `ggml-cpu.dll` links, `BUILD_SHARED_LIBS=ON` | yes, was `LNK1120` |
+| Full `llama-bench.exe` links against 5 DLLs | yes |
+| Level-3 trace from the shared build | 442 KB, 17 tokens, **0 dropped** |
+| Host scopes from `llama.dll` present | `kv.slot-search`, `batch-init`, `ubatch`, … |
+| Node scopes from `ggml-cpu.dll` present | `ffn` 71.1%, `barrier` 9.0%, `attn.qkv` 10.4% |
+| Worker threads in the trace | **4, not 8** — see below |
+| Level 2 in the shared build | host scopes, 100.0% attributed, 0 dropped |
+| Recorded scope depths vs pre-change static build | **identical**, all 13 scopes |
+| Static build event count / thread count | identical (205,143 events, 161 threads) |
+| Self-test | passes, 52.6 ns/scope against a documented 52.8 |
+| Disabled build | still 0 symbols, still an 864-byte archive |
+| Barrier decomposition on a fresh level-3 trace | every barrier matched |
+
+**The thread count is the real evidence.** `llama-bench -t 4` with the fix
+produces a trace with four worker threads. Had the two DLLs each built their own
+`thread_state` per thread — the failure mode consequence 1 exists to prevent —
+it would say eight, with the work split across pairs of ids and every per-thread
+percentage in the analyzer computed on half a thread. It says four.
+
+The phase mix from the shared build (`ffn` 71.1%, `attn.qkv` 10.4%,
+`attn.out` 6.0%) matches the static build on the same model, which is the
+second check: the records are not merely present, they are attributed to the
+same places.
+
+### Caveats
+
+- **MSVC only, again.** GCC and Clang were never the ones complaining — F18's
+  C2492 is an MSVC diagnostic and the ELF thread-local story is different. The
+  change should be harmless there (a `static __thread` in a header is ordinary),
+  but "should be" is doing work in that sentence and CI is the only thing that
+  will check it. This does not close the Linux gap; it removes one thing that
+  was hiding behind it.
+- **No overhead re-measurement.** The hot path is unchanged by inspection — same
+  instruction sequence, one load of a thread-local — but the shared build has
+  never had its overhead measured at all, and the harness has declined to
+  certify the static number twice already (docs/02). Unmeasured, and quoting the
+  static figure for a shared build would not be justified.
+- One extra cold `ts_thread_init()` call per translation unit per thread, and a
+  pointer-sized TLS slot per TU. Neither is on a hot path.
+- The scheme is robust to COMDAT folding, which is the obvious objection: an
+  inline function touching an internal-linkage variable may leave several TUs
+  sharing one slot. That is fine here for the same reason the whole approach
+  works — the slot is a cache whose only possible values are null or this
+  thread's buffer, so folding changes the number of cold init calls and nothing
+  observable.
+- Not tested with `GGML_BACKEND_DL`, where backends are loaded at runtime rather
+  than linked. That is a third case and neither F18 nor this covers it.
+
+### What this changes about the upstream story
+
+[`docs/03`](03-upstream-issue-draft.md) asks whether `ggml-base` is the right
+home for the registry, and says "I'd rather not force `BUILD_SHARED_LIBS=OFF` on
+anyone". F18 answered that the design did force it. It does not any more, on
+MSVC, which removes a known blocker from the instrumentation proposal rather
+than a hypothetical one. The answer to the question is now: yes, `ggml-base` is
+the right home, and the thing that has to live there is the registry — not the
+thread-local that points into it.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:

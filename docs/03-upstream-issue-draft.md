@@ -19,8 +19,11 @@ revised as the data improves.
       survive, which is worth saying in the issue rather than hiding
 - [ ] At least one Perfetto screenshot
 - [ ] Tested on Linux/GCC as well as Windows/MSVC
-- [ ] `BUILD_SHARED_LIBS=ON` linking (F18: currently broken, and llama.cpp ships
-      shared libraries, so this is a blocker rather than a nice-to-have)
+- [x] `BUILD_SHARED_LIBS=ON` linking — F18 found it broken, F22 fixed it. Each
+      module caches its own thread-local and they all resolve to the one
+      registry-owned buffer, so the hot path keeps its single unguarded load.
+      **MSVC only**; GCC and Clang are untested and fold into the Linux gap
+      below
 
 **The Linux gap is the one that should block filing.** Every number below comes
 from the non-OpenMP barrier path, and `GGML_USE_OPENMP` is the default on Linux
@@ -225,15 +228,19 @@ scrutiny; everything else is in cold code.
 
 1. Is optional profiling instrumentation something you'd want in-tree, or is
    this better as an out-of-tree patch set that people apply themselves?
-2. **Known limitation, and I'd value guidance here.** `BUILD_SHARED_LIBS=ON`
-   currently does not link: `ggml-cpu.dll` needs `ts_tls`, the thread-local
-   buffer pointer read on the hot path, and MSVC refuses to `dllexport` a
-   `__declspec(thread)` variable at all (C2492). The two fixes I can see are an
-   exported accessor, which puts a cross-DLL call on the hottest path in the
-   project, or giving each consumer its own TLS variable pointing at
-   registry-owned buffers, which keeps the hot path intact and moves the cost to
-   thread setup. I lean towards the second. Is `ggml-base` the right home for
-   the shared registry at all, or is there a convention here I should follow?
+2. **`BUILD_SHARED_LIBS=ON` works, and I'd value a sanity check on how.** It did
+   not link at first: `ggml-cpu.dll` needs `ts_tls`, the thread-local buffer
+   pointer read on the hot path, and MSVC refuses to `dllexport` a
+   `__declspec(thread)` variable at all (C2492). Rather than an exported
+   accessor — which would put a cross-DLL call on the hottest loop in the
+   project — each module now compiles its own copy of that pointer and fills it
+   from the exported `ts_thread_init()`, which hands back the one registry-owned
+   buffer for the calling thread. The pointer is only a cache; the buffer is the
+   state, and `ggml-base` owns it. The hot path keeps its single unguarded load.
+   **Measured on MSVC only.** Is `ggml-base` the right home for the shared
+   registry, or is there a convention here I should follow? And is there
+   anything about `GGML_BACKEND_DL`, where backends are loaded at runtime, that
+   this would break?
 3. Would you want the node-level scopes in `ggml_graph_compute_thread` at all?
    That's the hottest loop in the project and I understand the reluctance —
    though when compiled out there is nothing there, and I have the numbers for
