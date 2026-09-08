@@ -440,6 +440,7 @@ Built in the open. `docs/` is the engineering log, in order — and
 - [x] [A defect found in llama.cpp's graph naming](docs/FINDINGS.md), fixed and measured
 - [x] [Shared-library builds](docs/FINDINGS.md) — broken in F18, fixed in F22, now tested on three platforms
 - [x] [ggml's matmul already load-balances, until a thread count takes it away](docs/FINDINGS.md)
+- [x] [A one-line ggml change worth +1.95% decode, measured and certified](docs/FINDINGS.md)
 - [ ] Linux/GCC
 - [ ] [Upstream issue](docs/03-upstream-issue-draft.md), then a PR
 
@@ -452,7 +453,7 @@ src/tokenscope.cpp      cold path: arena, interning, graph epochs, Chrome Trace 
 src/ts_selftest.cpp     8-thread self-test, layout assertions, per-scope cost
 src/ts_dllmod.cpp       a second module for the shared-library test, nothing more
 src/ts_dlltest.cpp      two binaries, one registry — the F18 regression test
-patches/                01: the instrumentation. 02: the F20 naming fix, standalone
+patches/                01: the instrumentation. 02: F20 naming. 03: the F24 chunking threshold
 examples/               committed reference traces (level 1 and level 3), used by CI
 scripts/bootstrap.py    clone at the pin, copy sources, apply patches
 tools/trace_analyze.py  summary · per-token · outliers with cause · diff

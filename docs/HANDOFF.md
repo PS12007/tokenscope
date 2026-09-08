@@ -15,6 +15,14 @@ but the threshold contains `nth`, so **adding threads can turn it off**. Twelve
 runs at each of six points, two models, with a cross-model control at a fixed
 thread count; two of the comparisons have non-overlapping ranges.
 
+Then **F24 acted on it**: one line, `nth * 4` -> `nth * 2` in `mul_mat`,
+measured at **+1.95% [+1.59, +2.35] on decode, certified** by
+`bench_overhead.py`'s own bootstrap over 20 interleaved rounds. That harness
+has declined to certify six times across four sessions; this is the first
+thing it has ever passed. Prefill is the control and stays uncertified, which
+is what makes the decode number believable. `patches/03-mulmat-chunk-threshold.patch`,
+**not applied to the tree** and deliberately kept out of `01-instrument.patch`.
+
 **Read F23's reproducibility section even if you skip the rest.** Getting there
 took three wrong turns, each caused by trusting too few runs: a single trace
 inverted the conclusion, a six-run median invented a "28-thread anomaly" that
@@ -302,6 +310,7 @@ python tools/trace_analyze.py T.json --barriers 12   # NEW: imbalance vs release
 python tools/trace_analyze.py A.json --diff B.json   # did my change help, and where
 python tools/mulmat_chunking.py M.gguf -t 8,16,28    # NEW: matmul partitioning mode
 python tools/imbalance_repeat.py -m M.gguf -t 8,16 -n 12 --ratio ffn_up/ffn_out
+python tools/mulmat_chunking.py M.gguf -t 16 --mult 2   # model a PATCHED build
 ```
 
 `--barriers` needs `TOKENSCOPE_LEVEL=3`. It matches the k-th barrier across
@@ -344,11 +353,17 @@ the 8B is F19/F21) and added a new one at the top that did not exist before.
 
 1. **File the F20 naming issue.** First because it is the only piece of this
    work that is *not* blocked on Linux, and the smallest thing a maintainer
-   could say yes to. **The issue text is written and ready to paste** — see
-   [`03`](03-upstream-issue-draft.md), "Ready to paste: the F20 issue". It was
-   deliberately *not* filed: it goes out publicly under the repo owner's name,
-   and llama.cpp's `AGENTS.md` asks that the contributor be able to defend the
-   change unaided, which is a bar for a person and not for a session. The draft
+   could say yes to. **The evidence is assembled; the prose has to be yours** — see
+   [`03`](03-upstream-issue-draft.md), "Evidence pack for the F20 issue".
+   A first attempt at this wrote a finished issue body, which llama.cpp's
+   `AGENTS.md` forbids in terms: an agent must never write a PR description, a
+   comment, or a reviewer response, and `gh issue create` is listed among the
+   things not to run on a user's behalf. The measurements, file references and
+   diff are all there; write it short and in your own words, and note the house
+   style is ASCII-only with no em-dashes. The deeper reason is the same one
+   AGENTS.md gives: the contributor has to be able to explain the change to a
+   reviewer without AI assistance, and that is a bar for a person, not a
+   session. The draft
    opens with three things to re-check first, because all three go stale: that
    `build_attn` still has seven overloads and still does not name the output
    projection at current `master` (the measurement is pinned at `4d91760`), that
@@ -390,9 +405,20 @@ the 8B is F19/F21) and added a new one at the top that did not exist before.
    and 28 — and nothing reports it. The experiment is to lower the multiplier or
    make `chunk_size` adapt to `nth`, and see whether the flip stops costing.
    `tools/mulmat_chunking.py` says which matmuls flip and where, from the GGUF
-   alone. **Still do it before proposing anything upstream** — F15 remains what
-   happens when a plausible fix goes out unmeasured — and **budget n≥12 runs per
-   arm**, because on this evidence six cannot tell a 3× effect from noise.
+   alone.
+
+   **Session 4 did this (F24).** `nth * 4` -> `nth * 2` in `mul_mat` alone is
+   **+1.95% [+1.59, +2.35] on decode, certified**, with prefill as an
+   uncertified control. `patches/03-mulmat-chunk-threshold.patch` holds it and is
+   **not applied to the tree**. What is left on this item is no longer "measure
+   it" but "decide whether to raise it", and the honest framing is a question
+   about a constant backed by a measurement, not a patch claiming to know better
+   — there is no NUMA hardware here and NUMA is what the constant was tuned for
+   (PR #6915). `mul_mat_id` carries the identical threshold, is the MoE path, and
+   is untested and unchanged.
+
+   Anything further here still needs **n≥12 per arm**, because on this evidence
+   six cannot tell a 3× effect from noise.
 
    Two things F23 leaves open. The ops that are *not* matmul still use the flat
    `dr = (nr + nth - 1)/nth` that F14's 2.88× applies to, and they are where
@@ -542,6 +568,23 @@ Added by session 4:
   quotes: `python -c "...markdown with \`code\` spans..."` silently deleted two
   spans from HANDOFF and reported success, exactly the shape of the session-2
   backslash trap. Markdown is full of backticks. Use the Edit tool for it.
+- **An A/B where one arm is a binary you saved earlier is not an A/B.** F24's
+  first throughput run said **+2.71% with non-overlapping ranges** and was wrong.
+  `build-ts-off` had last been built on 5 Sept; `llama-graph.cpp` changed on
+  6 Sept for the F20 naming patch. So the "stock" binary predated a change the
+  patched one contained, and the arms differed by more than the line under test.
+  Rebuilding both from one tree took it to +1.49% at n=12 and +1.95% at n=20.
+  Nothing looked wrong — the clean separation made it *more* convincing. This
+  project already knew to interleave arms in **time**; it had not written down
+  that they have to be matched in **version**. Check binary timestamps against
+  `git status` before trusting any comparison.
+- **Read the target project's `AGENTS.md` before writing anything aimed at it.**
+  llama.cpp's forbids an agent writing PR descriptions, issue comments or
+  reviewer responses, non-overridably, and lists `gh issue create` among things
+  not to run for a user. Session 4 wrote a finished, paste-ready issue body for
+  F20 before reading it, and had to reframe the whole section as an evidence
+  pack. The measurements were the valuable part anyway; the prose was the part
+  that was not wanted. `docs/03` now leads with that rule.
 - **One trace is one draw, and six are not many more.** This cost three wrong
   turns in one session. A single trace inverted F23's conclusion. Six runs then
   produced a "28-thread anomaly" that does not exist — twelve runs give 1.041
@@ -579,6 +622,8 @@ Added by session 4:
 | Shared-library build | links and traces correctly on MSVC; overhead unmeasured | [`FINDINGS`](FINDINGS.md) F22 |
 | Matmul arrival imbalance, work-stealing vs equal-slice | **0.34-0.56x** against 0.94-1.51; two comparisons with non-overlapping ranges, n=12 per arm | [`FINDINGS`](FINDINGS.md) F23 |
 | Per-node imbalance, spread over 12 identical runs | up to **8.5x** at 8 threads, 1.3-1.5x at 16 | [`FINDINGS`](FINDINGS.md) F23 |
+| Decode speedup from `nth*4` -> `nth*2` in mul_mat | **+1.95% [+1.59, +2.35]**, certified, n=20 interleaved | [`FINDINGS`](FINDINGS.md) F24 |
+| ...same patch on prefill (control) | -0.81% [-2.44, +0.35], **not** certified | [`FINDINGS`](FINDINGS.md) F24 |
 | Barrier wait | 11.2% of worker thread time | [`FINDINGS`](FINDINGS.md) F6 |
 | ...of which arrival imbalance | 83.7% (spin-up excluded) | [`FINDINGS`](FINDINGS.md) F9 |
 | Barriers behind single-threaded nodes | 120 of 412 per token | [`FINDINGS`](FINDINGS.md) F9 |

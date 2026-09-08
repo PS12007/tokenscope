@@ -2873,6 +2873,148 @@ being wrong, and gets reported as one.
 
 ---
 
+## F24 — One line, +1.95% decode, and the first certified speedup in this project
+
+**Session 4, 2026-09-07.** Testing [`P24`](#p24--lowering-ggmls-chunking-threshold-predictions-and-the-protocol-before-the-build),
+committed before the patched binary existed.
+
+**P24.1 holds, with non-overlapping ranges. P24.3 holds. P24.2 splits: it got the
+magnitude right and the certifiability wrong — I predicted "not measurable" and
+the benchmark harness certified it.** That harness has declined to certify six
+times across four sessions. This is the first thing it has ever certified.
+
+```
+mul_mat: -    if (nchunk0 * nchunk1 < nth * 4 || ggml_is_numa()) {
+         +    if (nchunk0 * nchunk1 < nth * 2 || ggml_is_numa()) {
+```
+
+`patches/03-mulmat-chunk-threshold.patch`. `mul_mat_id` carries the identical
+threshold and is deliberately untouched — it is the MoE path and no MoE model was
+available, and shipping an untested behaviour change is what F15 exists to
+record.
+
+### P24.1 — the mode flips, and the imbalance follows it
+
+`mid.gguf`, 16 threads, n=12 per arm, both arms level-3 instrumented:
+
+| | `ffn_up` imb/work | `ffn_up`/`ffn_down` ratio | range |
+|---|---|---|---|
+| stock, `nth*4` (`ffn_up` static) | 0.210 | **0.967** | 0.685 – 1.358 |
+| patched, `nth*2` (`ffn_up` dynamic) | **0.087** | **0.446** | 0.185 – 0.631 |
+
+Predicted below 0.12 and below 0.6. Measured 0.087 and 0.446, and **the ranges
+do not overlap**.
+
+This is the third independent way F23's claim has now been tested, and the only
+one that moves the mode by a source change rather than by a thread count. F23 had
+to vary `nth`, which varies other things too; here `nth` is fixed at 16, the
+model is fixed, the machine is fixed, and one constant in one line differs.
+
+It landed stronger than P24 expected. The prediction warned that 48 chunks over
+16 threads is only 3 per thread, so stealing could only redistribute in thirds of
+a share, and that 0.6–0.8 would be the honest expectation. It reached 0.446 —
+close to the 0.338 seen where chunks were plentiful. **Three chunks per thread
+recovers most of the benefit**, which is itself the useful engineering fact,
+because it says the threshold does not need to be large to work.
+
+### P24.3 — the controls held
+
+`ffn_down` and `attn_output` are static in both arms and should not move.
+`attn_out` went 0.222 → 0.198, inside its stock range. `ffn_down` went 0.214 →
+0.204, and the prediction named the stock *range* 0.205–0.291, so the patched
+median lands **0.001 below the stated floor**. That is reported rather than
+rounded away, and it is not meaningful: the two ranges (0.205–0.291 and
+0.182–0.293) overlap almost entirely.
+
+### P24.2 — right about the size, wrong about whether it would show
+
+Both arms **uninstrumented** (`build-ts-off`), interleaved within one session
+with the leading arm alternating each round, 20 rounds per arm, three
+`llama-bench` repetitions each. CI from `bench_overhead.py`'s own
+`bootstrap_ratio_ci`, so this is the same standard every overhead number in this
+repo is held to:
+
+| workload | stock | patched | change | 95% CI | verdict |
+|---|---|---|---|---|---|
+| **tg64** (decode) | 40.17 tok/s | 40.96 tok/s | **+1.95%** | **[+1.59, +2.35]** | **certified** |
+| pp64 (prefill, control) | 739.94 tok/s | 733.96 tok/s | −0.81% | [−2.44, +0.35] | not certified |
+
+Predicted "under 2%, and the honest report is *not measurable*". The first half
+is right — 1.95% is under 2%. The second half is wrong: the interval excludes
+zero.
+
+**The prefill row is why the decode row is believable.** Prefill has `nr1 = 64`,
+so `chunk_size` is 16 and there are 768 chunks — far above the threshold in
+*both* arms, so the patch cannot reach it. Same harness, same session, same
+machine, same binaries: the arm that should move moves and certifies, the arm
+that should not move does not and does not certify. A build artifact or a
+thermal drift would not respect that distinction.
+
+Why I expected a null and did not get one, since the reasoning was not stupid:
+F9 bounded the elementwise-barrier prize at 1.34% of graph wall time, and F15
+removed 10.6% of barriers for nothing. But both of those are about *removing
+barriers*. This does not remove any barrier — it changes **who does the work
+before each one**, so it moves the arrival time of the slowest thread rather
+than the count of things to wait at. Those are different quantities and I applied
+the wrong prior. F15's lesson was "the barriers you can cheaply remove are the
+ones nobody was waiting at"; the corollary, which this is, is that the barriers
+people *are* waiting at are worth attacking from the work side.
+
+### The confound that would have inflated this by 1.2 points
+
+The first throughput run reported **+2.71%, with non-overlapping ranges**, and
+was wrong.
+
+`build-ts-off` had last been built on 5 September. `src/llama-graph.cpp` was
+modified on 6 September by session 3's F20 naming patch. So the binary saved as
+"stock" predated a change the patched binary contained, and the two arms differed
+by more than the line under test. Rebuilding both from the identical tree took
+the effect from +2.71% to +1.49% at n=12, and +1.95% at n=20.
+
+Caught by checking file timestamps against the binary's, not by anything going
+wrong. Nothing about the run looked suspicious — the ranges separated cleanly,
+which if anything made it *more* convincing.
+
+**An A/B where one arm is a binary you saved earlier is not an A/B.** Build both
+arms from the same tree in the same session, or the thing you are measuring
+includes every commit in between. This project already knew to interleave arms in
+time; it had not written down that the arms have to be interleaved in *version*
+too.
+
+### What this is and is not
+
+It **is**: evidence that ggml's chunking threshold is load-bearing at ordinary
+thread counts, that it is reachable by a user simply adding threads, and that
+moving it is worth about 2% of decode on one machine and one model — with the
+mechanism visible in the trace rather than inferred from the throughput.
+
+It is **not** an argument that `2` is the right constant. The comment being
+edited says the `nth * 4` form was tuned empirically and that NUMA testing
+disagreed with theory (PR #6915), and there is no NUMA hardware here to check
+that against. The honest upstream framing is a question about a constant, backed
+by a measurement, not a patch that claims to know better.
+
+### Caveats
+
+- **One machine** (i7-14700HX, 8 P + 12 E), **one thread count** (16), **one
+  model** for the throughput arm (`mid.gguf`, F32, 220 M). The imbalance result
+  has two models behind it via F23; the throughput result has one.
+- 16 threads is where `mid.gguf` flips. A user at 8 threads on this model sees
+  none of this, and a user at 28 sees `ffn_up` static in both arms. **The size of
+  the effect depends on where your model's shapes sit relative to your thread
+  count** — which is the finding, but it also means +1.95% is not a number to
+  quote as ggml's headroom.
+- No NUMA hardware, which is the case the original constant was tuned for and
+  the one most likely to regress.
+- `mul_mat_id` untested and unchanged.
+- Prefill is a control here, not a result. It says the patch does not *hurt*
+  prefill on this model; at n=20 its interval still spans −2.44 to +0.35.
+- The decode workload is `-n 64` at batch 1. Longer generations, other batch
+  sizes and other architectures are untested.
+
+---
+
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:

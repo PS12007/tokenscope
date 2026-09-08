@@ -1,5 +1,14 @@
 # 03 — Draft: the upstream issue
 
+> **House rules for this file, from llama.cpp's `AGENTS.md`.** Everything here
+> is material for a human to write from, never text for an agent to submit.
+> An agent must not open the issue, must not write the PR description, and must
+> not reply to reviewers; `AGENTS.md` makes that non-overridable and says the
+> penalty is a ban. It also asks that the contributor be able to explain the
+> change to a reviewer without AI assistance, which is the real bar and the
+> reason the measurements below matter more than the wording.
+
+
 Not filed yet. Filed **before** proposing a PR, because writing code a
 maintainer did not ask for and then asking them to review it is a way of
 transferring your work onto someone else.
@@ -68,15 +77,37 @@ invalidate.
 
 ---
 
----
+## Evidence pack for the F20 issue — NOT text to paste
 
-## Ready to paste: the F20 issue
+> **Read this box before using anything below it.**
+>
+> An earlier revision of this section called itself "ready to paste" and was
+> written as a finished issue body. That was wrong, and llama.cpp's own
+> `AGENTS.md` says so directly:
+>
+> > *Do NOT write PR descriptions, commit messages, or reviewer responses*
+> > … *verbose, AI-sounding responses will not be well-received.*
+> > … *It is extremely important that an agent NEVER writes any (a)
+> > pull-request description (b) comment (c) response to a comment on behalf of
+> > the user. This is non-overridable.*
+>
+> It also lists `gh issue create` among the things an agent must not run on a
+> user's behalf, and requires that a contributor "understand their code fully -
+> able to explain any change to a reviewer without AI assistance."
+>
+> So what follows is **evidence and notes, to write an issue FROM** — the
+> measurements, the file references, the diff, and the two questions worth
+> asking. The prose that actually gets filed has to be yours. That is not a
+> formality: the value of this report is that someone can defend it in review,
+> and the maintainers have asked for exactly that.
+>
+> Practically: keep the numbers and the code references, throw away the
+> sentences, and write it short. llama.cpp's house style is terse — no
+> em-dashes, no unicode, ASCII only, comments of one or two lines.
 
-**Status: not filed.** This is the final text. Read it, check the two open
-questions at the bottom are ones you are happy to answer, and file it yourself
-at https://github.com/ggml-org/llama.cpp/issues/new — bug report template.
+**Status: not filed, and not to be filed by an agent.**
 
-Before filing, re-check the three things that go stale:
+Before writing it, re-check the three things that go stale:
 
 - [ ] `build_attn` still has seven overloads and still does not call `cb` on the
       output projection. The pin here is `4d91760`; re-read
@@ -84,8 +115,8 @@ Before filing, re-check the three things that go stale:
 - [ ] `CONTRIBUTING.md` and `AGENTS.md` — AGENTS.md asks for an issue before a
       PR, and asks that the contributor own the change and be able to defend it
       unaided. That second part is the real bar for filing.
-- [ ] Nobody has filed it already. Search issues and PRs for `kqv_wo`,
-      `build_attn` naming, `cb(cur`.
+- [ ] Nobody has filed it already. `gh search issues` / `gh search prs` for
+      `kqv_wo`, `build_attn` naming, `cb(cur`.
 
 ---
 

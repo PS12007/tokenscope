@@ -1,0 +1,54 @@
+From: tokenscope — https://github.com/PS12007/tokenscope
+Subject: [RFC] mul_mat: lower the chunking threshold from nth*4 to nth*2
+
+Measured in FINDINGS F24. NOT APPLIED to the tree by bootstrap.py, and
+deliberately kept out of 01-instrument.patch even though it touches a file in
+bootstrap.py's TOUCHED list — this is a behaviour change to ggml's scheduler and
+has nothing to do with the instrumentation. Apply it by hand to reproduce F24,
+and revert it before regenerating 01:
+
+    git -C ../llama.cpp apply ../tokenscope/patches/03-mulmat-chunk-threshold.patch
+    ... measure ...
+    git -C ../llama.cpp apply -R ../tokenscope/patches/03-mulmat-chunk-threshold.patch
+
+What it does: `ggml_compute_forward_mul_mat` chooses between work-stealing
+chunks (threads pull from a shared atomic counter, so a slow core takes fewer)
+and a static one-chunk-per-thread split. The threshold is `nth * 4`, and because
+it contains `nth`, adding threads can push a matmul out of the self-balancing
+mode. On a 24-layer F32 model at 16 threads that happens to `ffn_up` and
+`ffn_gate` — the two largest nodes in the graph.
+
+Measured on that model at 16 threads, i7-14700HX, Windows/MSVC:
+
+  - arrival imbalance per unit work for `ffn_up` falls 0.210 -> 0.087, and the
+    `ffn_up`/`ffn_down` ratio falls 0.967 -> 0.446, with non-overlapping ranges
+    over 12 runs per arm
+  - decode throughput +1.95% [+1.59, +2.35], 95% bootstrap CI over 20
+    interleaved rounds per arm, both arms uninstrumented and differing only in
+    this line
+  - prefill throughput -0.81% [-2.44, +0.35], which contains zero — as expected,
+    since prefill is already above the threshold in both arms and so is a
+    control rather than a second result
+
+`ggml_compute_forward_mul_mat_id` carries the identical threshold at the same
+file's line ~1698 and is deliberately NOT changed: it is the MoE path, no MoE
+model was available to test it, and shipping an untested behaviour change is the
+mistake FINDINGS F15 exists to record.
+
+Caveats a reviewer should have: one machine, one thread count, two small dense
+models, and no NUMA hardware — and the comment being edited says the `nth * 4`
+form was tuned empirically on NUMA (PR #6915), which is exactly the case that
+cannot be checked here. `2` is not argued to be the right constant; the finding
+is that the constant is load-bearing and reachable by ordinary thread counts.
+
+--- a/ggml/src/ggml-cpu/ggml-cpu.c
++++ b/ggml/src/ggml-cpu/ggml-cpu.c
+@@ -1419,7 +1419,7 @@
+     // If the chunking is poor for the number of threads on this setup, scrap the whole plan.  Re-chunk it by thread.
+     //   Also, chunking by thread was measured to have perform better on NUMA systems.  See https://github.com/ggml-org/llama.cpp/pull/6915
+     //   In theory, chunking should be just as useful on NUMA and non NUMA systems, but testing disagreed with that.
+-    if (nchunk0 * nchunk1 < nth * 4 || ggml_is_numa()) {
++    if (nchunk0 * nchunk1 < nth * 2 || ggml_is_numa()) {
+         // distribute the thread work across the inner or outer loop based on which one is larger
+         nchunk0 = nr0 > nr1 ? nth : 1; // parallelize by src0 rows
+         nchunk1 = nr0 > nr1 ? 1 : nth; // parallelize by src1 rows
