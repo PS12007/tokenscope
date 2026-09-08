@@ -459,6 +459,8 @@ tools/trace_analyze.py  summary · per-token · outliers with cause · diff
 tools/bench_overhead.py interleaved A/B/C arms, medians, bootstrap CIs
 tools/make_tiny_model.py synthesize a random-weight GGUF so tests need no network
 tools/model_bytes.py     per-phase weight bytes from a GGUF, to score the byte law
+tools/mulmat_chunking.py which matmuls ggml load-balances, and at which thread counts
+tools/imbalance_repeat.py N identical runs, because one trace is one draw (F23)
 docs/                   the engineering log
 ```
 

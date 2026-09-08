@@ -300,6 +300,8 @@ python tools/trace_analyze.py T.json --outliers 10   # slowest tokens, attribute
 python tools/trace_analyze.py T.json --layers 6      # per-layer thread time
 python tools/trace_analyze.py T.json --barriers 12   # NEW: imbalance vs release, per node
 python tools/trace_analyze.py A.json --diff B.json   # did my change help, and where
+python tools/mulmat_chunking.py M.gguf -t 8,16,28    # NEW: matmul partitioning mode
+python tools/imbalance_repeat.py -m M.gguf -t 8,16 -n 12 --ratio ffn_up/ffn_out
 ```
 
 `--barriers` needs `TOKENSCOPE_LEVEL=3`. It matches the k-th barrier across
