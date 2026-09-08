@@ -439,6 +439,7 @@ Built in the open. `docs/` is the engineering log, in order — and
 - [x] [An 8B model, and five of six predictions](docs/FINDINGS.md) — Qwen3-8B Q4_K_M
 - [x] [A defect found in llama.cpp's graph naming](docs/FINDINGS.md), fixed and measured
 - [x] [Shared-library builds](docs/FINDINGS.md) — broken in F18, fixed in F22, now tested on three platforms
+- [x] [ggml's matmul already load-balances, until a thread count takes it away](docs/FINDINGS.md)
 - [ ] Linux/GCC
 - [ ] [Upstream issue](docs/03-upstream-issue-draft.md), then a PR
 

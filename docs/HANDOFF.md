@@ -4,8 +4,20 @@ Updated during **session 4 (2026-09-07)**. Everything here is either a fact
 about the current tree or an explicit next step. Read this first when picking
 the project back up.
 
-**Session 4 so far.** Closed section 5 item 6: the shared-library build works
-(**F22**). F18 had called it a genuine incompatibility between the hot path's
+**Session 4 so far.** Two things. Closed section 5 item 6 — the shared-library
+build works (**F22**) — and then **re-scoped item 5 out from under itself
+(F23)**: item 5 assumed ggml gives every thread an equal share of rows, and for
+matmul that is only half true. Above `nchunk0 * nchunk1 >= nth * 4` threads
+steal chunks from an atomic counter, and a matmul in that mode carries about a
+third the arrival imbalance per unit work. So ggml already solves core
+heterogeneity for big matmuls, by a method that needs no model of core speed —
+but the threshold contains `nth`, so **adding threads can turn it off**. Six
+runs at each point, two models, with a cross-model control at a fixed thread
+count. The measurement also found that single-trace per-node imbalance varies by
+up to 6.3× between identical runs, which is worth knowing before quoting any of
+them.
+
+On F22 specifically: F18 had called it a genuine incompatibility between the hot path's
 raw thread-local and the registry's need for one instance across DLLs — both
 true, but `ts_tls` is a cache and the buffer is the state, so the cache never
 needed to be single-instance. Each module now keeps its own and they all resolve
@@ -343,13 +355,30 @@ the 8B is F19/F21) and added a new one at the top that did not exist before.
    property of the file and starts depending on the router. The law as stated
    would predict expert phases from *stored* bytes and should be **wrong** there,
    which makes it the most informative test available.
-5. **Proportional row assignment**, unchanged and still the largest change this
-   project has pointed at. ggml's `dr = (nr + nth - 1)/nth` gives every thread
-   the same row count; F14 measured P-cores at 2.88x E-cores. **Do this before
-   proposing it upstream** — F15 is what happens when a plausible fix goes out
-   unmeasured. Note F19 narrows where it matters: at 8B the heterogeneity
-   penalty vanishes into the bandwidth wall, so this is a prefill and
-   small-model fix, not a universal one.
+5. **The mul_mat chunking threshold — which is what item 5 turned into.**
+   Item 5 used to read "proportional row assignment", on the premise that ggml
+   hands every thread an equal share of rows. **F23 found that premise is only
+   half true**: `ggml_compute_forward_mul_mat` steals work from a shared atomic
+   counter whenever `nchunk0 * nchunk1 >= nth * 4`, and a matmul in that mode has
+   about **a third** the arrival imbalance per unit work of one that is not
+   (0.293–0.330 against 1.0, two models, six runs each). Work stealing needs no
+   model of core speed, so for large matmuls ggml already solves what
+   proportional assignment was going to solve, and solves it better.
+
+   What is left is sharper and much smaller. That threshold contains `nth`, so
+   **adding threads can turn the load balancer off** for a model's biggest
+   matmuls — on `mid.gguf` between 8 and 16 threads, on Qwen2.5-0.5B between 16
+   and 28 — and nothing reports it. The experiment is to lower the multiplier or
+   make `chunk_size` adapt to `nth`, and see whether the flip stops costing.
+   `tools/mulmat_chunking.py` says which matmuls flip and where, from the GGUF
+   alone. **Still do it before proposing anything upstream** — F15 remains what
+   happens when a plausible fix goes out unmeasured, and F23's own 28-thread row
+   does not fit its story yet.
+
+   Two things F23 leaves open and cheap: the 28-thread anomaly on `mid.gguf`
+   (test with `-C` masks for 20 threads, one per physical core), and the ops that
+   are *not* matmul, which do still use the flat `dr = (nr + nth - 1)/nth` that
+   F14's 2.88× applies to.
 6. ~~**Fix the shared-library build (F18).**~~ **Done in session 4 (F22).** What
    is left of it: the shared build's **overhead has never been measured** (the
    hot path is unchanged by inspection, but that is not a measurement), and the
@@ -485,7 +514,27 @@ Added by session 4:
   through the PowerShell tool mangled quotes twice. The session-2 rule
   generalizes: **anything with escapes or quoting goes in a file via the Write
   tool**, then gets run. This applies to PowerShell here-strings as much as bash
-  heredocs.
+  heredocs — and to *backticks*, which bash command-substitutes inside double
+  quotes: `python -c "...markdown with \`code\` spans..."` silently deleted two
+  spans from HANDOFF and reported success, exactly the shape of the session-2
+  backslash trap. Markdown is full of backticks. Use the Edit tool for it.
+- **One trace is one draw.** F23's whole conclusion inverted between the first
+  measurement and the sixth. A single trace said the effect did not exist; six
+  identical runs put the median a third of the way to the opposite conclusion,
+  and the two single traces were outliers in *opposite* directions. Per-node
+  imbalance varies by up to 6.3× run to run at 8 threads. This project already
+  knew not to trust one throughput number — `bench_overhead.py` exists for
+  exactly that — and then trusted one *trace-derived ratio* for a whole session
+  anyway. **The same discipline has to apply to numbers read out of traces.**
+- **Predict ratios against a control, not levels.** P23.1 predicted a number
+  would rise, in a regime where every comparable number also rose; it held and
+  meant almost nothing. P23.2 predicted a ratio against a node that did not
+  change mode, and that one carried the entire finding. When drafting a
+  prediction, ask what else moves at the same time and divide by it.
+- **Check the instrument can return the quantity you are predicting.** P23.3
+  named `lm_head` as its control. `--barriers` matches a node to the barrier
+  *after* it, and `lm_head` is the last node of the graph, so the quantity does
+  not exist for it. That is a cheaper check than the measurement it wasted.
 
 ---
 
@@ -499,6 +548,8 @@ Added by session 4:
 | Level 3 overhead | +0.67% [+0.12, +1.67] | [`02`](02-overhead-methodology.md) |
 | Zero-overhead-when-off | 0 symbols, 864-byte archive | [`02`](02-overhead-methodology.md) §2 |
 | Shared-library build | links and traces correctly on MSVC; overhead unmeasured | [`FINDINGS`](FINDINGS.md) F22 |
+| Matmul arrival imbalance, work-stealing vs equal-slice | **0.29-0.33x**, two models, 6 runs each | [`FINDINGS`](FINDINGS.md) F23 |
+| Per-node imbalance, spread over 6 identical runs | up to **6.3x** at 8 threads, 1.3x at 16 | [`FINDINGS`](FINDINGS.md) F23 |
 | Barrier wait | 11.2% of worker thread time | [`FINDINGS`](FINDINGS.md) F6 |
 | ...of which arrival imbalance | 83.7% (spin-up excluded) | [`FINDINGS`](FINDINGS.md) F9 |
 | Barriers behind single-threaded nodes | 120 of 412 per token | [`FINDINGS`](FINDINGS.md) F9 |
