@@ -313,6 +313,35 @@ accurate to **0.3 points**; predicting from parameter counts is wrong by 4.5
 ([`F19`](docs/FINDINGS.md)). `tools/model_bytes.py` prints that table for any
 GGUF without running it.
 
+### And once you can see the barrier, you can price the barrier
+
+llama.cpp has a CMake option called `GGML_OPENMP`. It reads like a build
+convenience, it defaults to ON everywhere, and turning it off swaps
+`ggml_barrier` from `#pragma omp barrier` to ggml's own atomic spin-wait. On
+this machine that is not a convenience:
+
+```
+  GGML_OPENMP=OFF vs the default ON, decode, 20 interleaved rounds per arm
+
+  mid.gguf     8 threads    -2.06%  [-2.42, -1.56]   certified
+  mid.gguf    28 threads   -54.17%  [-55.05, -53.31] certified
+  tiny.gguf    8 threads   -13.07%  [-15.35, -10.07] certified
+  tiny.gguf   28 threads   -78.64%  [-80.40, -77.60] certified
+```
+
+39.09 tok/s becomes 17.91. The throughput number alone would only say *something*
+got slower; the traces say **which** something. Release latency per unit work --
+the part of the wait after the last thread arrives, which is precisely what a
+barrier implementation controls -- is 1.95x higher at 8 threads and 4.9x higher
+at 16, both with non-overlapping ranges, and at 28 threads total barrier wait is
+**0.75 units per unit of work**: three quarters as much time waiting as
+computing ([`F27`](docs/FINDINGS.md)).
+
+A spin-wait barrier looks cheap when you picture one waiter. Twenty-seven
+waiters pounding one cache line across a hybrid CPU's P-core and E-core clusters
+is a different object. Nobody on defaults is affected — but nothing in the build
+output tells you that this option is worth half your decode.
+
 `--outliers` ranks the slowest tokens and attributes each one's *excess over
 median* to a category — because on a slow token everything is large, and the
 question is which thing is large **for that token**. `--diff` compares two

@@ -1,6 +1,6 @@
 # HANDOFF — state of the project, and what to do next
 
-Updated at the **end of session 4 (2026-09-07)**. Everything here is either a
+Updated at the **end of session 5 (2026-09-08)**. Everything here is either a
 fact about the current tree or an explicit next step. Read this first when
 picking the project back up.
 
@@ -16,10 +16,44 @@ grep -n 'nchunk0 \* nchunk1 <' ../llama.cpp/ggml/src/ggml-cpu/ggml-cpu.c
                                         # two `nth * 4` lines = stock (F24 not applied)
 for f in tokenscope.h tokenscope-ggml.h tokenscope.cpp; do
   diff -q src/$f ../llama.cpp/ggml/src/tokenscope/$f; done   # MUST be silent
+grep -o 'GGML_USE_OPENMP' ../llama.cpp/build-ts-on/build.ninja | head -1
+                                        # MUST print it -- see F26
 ```
 
 Then, before trusting any measurement, rebuild rather than assuming the binaries
 match the tree — see the A/B trap in section 3.
+
+**New in session 5: the trace tells you how it was built.** Every trace's
+provenance record now carries `threading` and `compute_linkage`, and
+`trace_analyze.py` prints them on the summary line. If a barrier number ever
+looks strange, read that line before theorising — the field exists because four
+sessions of documents described every barrier figure here as coming from a code
+path none of them came from (**F26**).
+
+**Session 5 in one paragraph.** Five findings, **F25 through F29**, and the
+theme is that four of the five are the project auditing itself. It began by
+closing section 5 item 7 — the `GGML_TOKENSCOPE=OFF` shared build now exists, so
+the shared/static overhead comparison could finally run — and while configuring
+it, noticed `-DGGML_USE_OPENMP` on the compile line for `ggml-cpu.c`. **Every
+barrier number this project has ever taken came from `#pragma omp barrier`**,
+and five documents said the opposite (**F26**). That turned into
+`-DGGML_OPENMP=OFF` builds and **F27**, the largest result of the session:
+ggml's own spin-wait barrier costs **-54% of decode at 28 threads** on this
+machine, and -2.06% at 8, with the cause measured in the traces rather than
+inferred. Then, while extending a tool for F27, found that one barrier out of
+824 held 76-83% of all after-arrival time in every level-3 trace — and that it
+was **tokenscope's own lazy buffer allocation**, which `--barriers` had been
+blaming on ggml's thread pool since session 1 (**F28**). Fixed; the
+imbalance/release split moves from 55/45 to **84.6/15.4**. **F29** is a parser
+bug: `TOKENSCOPE_TOKENS=10:11` captured one token rather than two, silently, and
+`imbalance_repeat.py` had defaulted to it since session 4. **F25** is the
+overhead run that started everything: the static number certifies for the first
+time since session 1 at **+1.16% [+0.67, +1.87]**, and the shared build's answer
+was eaten by its own noise floor for a reason worth reading.
+
+Also: the README finally has a picture. `tools/trace_svg.py` renders one token
+per-thread as a theme-aware SVG from a committed trace, which closes most of
+what the Perfetto item wanted, without a browser.
 
 **Session 4 in one paragraph.** Closed section 5 item 6 — the shared-library
 build works (**F22**) — then **re-scoped item 5 out from under itself (F23)**
@@ -212,8 +246,15 @@ C:\-CS\TLI profiler\
 │   │                      bin\llama-bench.exe, llama-cli.exe, llama-batched.exe
 │   ├── build-ts-off\      ninja, static, GGML_TOKENSCOPE=OFF
 │   │                      bin\llama-bench.exe   <- ALL throughput numbers
-│   └── build-ts-shared\   VS 17 2022, BUILD_SHARED_LIBS=ON, TOKENSCOPE=ON
-│                          bin\Release\llama-bench.exe  (needs --config Release)
+│   ├── build-ts-shared\   VS 17 2022, BUILD_SHARED_LIBS=ON, TOKENSCOPE=ON
+│   │                      bin\Release\llama-bench.exe  (needs --config Release)
+│   ├── build-ts-shared-off\  NEW in session 5. Same as build-ts-shared with
+│   │                      GGML_TOKENSCOPE=OFF. Item 7 could not run without it
+│   ├── build-ts-noomp-on\    NEW in session 5, F27. ninja, static,
+│   │                      GGML_OPENMP=OFF + GGML_TOKENSCOPE=ON
+│   └── build-ts-noomp-off\   NEW in session 5, F27. GGML_OPENMP=OFF + OFF, the
+│                          F27 throughput arm. Verify a noomp build by grepping
+│                          the exe for VCOMP -- it must find nothing
 └── models\
     ├── tiny.gguf          8L,   34 MB  synthetic F32
     ├── mid.gguf           24L, 840 MB  synthetic F32   <- the workhorse
@@ -479,6 +520,11 @@ went undetected for a session purely because nothing here ever built a DLL.
 
 ## 5. Next steps, in the order I would do them
 
+**Session 5 closed item 3 (the picture, by another route) and half of item 7
+(F25), and added item 8 out of F27.** The Linux item (2) is smaller than it
+looked — F26 found its barrier-path premise false — and item 1 is unchanged and
+still needs a person.
+
 **Session 4 closed item 6 (F22) and item 5 (F23/F24).** The ordering below is
 unchanged otherwise, but the shape of the project has changed: it now has a
 measured, certified performance result in ggml itself, which is a different kind
@@ -584,13 +630,32 @@ the 8B is F19/F21) and added a new one at the top that did not exist before.
    hot path is unchanged by inspection, but that is not a measurement), and the
    GCC/ELF behaviour still needs checking alongside item 2. Both fold into
    items 2 and 7 rather than standing on their own.
-7. **Measure the shared build's overhead, and re-measure the static one.**
-   New half: F22 changed how `ts_tls` is reached and argued the hot path is
-   unchanged *by inspection*, which is not a measurement. `bench_overhead.py`
-   needs a `GGML_TOKENSCOPE=OFF` **shared** build to compare against; only the
-   ON one exists. Old half: The harness refused to certify
-   twice in session 2 and nothing has changed. Every quoted overhead number is
-   still the session-1 8-thread one.
+7. **Measure the shared build's overhead.** *Half done in session 5 (F25).*
+   The static re-measurement is finished and certified: **+1.16% [+0.67, +1.87]**
+   at level 3, 8 threads, n=20, with level 0 spanning zero and prefill
+   uncertified as controls. `build-ts-shared-off` now exists, so the shared arm
+   ran too — and every one of its intervals spanned zero at a 2.22% noise floor.
+
+   **The remaining work is a harness change, not a longer run.** F25's
+   post-mortem: `bench_overhead.py` interleaves arms *inside* one invocation,
+   the shared and static pairs were two invocations thirteen minutes apart, and
+   the machine's baseline IQR moved by a factor of two between them. To answer
+   "does the shared build cost more?", the four builds' arms have to be
+   interleaved **together in one invocation** — `A_static, C3_static, A_shared,
+   C3_shared` round-robin. That is maybe thirty lines in `bench_overhead.py`
+   (it already takes two bin dirs; it needs N) and it is the single cheapest
+   unfinished thing in this list.
+
+8. **F27 is the biggest unexploited result in the repo, and it needs a second
+   machine before it means anything general.** Turning `GGML_OPENMP` off costs
+   54% of decode at 28 threads *here*. That is one hybrid x86 CPU running MSVC
+   `vcomp` against ggml's spin-wait; a homogeneous server part with `libgomp`
+   could plausibly reverse the sign. Whether it is worth raising upstream is a
+   judgement for a person, and the same `AGENTS.md` rules in [`03`](03-upstream-issue-draft.md)
+   apply: an agent must not file it or write the text. What an agent *can* do is
+   run the same protocol elsewhere — `tools/ab_throughput.py` plus
+   `tools/imbalance_repeat.py --metric release` on two builds differing only in
+   `GGML_OPENMP`, n>=12.
 
 ## 6. Things I would tell myself
 
@@ -762,6 +827,63 @@ Added by session 4:
   *after* it, and `lm_head` is the last node of the graph, so the quantity does
   not exist for it. That is a cheaper check than the measurement it wasted.
 
+Added by session 5, in rough order of how much they would have saved:
+
+- **A claim about how your code was BUILT is checkable in one command, and a
+  caveat is a claim.** Five documents said every barrier number here came from
+  ggml's spin-wait threadpool. `grep GGML_USE_OPENMP build.ninja` would have
+  cost four seconds in session 1 and the answer was the opposite (F26). It
+  survived four sessions because it lived only in *caveats* — the part of a
+  document that exists to say what a result does not cover, which is exactly the
+  part nobody re-derives. Every `#ifdef` a finding's scope depends on is worth
+  one grep.
+- **An anomaly detector that also explains the anomaly has two outputs, and
+  usually only one of them was measured.** `--barriers` correctly flagged a
+  barrier holding three quarters of all release latency, correctly excluded it
+  from the corrected split, and then explained it as "thread-pool spin-up". It
+  was tokenscope's own allocator (F28). The detection was real; the attribution
+  was prose in an authoritative voice. F16's lesson — a scope's *name* is a
+  claim — applies to diagnostic *messages* too.
+- **Predict the scaling of the quantity you will actually read.** P28.2
+  predicted 1.5-2.5x going 8 -> 16 threads, arguing that a mutex serialises the
+  work so the total cannot double. Measured 4.0-4.5x. The mutex does serialise,
+  so the *wall* duration is linear — but `--barriers` reports **thread time**,
+  and n threads each sit through the whole linear stall. Linear duration summed
+  over n threads is quadratic. Right physics, wrong denominator.
+- **"Interleave the arms" means the arms of the comparison you are making.**
+  `bench_overhead.py` has interleaved within one invocation since session 1.
+  F25's question was shared-versus-static, which is a comparison *between* two
+  invocations, and the machine's noise floor moved by 2x between them. The
+  prediction came back neither confirmed nor falsified, which is worse than
+  wrong. Same trap as F24 in a different disguise: there the arms differed in
+  version, here in time.
+- **Real asymmetries are not automatically the relevant ones.** P27.4 found two
+  genuine differences between the threading paths, wrote them down in advance,
+  and both were microseconds — and both were paid by the arm that *won*. Writing
+  a mechanism down early is still right; it just does not make the mechanism
+  load-bearing.
+- **Prediction and control are different jobs, and a control has to be able to
+  not move.** `ab_throughput.py` warns that a certified control means the
+  comparison is broken. In F27 the control certified because `GGML_OPENMP`
+  changes every barrier in every graph including prefill's. The tool was right to
+  complain and the complaint did not apply — which means the honest report is
+  "this comparison has no control", not "the warning is spurious".
+- **sscanf does not care what it leaves behind.** `"%u-%u"` then `"%u"` made
+  `10:11` mean token 10 alone, silently, for two sessions (F29). The cases worth
+  asserting in a parser are the ones it must *refuse*; the accepted ones are the
+  ones somebody already tried by hand.
+- **Pick a committed reference artifact by the median, not by eye.** The new
+  reference trace is the median of seven candidate runs by total imbalance. F23
+  paid to learn that one trace is one draw; a repo that quotes its luckiest run
+  is the same mistake with a longer half-life.
+- **The blocked item may be blocked on the wrong thing.** "Perfetto screenshot"
+  sat at the top of the list for four sessions needing a browser and a person.
+  What the README actually needed was a picture, and a picture generated from a
+  committed trace is *better* for a repo than a screenshot: it is text, it
+  diffs, and anyone who clones can regenerate it. Ask what the item is for
+  before assuming its stated form.
+
+
 ---
 
 ## 7. Numbers to quote (all reproducible from the committed code)
@@ -780,8 +902,13 @@ Added by session 4:
 | Per-node imbalance, spread over 12 identical runs | up to **8.5x** at 8 threads, 1.3-1.5x at 16 | [`FINDINGS`](FINDINGS.md) F23 |
 | Decode speedup from `nth*4` -> `nth*2` in mul_mat | **+1.95% [+1.59, +2.35]**, certified, n=20 interleaved | [`FINDINGS`](FINDINGS.md) F24 |
 | ...same patch on prefill (control) | -0.81% [-2.44, +0.35], **not** certified | [`FINDINGS`](FINDINGS.md) F24 |
-| Barrier wait | 11.2% of worker thread time | [`FINDINGS`](FINDINGS.md) F6 |
-| ...of which arrival imbalance | 83.7% (spin-up excluded) | [`FINDINGS`](FINDINGS.md) F9 |
+| Barrier wait | 11.2% of worker thread time (post-F28 trace reads 11.5%) | [`FINDINGS`](FINDINGS.md) F6 |
+| ...of which arrival imbalance | **84.6%**, on a post-F28 trace with no artifact to exclude | [`FINDINGS`](FINDINGS.md) F28 |
+| Decode cost of `GGML_OPENMP=OFF`, 28 threads | **-54.17% [-55.05, -53.31]** certified; -2.06% at 8 threads | [`FINDINGS`](FINDINGS.md) F27 |
+| ...same, `tiny.gguf` | **-78.64%** at 28 threads, -13.07% at 8 | [`FINDINGS`](FINDINGS.md) F27 |
+| Release latency per unit work, ggml pool vs OpenMP | 1.95x at 8 threads, 4.9x at 16, both non-overlapping, n=12 | [`FINDINGS`](FINDINGS.md) F27 |
+| Total barrier wait per unit work at 28 threads | 0.752 (ggml pool) vs 0.249 (OpenMP) | [`FINDINGS`](FINDINGS.md) F27 |
+| tokenscope's own first-touch artifact, before F28 | 76-83% of all after-arrival barrier time, scaling as thread count SQUARED | [`FINDINGS`](FINDINGS.md) F28 |
 | Barriers behind single-threaded nodes | 120 of 412 per token | [`FINDINGS`](FINDINGS.md) F9 |
 | Upper bound on fixing that | 1.34% of graph wall time, and F15 found no reachable part | F9, F15 |
 | Barriers removed by ggml's one fusion | 49 of 461 per token, for no measurable throughput | [`FINDINGS`](FINDINGS.md) F15 |
