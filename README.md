@@ -350,6 +350,14 @@ help, and where*.
 
 ## Design constraints
 
+> **Before quoting any number from this repo, read
+> [`docs/04-project-audit.md`](docs/04-project-audit.md).** It carries a trust
+> ladder for every finding, a register of every known defect and gap, and the
+> one rule that matters most: percentages here live near the machine's own
+> drift floor, and a single-run bootstrap interval is roughly half as wide as
+> the truth.
+
+
 Hard rules, not aspirations. They are what separates a profiler from a lie about
 where your time goes.
 

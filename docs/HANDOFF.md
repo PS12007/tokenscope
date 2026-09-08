@@ -4,6 +4,11 @@ Updated **during session 6 (2026-09-08)**. Everything here is either a
 fact about the current tree or an explicit next step. Read this first when
 picking the project back up.
 
+**Read [`04-project-audit.md`](04-project-audit.md) first if you want the whole
+picture in one place** -- what every number is worth, every known defect, every
+gap and every trap. This file is the "what to do next"; that one is the "what is
+actually true and what is broken".
+
 **Cold-start checklist, in order.** Each takes seconds and each has caught
 something real:
 
