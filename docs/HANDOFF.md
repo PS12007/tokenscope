@@ -126,7 +126,7 @@ The short version:
 
 | Gap | Why it matters |
 |---|---|
-| Linux / GCC never built or measured | Everything so far is MSVC on Windows. **The barrier-path half of this gap was wrong for four sessions (F26):** F9/F10 measured the *OpenMP* path, which is also Linux's default, so what is untested is GCC and the `libgomp` runtime, not a different barrier algorithm |
+| Linux / GCC never built or measured | Everything so far is MSVC on Windows. **The barrier-path half of this gap was wrong for four sessions (F26):** F9/F10 measured the *OpenMP* path, which is also Linux's default, so what is untested is GCC and the `libgomp` runtime, not a different barrier algorithm. **F27 then measured the other barrier on this machine** and found it 3-5x more expensive, so every barrier figure here is from the cheaper implementation, not the pessimistic one |
 | ~~No real quantized model~~ | **Done (F12).** Qwen2.5-0.5B Q4_K_M is in `models/`, gitignored. Largest real model measured is 630 M params |
 | ~~Shared-library build is BROKEN~~ | **Fixed (F22).** F18's option 2, implemented and verified: each module caches its own `ts_tls`, all resolving to one registry-owned buffer. `BUILD_SHARED_LIBS=ON` links and traces correctly. Two-module regression test passes on all three toolchains; **llama.cpp shared on Linux still untested**, and the shared build's overhead has never been measured |
 | ~~Sampling / tokenizer scopes not written~~ | **Done (F11).** `llama-cli` is now built in `build-ts-on`. Sampling + detokenization are 0.13% of a token |
@@ -521,7 +521,10 @@ the 8B is F19/F21) and added a new one at the top that did not exist before.
    measured here**, contrary to what this item said until session 5 (F26).
    F9's *structural* claims should transfer; every barrier *cost* number is a
    `vcomp` 2.0 number and may not transfer to `libgomp`, which is a narrower
-   worry than the one this item used to state.
+   worry than the one this item used to state -- but **F27 showed the
+   worry is not small**: swapping `vcomp` for ggml's own threadpool on this
+   machine changes release latency by 2-5x and decode throughput by up to 54%,
+   so barrier implementation is worth far more than it looked.
 3. ~~**Perfetto screenshot.**~~ **Largely done in session 5, by other means.**
    `tools/trace_svg.py` draws one token per-thread from a committed trace and
    the README leads with `docs/token-timeline.svg`; a second figure from the 8B

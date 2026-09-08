@@ -1529,7 +1529,18 @@ So, splitting the claims by how far they should travel:
   `libgomp`/`libomp` against `vcomp`, not a spin-wait against a barrier
   pragma.
 
-Untested either way. Stated here rather than repeated in eight caveat sections.
+**And session 5 put a size on "may not transfer", by building the other one.**
+[`F27`](#f27--ggmls-own-barrier-is-not-a-cheaper-spin-wait-than-openmps-on-this-machine-at-28-threads-it-costs-54-of-decode)
+measured `GGML_OPENMP=OFF` on this machine: release latency per unit work is
+**1.95x higher at 8 threads and 4.9x higher at 16**, both with non-overlapping
+ranges, and total barrier wait per unit work is 0.752 against 0.249 at 28
+threads. Decode throughput falls 2.06% at 8 threads and **54.17% at 28**.
+
+So the numbers above are from the **cheaper** of the two barriers this machine
+can build, which is the opposite of what a reader would assume from a caveat.
+How much of that carries to `libgomp` against ggml's threadpool on Linux is
+still untested -- but "one barrier implementation" is no longer a shrug, it is
+a factor of three to five.
 
 ---
 
@@ -3526,6 +3537,174 @@ The standing caveat gets a number. "Barrier cost figures may not transfer" would
 become "barrier cost figures shift by roughly X% between two implementations on
 one machine, so treat F9's split as accurate to that", which is a caveat a
 reader can act on instead of one they can only worry about.
+
+---
+
+## F27 — ggml's own barrier is not a cheaper spin-wait than OpenMP's. On this machine at 28 threads it costs 54% of decode
+
+**Workload:** `mid.gguf` (24L F32, 220 M) and `tiny.gguf` (8L, 34 MB), 8 / 16 /
+28 threads, MSVC Release, Windows 11, i7-14700HX. Throughput from the two
+**uninstrumented** builds via `tools/ab_throughput.py`, 20 interleaved rounds
+per arm with the lead flipping each round. Trace-derived barrier quantities from
+the two instrumented builds via `tools/imbalance_repeat.py`, **n=12** per arm at
+8 and 16 threads and n=8 at 28. Predictions in
+[`P27`](#p27--two-barrier-implementations-on-one-machine-predictions), committed
+before the builds existed.
+
+[`F26`](#f26--every-measurement-in-this-project-was-taken-on-the-openmp-path-and-five-documents-said-the-opposite)
+made this measurable: the spin-wait path had never been run here, and
+`-DGGML_OPENMP=OFF` is one flag.
+
+### The arms are what they claim to be
+
+Checked before measuring, because both checks could have come out wrong:
+
+- `llama-bench.exe` in `build-ts-noomp-on` and `build-ts-noomp-off` imports **no
+  `VCOMP` symbols**; the OpenMP control still imports `VCOMP140.DLL`.
+- The instrumented no-OpenMP build writes `"threading":"ggml-threadpool"` in its
+  provenance record, against `"threading":"openmp"` from the other. That field
+  exists because of F26 and this is the first thing it has distinguished.
+- The two throughput binaries are byte-different (SHA-256) despite being the
+  same size, and neither prints llama.cpp's "cplan requested more threads than
+  available" warning at `-t 28`.
+
+### Throughput: `GGML_OPENMP=OFF`, relative to the default ON
+
+```
+  model      threads   decode (tg64)                     prefill (pp64)
+  mid.gguf         8    -2.06%  [-2.42, -1.56]  cert.     -1.15%  [-1.62, +0.12]
+  mid.gguf        28   -54.17%  [-55.05, -53.31] cert.   -45.02%  [-47.94, -43.03] cert.
+  tiny.gguf        8   -13.07%  [-15.35, -10.07] cert.     -0.77%  [-9.55,  +8.60]
+  tiny.gguf       28   -78.64%  [-80.40, -77.60] cert.   -38.60%  [-50.26, -34.81] cert.
+```
+
+At 28 threads on `mid.gguf`, decode goes from **39.09 tok/s to 17.91 tok/s**.
+On `tiny.gguf` it goes from 921 to 197.
+
+### Why: the barrier, measured directly
+
+Total barrier wait per unit node work, from level-3 traces:
+
+```
+                       OpenMP                   ggml threadpool
+   8 threads     0.019 [0.018, 0.026]      0.037 [0.035, 0.042]     release only
+  16 threads     0.028 [0.025, 0.030]      0.136 [0.116, 0.152]     release only
+  28 threads     0.249 [0.184, 0.380]      0.752 [0.508, 1.145]     wait total
+```
+
+The 8- and 16-thread rows are **release latency** — the part of the wait after
+the last thread has arrived, which is exactly the part a barrier implementation
+controls. Both comparisons have **non-overlapping ranges**, and so does the
+28-thread total: 0.752 against 0.249, with the ranges clearing each other
+(0.508 against 0.380).
+
+At 28 threads the ggml barrier costs **0.75 units of wait per unit of work** —
+three quarters as much time waiting as computing. That is the throughput
+collapse, in the quantity that causes it.
+
+### Scoring the predictions
+
+**P27.2 — falsified, with the sign inverted.** I predicted median release
+latency would be *lower* on the spin-wait path by at least 20%, reasoning that a
+thread polling a relaxed atomic in a `ggml_thread_cpu_relax()` loop leaves within
+tens of nanoseconds of the last arrival, while `_vcomp_barrier` is a library
+call into a 2002-vintage runtime. It is **higher**: 1.95x at 8 threads, 4.9x at
+16, both with non-overlapping ranges. The prediction was wrong in direction, in
+size, and in mechanism.
+
+What the reasoning missed, stated after the fact and not before: the release of
+a spin-wait barrier is a **cache-coherence broadcast**. The last thread's
+`fetch_add` on `n_barrier_passed` has to reach *n-1* cores that are all hammering
+that one line with `pause` loops, on a CPU whose P-cores and E-cores sit in
+different cache clusters. "Leaves within tens of nanoseconds" describes one
+waiter. It does not describe twenty-seven of them contending for the same line,
+and the contention slows the arriving thread as well as the waiting ones.
+
+**P27.3 — held.** Predicted `|difference| < 3%` on decode at 8 threads on
+`mid.gguf`; measured **-2.06%**. I also predicted a real chance the harness
+would decline to certify it. It certified — the interval is
+[-2.42, -1.56], comfortably clear of zero.
+
+**P27.1 — held at 8 threads, and its premise is wrong.** Arrival imbalance per
+unit work, whole-trace: 0.106 [0.050, 0.151] against 0.115 [0.052, 0.167] at 8
+threads, thoroughly overlapping as predicted. At 16 threads: 0.218 [0.164,
+0.281] against 0.281 [0.241, 0.320] — still overlapping, so not falsified, but
+the medians differ by **29%** in a consistent direction.
+
+The prediction rested on "imbalance is set by how work is divided, and the
+division is identical source in both builds". That is not sufficient.
+**Imbalance is measured between arrival timestamps, and when a thread arrives at
+barrier *k+1* depends on when it was released from barrier *k*.** A barrier with
+a slower, more skewed release feeds that skew forward into the next node's
+arrival spread. The control was not as clean as its argument claimed, and the
+28-thread numbers say so more loudly than the 16-thread ones.
+
+**P27.4 — direction right twice, ordering wrong, mechanism wrong.** Predicted
+the gap grows with thread count and grows more on a small model, ordered
+`tiny@28 > tiny@8 >= mid@28 > mid@8`. Both growth claims hold enormously. The
+ordering does not: measured `tiny@28 (78.6%) > mid@28 (54.2%) > tiny@8 (13.1%)
+> mid@8 (2.1%)`. **Thread count dominates model size**, and my ordering had them
+interleaved.
+
+More importantly the *mechanism* was wrong. P27.4 attributed the growth to two
+fixed per-graph costs — the `_vcomp_fork` per graph, and
+`ggml_thread_apply_priority` calling `SetThreadInformation` once per thread per
+graph inside the parallel region. Those are microseconds. They cannot produce
+-78%, and they point the wrong way anyway: **both of those costs are paid by
+the OpenMP arm**, which is the *faster* one. I found two real asymmetries, wrote
+them down in advance, and they were noise against the thing I had reasoned
+myself out of.
+
+### The design flaw, which the tool caught
+
+`ab_throughput.py` prints "A certified control workload means the comparison is
+wrong, not that the change is good" — and at 28 threads the prefill control
+certified in both models.
+
+The tool is right to complain and the complaint does not apply. That warning
+exists for F24, where the change was a threshold inside `mul_mat` that prefill
+sat above in both arms, so prefill genuinely could not move. `GGML_OPENMP` is
+not a targeted change: it swaps the barrier every node in every graph, prefill
+included. **This comparison has no control**, and no arrangement of these two
+binaries provides one. That is a real weakness and it is why the barrier
+measurement above matters more than the throughput table — the throughput says
+something changed by a lot, and only the trace says it was the barrier.
+
+### What this changes
+
+- **F26's caveat now has a size, and it points the other way.** This project's
+  barrier-cost figures — F6's 11.2%, F9's split, F10's rise to 22.9% — are all
+  from the **cheaper** of the two implementations available on this machine. A
+  reader who assumed they were the pessimistic case had it backwards.
+- **`GGML_OPENMP` is a much larger option than its one-line description
+  suggests.** It reads as a build convenience. On this machine, turning it off
+  costs 2% at 8 threads and **more than half of decode at 28**, and nothing in
+  the build output says so.
+- **It does not affect anyone using defaults.** `GGML_OPENMP` is ON by default
+  on every platform and CMake found OpenMP here without help. This is a finding
+  about a configuration people can select, not about what llama.cpp ships.
+- **It does not transfer to Linux without testing**, and that cuts both ways:
+  `libgomp`'s barrier is not `vcomp`'s, and glibc's threading is not Windows'.
+  The one thing that does transfer is the *question* — anyone comparing the two
+  paths now has a protocol and a reason to run it.
+
+### Caveats
+
+- **One machine, one OS, one compiler.** i7-14700HX, 8 P + 12 E, Windows 11,
+  MSVC 19.44. A hybrid CPU is close to the worst case for a spin barrier and
+  close to the best case for a runtime that parks threads; a homogeneous server
+  part could easily reverse the sign.
+- **No control workload exists for this comparison**, as above.
+- Two dense models, both small. The 28-thread rows put 28 spinning threads on 28
+  logical CPUs, which is total subscription — the regime where a spin barrier is
+  most exposed, and the regime `llama-bench -t $(nproc)` puts people in.
+- The trace-derived rows at 8 and 16 threads measure *release latency*; the
+  28-thread row measures *total* barrier wait, because at 28 threads the
+  release/imbalance split is itself affected by the release skew feeding forward
+  (see P27.1 above), so the total is the more honest number.
+- `ab_throughput.py` reports medians and bootstrap CIs over interleaved rounds.
+  The trace rows report medians and **ranges**, which are not confidence
+  intervals; the claim rests on non-overlap, as in F23.
 
 ---
 
