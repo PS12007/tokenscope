@@ -2908,6 +2908,24 @@ being wrong, and gets reported as one.
 
 ## F24 — One line, +1.95% decode, and the first certified speedup in this project
 
+> **Superseded by [`F33`](#f33--f24-survives-at-162-the-interval-that-can-see-drift-works-and-the-control-stopped-being-clean), session 6.
+> The effect is real; `+1.95% [+1.59, +2.35]` is not the right number for it.**
+> Re-measured over six blocks and two independent runs with an interval that
+> can see between-run drift: **+1.62% [+1.10, +2.15]**. The old point estimate
+> sits inside the new interval; the new one sits at the edge of the old.
+>
+> Two things below no longer stand as written. The word **"certified"** meant
+> only "resolved within this run" — see F31. And **the prefill control is no
+> longer a clean null**: across six blocks it reads -1.30% [-2.67, +0.06], and
+> every run has come back negative. The argument quoted below — "the arm that
+> should not move does not" — is the weakest part of this finding now, and it
+> was its strongest part when written.
+>
+> The two arms also differ by 1,137,994 bytes, so **code layout is not held
+> constant** and some unknown fraction of the effect may be layout rather than
+> chunking. Read F33 before quoting anything here.
+
+
 **Session 4, 2026-09-07.** Testing [`P24`](#p24--lowering-ggmls-chunking-threshold-predictions-and-the-protocol-before-the-build),
 committed before the patched binary existed.
 
@@ -4650,6 +4668,132 @@ broken, and with a wider interval it should be even harder to resolve.
 interval.** Nearly tautological given F31, but it is the direct demonstration on
 the project's flagship number, and if it comes out false the whole diagnosis is
 wrong.
+
+---
+
+## F33 — F24 survives at +1.62%, the interval that can see drift works, and the control stopped being clean
+
+**Workload:** `mid.gguf`, **16 threads**, tg64 with pp64 as the control, both
+arms uninstrumented and rebuilt in this session, `--reps 3`, 20 rounds per arm,
+**`--blocks 3`, run twice** (six blocks, 240 rounds per arm in total),
+`tools/ab_throughput.py`.
+[`P32`](#p32--what-f24-looks-like-once-the-interval-can-see-between-run-drift)
+holds the predictions.
+
+This is the repair of
+[`F24`](#f24--one-line-195-decode-and-the-first-certified-speedup-in-this-project),
+the only throughput improvement this project claims, after
+[`F31`](#f31--two-certified-intervals-for-one-quantity-that-do-not-overlap-and-level-3-turns-out-to-be-a-leveller)
+showed its interval was a within-run interval and roughly half as wide as the
+truth.
+
+### The result
+
+| | tg64 (decode) | pp64 (control) |
+|---|---|---|
+| run A | +1.91% [+0.92, +2.91] | -0.43% [-2.26, +1.41] |
+| run B | +1.33% [+0.19, +2.48] | -2.18% [-5.08, +0.72] |
+| **pooled, six blocks** | **+1.62% [+1.10, +2.15]** | **-1.30% [-2.67, +0.06]** |
+
+Block estimates, decode: `+1.59 +2.36 +1.79 | +0.80 +1.62 +1.58`.
+
+**F24's effect is real.** Six blocks, two independent runs, `t(5)` interval
+excluding zero. What changes is the number and its precision: **+1.95% [+1.59,
++2.35] becomes +1.62% [+1.10, +2.15]**. The old point estimate sits inside the
+new interval; the new point estimate sits at the very edge of the old one.
+
+### The fix demonstrably works, which is the methodological result
+
+F31's charge against the bootstrap was that two of its intervals, for one
+quantity on unrebuilt binaries, **did not overlap**. The same test on the new
+interval:
+
+```
+  run A   t interval  [+0.92, +2.91]
+  run B   t interval  [+0.19, +2.48]     -> OVERLAP
+```
+
+Two independent three-block runs of the same comparison produce intervals that
+agree. That is the property the bootstrap failed and the reason to quote the
+`t` column. It is one test on one quantity, not a proof, but it is the
+difference between a fix that is argued for and one that has been checked.
+
+### The control stopped being clean, and that is the real news
+
+F24's strongest argument was never its interval. It was the structure:
+
+> the arm that should move moves and certifies, the arm that should not move
+> does not and does not certify. A build artifact or a thermal drift would not
+> respect that distinction.
+
+Prefill sits far above the chunking threshold in **both** arms, so the patch
+cannot reach it. It should be a flat null. Across six blocks it reads
+**-1.30% [-2.67, +0.06]** — still not resolved, but only just, and every run
+has come back negative: -0.81% originally, -0.43% in run A, -2.18% in run B.
+
+So the clean version of F24's argument no longer holds. The honest version is
+weaker: **decode moves by more than prefill does, in the right direction, and
+prefill's own movement is unstable across runs** (-0.43% against -2.18%, a
+1.75pp swing that is larger than either run's internal spread). That
+instability is the best evidence it is drift rather than a property of the
+binaries — but it is no longer the clean null the original finding leaned on.
+
+### Which makes the layout confound evidence rather than speculation
+
+[`P32`](#p32--what-f24-looks-like-once-the-interval-can-see-between-run-drift)
+recorded before the run that the two arms differ by **1,137,994 bytes**, so code
+layout is not held constant, and layout alone can move throughput by around a
+percent. That was written as a caveat nobody could exclude.
+
+A prefill arm that drifts persistently negative is exactly what a layout effect
+would look like: prefill cannot see the scheduler change, so anything moving it
+is *not* the thing F24 claims to have measured. This does not overturn F24 —
+decode moves ~3x more than prefill and in the opposite direction, which layout
+alone has no reason to produce — but it means **some unknown fraction of the
++1.62% may be layout rather than chunking**, and no run of this design can
+separate them.
+
+Separating them needs an arm that changes layout without changing behaviour —
+padding the function, or reordering something inert — which is a real experiment
+and is not done.
+
+### Scoring the predictions
+
+| | claim | outcome |
+|---|---|---|
+| **P32.1** | block spread in 0.5-1.5pp, exceeding F24's whole stated width of 0.76pp | **held, by 0.01pp.** 0.77pp in run A and 0.82pp in run B. Held on both specifics and far too narrowly to be credited as skill |
+| **P32.2** | the `t` interval still excludes zero | **held**, in run A, in run B and pooled. This is what makes F24 repairable rather than retracted |
+| **P32.3** | mean within 0.6pp of +1.95% | **held for the run it was written for** (+1.91%, 0.04pp) and **marginally failed for run B** (+1.33%, 0.62pp). Pooled, +1.62% is 0.33pp away |
+| **P32.4** | the control stays unresolved on the `t` interval | **held in letter, and the interesting part is how narrowly.** Pooled upper bound +0.06 |
+| **P32.5** | the bootstrap is narrower than the `t` interval | **failed, and backwards.** Bootstrap 6.10pp wide against the `t` interval's 1.98pp in run A, and 5.61 against 2.29 in run B |
+
+**P32.5 is worth more than the four that held.** The pooled bootstrap resamples
+240 rounds spanning three blocks *and* every contaminated round in them; per-arm
+minima reached 18.30 tok/s against a 39.09 median. Block medians absorb those
+outliers, so the three block estimates stay tight while the pooled bootstrap
+inherits the whole mess.
+
+So the block method is **robust to the contamination that widens a pooled
+bootstrap**, which is not why it was built and is a better argument for it than
+the one in F31. The corollary is a warning: a bootstrap interval is not reliably
+narrower than the truth, it is reliably *wrong about* the truth, and on a dirty
+run it errs the other way.
+
+### Caveats
+
+- **Run A was contaminated by this session's own activity.** Documentation was
+  written and commits made while it ran, against the harness's own instruction
+  to close background work. It is reported rather than discarded because run B
+  reproduces it, but it is the reason there are two runs.
+- **Run B was cleaner, not clean.** 13 of 120 decode rounds and 23 of 120
+  prefill rounds landed more than 5% below their own block's median. This
+  machine has background activity that no amount of care removes.
+- Two runs of three blocks is six numbers. `t(5)` is honest about that and the
+  interval is still 1.05pp wide.
+- One machine, one thread count, one model, no NUMA — unchanged from F24, and
+  NUMA is the case the `nth * 4` constant was tuned for.
+- Six blocks at 16 threads say nothing about other thread counts, and the whole
+  point of F23 is that this threshold's behaviour depends on `nth`.
 
 ---
 
