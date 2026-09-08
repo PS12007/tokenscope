@@ -301,10 +301,16 @@ CI:
 | `mid-24L-cli-sampling` | `llama-cli`, sampling + detokenization (F11) |
 | `qwen-ctxshift-c256` | real model, context shift, `find_slot` (F16) |
 
-**CI mechanizes four claims**, and each fails the build if the finding stops
+**CI mechanizes five claims**, and each fails the build if the finding stops
 being true: attribution never exceeds 100% (inside-slice only), every barrier is
 matched by `--barriers`, F9 (elementwise nodes serial in decode, parallel in
-prefill), and F16 (shifts visible, `find_slot` a small part of its scope).
+prefill), F16 (shifts visible, `find_slot` a small part of its scope), and
+**F22 (two modules, one buffer per thread)**.
+
+The F22 one is `ctest --test-dir build-shared`, built on all three platforms
+from `BUILD_SHARED_LIBS=ON`. It needs no llama.cpp, no model and no network, and
+runs in 0.04 s. It exists because F18 — the shared build not linking at all —
+went undetected for a session purely because nothing here ever built a DLL.
 
 ---
 

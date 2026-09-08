@@ -28,3 +28,45 @@ target_link_libraries(ts_selftest PRIVATE tokenscope)
 
 enable_testing()
 add_test(NAME selftest COMMAND ts_selftest)
+
+# ---------------------------------------------------------------------------
+# The shared-library arm.
+#
+# FINDINGS F18 -- ggml-cpu.dll failing to link against a thread-local that MSVC
+# will not export -- was found by hand, a session after the code that caused it,
+# because nothing here ever built a DLL. This target exists so that never
+# happens again. It is deliberately NOT gated on the platform: the failure was
+# MSVC-specific, but a fix that only works on MSVC is not a fix.
+#
+# Two separate binaries, each including tokenscope.h and so each compiling its
+# own `ts_tls` cache, over one exported registry. That is the F22 arrangement in
+# miniature, and it needs no llama.cpp, no model and no network.
+# ---------------------------------------------------------------------------
+if (TOKENSCOPE_ENABLED AND BUILD_SHARED_LIBS)
+    # Exports every symbol rather than maintaining a .def file. tokenscope's own
+    # exports are already annotated with TS_API; this is for ts_dllmod's.
+    set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
+
+    # Note the absence of TOKENSCOPE_STATIC: this is the configuration where
+    # TS_API becomes dllexport/dllimport and where F18 reproduced.
+    add_library(tokenscope_shared SHARED src/tokenscope.cpp)
+    target_include_directories(tokenscope_shared PUBLIC src)
+    target_compile_definitions(tokenscope_shared PUBLIC TOKENSCOPE_ENABLED)
+    if (TOKENSCOPE_TSC)
+        target_compile_definitions(tokenscope_shared PUBLIC TOKENSCOPE_TSC)
+    endif()
+    target_link_libraries(tokenscope_shared PUBLIC Threads::Threads)
+    set_target_properties(tokenscope_shared PROPERTIES
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+        CXX_VISIBILITY_PRESET default)
+
+    # The second module. Separate binary, separate cache.
+    add_library(ts_dllmod SHARED src/ts_dllmod.cpp)
+    target_link_libraries(ts_dllmod PRIVATE tokenscope_shared)
+    set_target_properties(ts_dllmod PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+
+    add_executable(ts_dlltest src/ts_dlltest.cpp)
+    target_link_libraries(ts_dlltest PRIVATE tokenscope_shared ts_dllmod)
+
+    add_test(NAME dlltest COMMAND ts_dlltest)
+endif()

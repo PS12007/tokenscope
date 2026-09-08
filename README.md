@@ -438,6 +438,7 @@ Built in the open. `docs/` is the engineering log, in order — and
 - [x] [Real quantized model](docs/FINDINGS.md) — Qwen2.5-0.5B Q4_K_M
 - [x] [An 8B model, and five of six predictions](docs/FINDINGS.md) — Qwen3-8B Q4_K_M
 - [x] [A defect found in llama.cpp's graph naming](docs/FINDINGS.md), fixed and measured
+- [x] [Shared-library builds](docs/FINDINGS.md) — broken in F18, fixed in F22, now tested on three platforms
 - [ ] Linux/GCC
 - [ ] [Upstream issue](docs/03-upstream-issue-draft.md), then a PR
 
@@ -448,6 +449,8 @@ src/tokenscope.h        the mechanism: record, buffer, macros — header-only ho
 src/tokenscope-ggml.h   the only part that knows about ggml, kept separate
 src/tokenscope.cpp      cold path: arena, interning, graph epochs, Chrome Trace emit
 src/ts_selftest.cpp     8-thread self-test, layout assertions, per-scope cost
+src/ts_dllmod.cpp       a second module for the shared-library test, nothing more
+src/ts_dlltest.cpp      two binaries, one registry — the F18 regression test
 patches/                01: the instrumentation. 02: the F20 naming fix, standalone
 examples/               committed reference traces (level 1 and level 3), used by CI
 scripts/bootstrap.py    clone at the pin, copy sources, apply patches

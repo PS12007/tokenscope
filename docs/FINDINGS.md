@@ -2244,6 +2244,7 @@ counter belongs in it.
 | Self-test | passes, 52.6 ns/scope against a documented 52.8 |
 | Disabled build | still 0 symbols, still an 864-byte archive |
 | Barrier decomposition on a fresh level-3 trace | every barrier matched |
+| Two-module test, standalone shared build | passes, and fails when the fix is reverted — see below |
 
 **The thread count is the real evidence.** `llama-bench -t 4` with the fix
 produces a trace with four worker threads. Had the two DLLs each built their own
@@ -2255,6 +2256,55 @@ The phase mix from the shared build (`ffn` 71.1%, `attn.qkv` 10.4%,
 `attn.out` 6.0%) matches the static build on the same model, which is the
 second check: the records are not merely present, they are attributed to the
 same places.
+
+### The regression test, and breaking it on purpose
+
+F18 existed because nothing ever built a shared library. Fixing that without
+adding a build of one would leave the next regression to be found the same way —
+by hand, a session late. So `ts_dllmod.cpp` and `ts_dlltest.cpp` build two
+separate binaries that each include `tokenscope.h`, and CI now runs them on all
+three platforms. No llama.cpp, no model, no network; the whole thing takes 0.04
+seconds.
+
+The test asserts the invariant directly rather than through its symptoms:
+
+```
+[ ok ] each module has its own ts_tls cache (the control: without this the rest is vacuous)
+[ ok ] both modules resolve to the same buffer on each thread
+[ ok ] both modules share one host-scope depth counter
+[ ok ] different threads still get different buffers
+```
+
+The first line is a control, and it is the reason the other three mean anything.
+If the two "modules" ever collapsed into one binary — a build-system change, a
+static link, an inlining decision — every remaining assertion would still pass
+while checking that a variable equals itself. The fourth is the opposite guard:
+sharing *everything* would satisfy lines two and three and reintroduce the
+cross-thread contention the whole design exists to avoid.
+
+**Then the check was tested by breaking what it checks**, as F20's shadow test
+was. Disabling `ts_thread_init`'s idempotency — one `if` — and rebuilding:
+
+```
+[ ok ]  each module has its own ts_tls cache
+[FAIL] both modules resolve to the same buffer on each thread
+[FAIL] both modules share one host-scope depth counter
+[ ok ]  no records were dropped
+       9 distinct trace thread ids for 4 worker threads + main
+[FAIL] one trace thread id per thread, not one per thread per module
+```
+
+Note what did **not** fail. The trace was written. It was valid JSON. Zero
+records were dropped. Every scope name from both modules was present, correctly
+nested. `llama-bench` would have printed a plausible table. The only visible
+symptom was in the header line — `8 threads` where the run used four — and in a
+count that had to be taken deliberately.
+
+That is the third time this project has found a defect whose entire symptom is a
+number being quietly wrong (F5's over-100% attribution, F20's dead table entry,
+this). The pattern is consistent enough to state as a rule: **for a profiler,
+the default failure mode is not a crash, it is a plausible answer.** Checks have
+to assert quantities, not the absence of errors.
 
 ### Caveats
 
