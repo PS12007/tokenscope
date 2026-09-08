@@ -19,6 +19,9 @@ about.
 Method:
   - arms are INTERLEAVED (ABCABC...), never blocked (AAABBBCCC), so thermal
     drift and background load hit every arm equally
+  - and the order ROTATES each round (ABC, BCA, CAB, ...), so no arm is
+    permanently first. A fixed order leaves every sub-round-length transient
+    landing on the same arms; F30 caught one doing exactly that
   - the first repetition of each arm is discarded as warm-up
   - medians and IQR, not means and stdev: tok/s has a hard ceiling and a long
     slow tail, so the mean tracks outliers that are not the effect
@@ -269,6 +272,9 @@ def main() -> int:
                     help="drop the B arm. Arms multiply by pair -- two pairs "
                          "at all three levels is ten runs a round; this trades "
                          "the residual-branch control for finishing")
+    ap.add_argument("--no-rotate", action="store_true",
+                    help="keep one fixed arm order every round (the pre-F30 "
+                         "protocol). Rotation is on by default; see F30")
     ap.add_argument("--json-out", default=None)
     args = ap.parse_args()
 
@@ -296,7 +302,14 @@ def main() -> int:
 
     t_start = time.time()
     for rep in range(args.reps):
-        for arm in arms:
+        # Rotate the order each round (F30). Interleaving stops drift landing
+        # on one arm, but with a FIXED order every transient shorter than a
+        # round lands on the same arms every time -- in F30's own run one extra
+        # warm-up round hit all three arms of the pair that happened to run
+        # first, and cost that pair its certification. An interleave with a
+        # fixed order is a Latin square with one row.
+        order = arms if args.no_rotate else arms[rep % len(arms):] + arms[:rep % len(arms)]
+        for arm in order:
             try:
                 r = run_bench(arm.binary, args.model, args.n_gen, args.n_prompt,
                               args.threads, arm.env)
