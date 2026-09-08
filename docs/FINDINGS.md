@@ -3015,6 +3015,115 @@ by a measurement, not a patch that claims to know better.
 ---
 
 
+## P25 — What the shared build's overhead should cost, written while the harness runs
+
+**Dated 2026-09-08, session 5. Written and committed after the two shared
+binaries exist and the harness was started, and before any of its output was
+read.** Section 5 item 7 has said since session 4 that
+[`F22`](#f22--the-shared-library-build-works-because-the-thread-local-was-never-the-thing-that-had-to-be-shared)
+left the hot path unchanged *by inspection*, which is not a measurement. This is
+the prediction that goes with the measurement.
+
+### The arms
+
+A `GGML_TOKENSCOPE=OFF` shared build did not exist; there was only the ON one,
+which is why item 7 had never been runnable. `build-ts-shared-off` is that
+build, configured identically to `build-ts-shared` — same Visual Studio 17 2022
+generator, `BUILD_SHARED_LIBS=ON`, same options — and both were rebuilt in the
+same session, because [`F24`](#f24--one-line-195-decode-and-the-first-certified-speedup-in-this-project)
+is what happens when one arm of an A/B is a binary somebody built earlier. The
+static pair was checked with `ninja` and reported `no work to do`, so it matches
+the tree too.
+
+`ggml-cpu.dll` in the OFF build contains zero occurrences of the string
+`tokenscope`; the ON build's contains one. That is the same check as the
+zero-overhead-when-off proof in [`02`](02-overhead-methodology.md), applied to a
+DLL instead of an archive.
+
+Both pairs run the same workload as session 1: `mid.gguf`, 8 threads, pp512 /
+tg256, `-n 20` interleaved with the first rep discarded, levels 1, 2 and 3.
+
+### What actually changes in the hot path, at the instruction level
+
+F22's "unchanged by inspection" is true of the *source* and not quite true of
+the *instructions*, which is the whole reason to measure. Three differences, all
+of them from `TS_API` becoming `__declspec(dllimport)` instead of nothing:
+
+1. `ts_g_capture`, `ts_g_level`, `ts_g_token` and `ts_g_graph` are exported
+   **data**. A dllimport data read on MSVC is a load of the import address table
+   slot followed by a load through it, where the static build gets one
+   RIP-relative load. Every `ts_reserve` reads one, every `ts_emit` reads two.
+2. `ts_now()` is **not** `__rdtsc` here — `TOKENSCOPE_TSC` is OFF in every build
+   this project has measured, so `ts_now()` is `ts_now_slow()`, which is
+   `TS_API`. In the shared build each of the two clock reads per scope becomes
+   an indirect call through the IAT instead of a direct call.
+3. `ts_tls` is unchanged: `static __declspec(thread)`, one per module by
+   design, so its cost is the same TEB-relative access in both.
+
+Against those: one scope costs **52.8 ns** (`ts_selftest`), and two
+`steady_clock::now()` calls on Windows are two `QueryPerformanceCounter`s, which
+is essentially all of that 52.8 ns. An IAT indirection is a load that hits L1 and
+a correctly-predicted indirect branch — low single-digit nanoseconds against
+that.
+
+### P25.1 — shared costs more than static at the same level, and by less than 50%
+
+The comparison that matters is a **ratio against a control**, not a level
+(P23.2's lesson): each build is compared to *its own* compiled-out arm, so
+everything that makes a DLL build slower than a static one — no cross-module
+inlining, indirect calls everywhere, no whole-program optimisation — cancels
+out of both sides.
+
+Direction: shared >= static, because instructions were added to the hot path
+and none were removed. Size: **less than 1.5x the static figure at the same
+level**, because the added work is a handful of nanoseconds on a path whose cost
+is two kernel-ish clock reads.
+
+Falsified if shared comes out *below* static by more than the intervals allow,
+or above it by more than 1.5x.
+
+### P25.2 — level 0 stays unresolvable in the shared build
+
+B vs A is one load of `ts_g_level` and one predictable branch per site, plus an
+IAT indirection in the shared arm. That was already below this machine's noise
+floor when it was one load. **Prediction: no certified difference between A and
+B in either build**, at any level.
+
+### P25.3 — at least one of the eight comparisons is refused
+
+Four levels' worth of comparison in each of two builds. The harness has declined
+to certify **six times across four sessions**, the baseline IQR on this machine
+was 2-4% in session 2, and every effect here is expected under 2%. Predicting a
+clean sweep would be predicting against the instrument's own history.
+
+### P25.4 — the static level-3 point estimate lands under 2% on decode
+
+Session 1 measured +0.67% [+0.12, +1.67] at 8 threads, and session 2 could not
+certify it twice. This is the same workload, the same thread count and the same
+binary pair, so the *point estimate* should land under 2% whether or not it is
+certified. A point estimate above 2% would mean something changed in the
+instrumentation between session 1 and now, and 174 lines of patch say it did
+not.
+
+### One contaminated observation, disclosed
+
+Before starting the harness both shared binaries were smoke-tested with a single
+`-r 1` run each to prove the DLLs resolve — ON first, then OFF, which read the
+840 MB model cold and then warm. It showed the ON build 12% slower on decode.
+**That number is an artifact of the ordering and is not evidence for anything**;
+it is written down because it was seen before these predictions, and because
+"trace-derived throughput is not throughput" and "one run is one draw" are two
+lessons this project has already paid for. The harness interleaves for exactly
+this reason.
+
+### What would make this uninteresting
+
+If both builds land under 1% and neither certifies, the finding is "still below
+the noise floor, in both configurations" — which closes item 7 as an honest
+negative and is worth the run, but is not a result anybody would quote.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
