@@ -121,7 +121,7 @@ The short version:
 
 | Gap | Why it matters |
 |---|---|
-| Linux / GCC never built or measured | Everything so far is MSVC on Windows, and F9/F10 both measured the non-OpenMP barrier path |
+| Linux / GCC never built or measured | Everything so far is MSVC on Windows. **The barrier-path half of this gap was wrong for four sessions (F26):** F9/F10 measured the *OpenMP* path, which is also Linux's default, so what is untested is GCC and the `libgomp` runtime, not a different barrier algorithm |
 | ~~No real quantized model~~ | **Done (F12).** Qwen2.5-0.5B Q4_K_M is in `models/`, gitignored. Largest real model measured is 630 M params |
 | ~~Shared-library build is BROKEN~~ | **Fixed (F22).** F18's option 2, implemented and verified: each module caches its own `ts_tls`, all resolving to one registry-owned buffer. `BUILD_SHARED_LIBS=ON` links and traces correctly. Two-module regression test passes on all three toolchains; **llama.cpp shared on Linux still untested**, and the shared build's overhead has never been measured |
 | ~~Sampling / tokenizer scopes not written~~ | **Done (F11).** `llama-cli` is now built in `build-ts-on`. Sampling + detokenization are 0.13% of a token |
@@ -505,9 +505,11 @@ the 8B is F19/F21) and added a new one at the top that did not exist before.
 2. **Linux + GCC**, unchanged from session 2 and still the blocker for the main
    upstream conversation. The detail is in section 5 of the previous revision
    and still accurate: `ggml_graph_compute_thread` is shared, so the scopes fire,
-   but `ggml_barrier` is `#pragma omp barrier` instead of the atomic spin-wait
-   measured here. F9's *structural* claims should transfer; every barrier *cost*
-   number may not transfer at all.
+   and `ggml_barrier` is `#pragma omp barrier` -- **which is also what was
+   measured here**, contrary to what this item said until session 5 (F26).
+   F9's *structural* claims should transfer; every barrier *cost* number is a
+   `vcomp` 2.0 number and may not transfer to `libgomp`, which is a narrower
+   worry than the one this item used to state.
 3. **Perfetto screenshot.** Still the best impact-to-effort item that needs no
    new code, and now with a better trace to use — open
    `examples/qwen3-8b-named-attnout.trace.json`, zoom to 2-3 tokens, put it at

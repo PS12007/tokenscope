@@ -1493,14 +1493,26 @@ writing down.
 
 ## A caveat that applies to every barrier number here
 
-All of them were measured on the **non-OpenMP** threading path (Windows/MSVC,
-ggml's own threadpool), where `ggml_barrier` is an atomic spin-wait using
-`ggml_thread_cpu_relax()`. On Linux `GGML_USE_OPENMP` is the default and
-`ggml_barrier` becomes `#pragma omp barrier` (`ggml-cpu.c:577`) -- a different
-implementation, and OpenMP runtimes generally spin then park rather than
-spinning throughout.
+**Rewritten in session 5. The first version of this section had it exactly
+backwards, and [`F26`](#f26--every-measurement-in-this-project-was-taken-on-the-openmp-path-and-five-documents-said-the-opposite)
+is why.**
 
-The instrumentation itself is fine there: the OpenMP branch calls the same
+All of them were measured on the **OpenMP** threading path.
+`GGML_OPENMP` defaults to ON with no platform condition
+(`ggml/CMakeLists.txt:247`), CMake finds MSVC's `vcomp` here, and every build
+this project has measured compiles `ggml-cpu.c` with `-DGGML_USE_OPENMP` --
+so `ggml_barrier` is `#pragma omp barrier` (`ggml-cpu.c:583`) and
+`llama-bench.exe` imports `_vcomp_barrier` and `_vcomp_fork` to prove it.
+The atomic spin-wait built from `n_barrier` / `n_barrier_passed` and
+`ggml_thread_cpu_relax()` -- which this section used to claim was the thing
+being measured -- **has never been measured by this project at all**.
+
+`GGML_USE_OPENMP` is also the default on Linux, so the barrier *mechanism* is
+the same there. What differs is the OpenMP *runtime*: `vcomp` 2.0 here against
+`libgomp` or `libomp` there, whose spin-then-park policies are tunable
+(`GOMP_SPINCOUNT`, `KMP_BLOCKTIME`) in a way `vcomp` does not document.
+
+The instrumentation is not affected either way: both branches call the same
 `ggml_graph_compute_thread`, so every node and barrier scope is present.
 
 So, splitting the claims by how far they should travel:
@@ -1512,6 +1524,10 @@ So, splitting the claims by how far they should travel:
 - **May not transfer** -- every barrier *cost* figure: F6's 11.2%, F9's
   imbalance/release split, F10's rise to 22.9%, F14's halving under homogeneous
   cores, F15's null result on fusion. These measure one barrier implementation.
+  That is still true, but it is now a **narrower** claim than it was: the
+  implementation is an OpenMP one on both platforms, so what is untested is
+  `libgomp`/`libomp` against `vcomp`, not a spin-wait against a barrier
+  pragma.
 
 Untested either way. Stated here rather than repeated in eight caveat sections.
 
@@ -1908,8 +1924,8 @@ barriers over more work. This is consistent with F15's conclusion that barrier
 ### Caveats
 
 - One model, one quantization, one machine, MSVC Release on Windows 11,
-  i7-14700HX. The barrier and thread numbers are the non-OpenMP path; see the
-  Linux section.
+  i7-14700HX. The barrier and thread numbers are the OpenMP path (`vcomp`);
+  see the Linux section, and F26 for why this line used to say the opposite.
 - Structural columns are a single trace of 6 decode tokens at 6 threads.
   Throughput is `-r 3` decode / `-r 2` prefill from the uninstrumented build.
 - The `ffn_down` experiment is the one result here that does not depend on
@@ -2730,9 +2746,11 @@ rather than by memory.
 
 ### Caveats
 
-- **One machine**, i7-14700HX, 8 P + 12 E, Windows/MSVC, ggml's own threadpool
-  and not OpenMP. The mode logic is platform-independent source; every imbalance
-  number here is this machine's.
+- **One machine**, i7-14700HX, 8 P + 12 E, Windows/MSVC, on the OpenMP
+  threading path (F26 -- this line originally said the opposite). The mode
+  logic is platform-independent source and sits in `mul_mat`, not in the
+  barrier, so it is the caveat least affected by which of the two applies;
+  every imbalance number here is still this machine's.
 - **Two models**, both small and dense, F32 and Q4_K_M. The 8B was not run: its
   `ffn_up` is 192 chunks and stays dynamic through 28 threads, so it offers no
   flip to observe on this machine — which is itself the point that the flip
@@ -3121,6 +3139,127 @@ this reason.
 If both builds land under 1% and neither certifies, the finding is "still below
 the noise floor, in both configurations" — which closes item 7 as an honest
 negative and is worth the run, but is not a result anybody would quote.
+
+---
+
+## F26 — Every measurement in this project was taken on the OpenMP path, and five documents said the opposite
+
+**Workload:** none. This is a fact about the build, found by reading
+`build-ts-on/build.ninja` while configuring an unrelated one, and confirmed four
+ways.
+
+Since session 1 this project has told itself, in
+[`FINDINGS`](#a-caveat-that-applies-to-every-barrier-number-here), in
+[`HANDOFF`](HANDOFF.md), and in [`03`](03-upstream-issue-draft.md), that the
+barrier numbers here come from ggml's **own threadpool** — the atomic spin-wait
+built out of `n_barrier` / `n_barrier_passed` and `ggml_thread_cpu_relax()` —
+and that `#pragma omp barrier` is the *Linux* path that the results might not
+transfer to.
+
+That is backwards. `GGML_OPENMP` defaults to **ON**
+(`ggml/CMakeLists.txt:247`), with no platform condition, and CMake finds OpenMP
+here. Every build this project has ever measured compiled `ggml-cpu.c` with
+`-DGGML_USE_OPENMP`, so `ggml_barrier` has always been the two lines at
+`ggml-cpu.c:583`:
+
+```c
+#ifdef GGML_USE_OPENMP
+    #pragma omp barrier
+#else
+    ... the atomic spin-wait this project believed it was measuring ...
+#endif
+```
+
+### Four independent confirmations
+
+1. **The option.** `option(GGML_OPENMP "ggml: use OpenMP" ON)`, unconditional.
+   `CMakeCache.txt` in `build-ts-on`, `build-ts-off` and `build-ts-shared` all
+   carry `GGML_OPENMP:BOOL=ON` and `GGML_OPENMP_ENABLED:INTERNAL=ON`.
+2. **The configure log.** `-- Found OpenMP: TRUE (found version "2.0")` — MSVC's
+   `vcomp`, which implements OpenMP **2.0**, a 2002 specification.
+3. **The compile line for the exact translation unit.** In
+   `build-ts-on/build.ninja`, the rule producing
+   `ggml-cpu.dir/ggml-cpu/ggml-cpu.c.obj` has
+   `DEFINES = ... -DGGML_USE_OPENMP -DTOKENSCOPE_ENABLED -DTOKENSCOPE_STATIC ...`
+   and passes `-openmp`. Not an inherited property on some other target: the
+   file that contains `ggml_barrier`.
+4. **The linked binary.** `llama-bench.exe` imports `VCOMP140.DLL`, and the
+   named imports it uses are `_vcomp_fork`, `_vcomp_barrier`,
+   `_vcomp_single_begin`, `_vcomp_single_end`, `_vcomp_set_num_threads`,
+   `_vcomp_for_dynamic_init`, `_vcomp_for_dynamic_next` and
+   `_vcomp_reduction_i4`. `_vcomp_barrier` is `#pragma omp barrier`;
+   `_vcomp_fork` is the `#pragma omp parallel num_threads(n_threads)` at
+   `ggml-cpu.c:3427` that dispatches every graph.
+
+The fourth is the one that settles it, because it is evidence from the artifact
+rather than from the build system's intentions.
+
+### What this changes
+
+**It does not change a single measured number.** Everything recorded in F1-F24
+was produced by these binaries; nothing about them has moved. What changes is
+the *label* on those numbers, and labels are what determines how far a result is
+allowed to travel.
+
+- **The barrier caveat inverts.** "These are spin-wait numbers, and Linux uses
+  OpenMP" becomes "these are OpenMP numbers, and Linux uses OpenMP too". The
+  barrier *mechanism* is the same on both platforms. What differs is the
+  *runtime*: MSVC `vcomp` 2.0 here against GNU `libgomp` or LLVM `libomp`
+  there, and their spin-then-park policies are genuinely different — `libgomp`
+  has `GOMP_SPINCOUNT`, `libomp` has `KMP_BLOCKTIME`, and `vcomp` documents
+  neither. So the caveat survives, at a much smaller size: it is now a claim
+  about one OpenMP implementation versus another, not about two different
+  synchronisation algorithms.
+- **The Linux gap gets smaller and better defined.** [`HANDOFF`](HANDOFF.md)
+  section 5 item 2 justified itself with "`ggml_barrier` is `#pragma omp
+  barrier` instead of the atomic spin-wait measured here". The premise was
+  false, so the item's *stated* risk was overstated. Linux/GCC is still
+  unmeasured and still worth doing — different compiler, different vectoriser,
+  different allocator, ELF instead of PE — but not because the barrier is a
+  different thing there.
+- **[`03`](03-upstream-issue-draft.md) is affected in the direction that
+  matters.** It says "Do not file without Linux ... the OpenMP path is the
+  default on Linux", implying the measurements are from a path most users do
+  not run. They are from the path most users *do* run. That is an argument for
+  the evidence being more transferable than the document claims, not less.
+- **The spin-wait path has never been measured by this project at all.** That
+  is the opposite of what `FINDINGS` said, and it is now a thing that can be
+  tested on this machine in an afternoon: `-DGGML_OPENMP=OFF` builds it, so
+  both barrier implementations are available on one CPU, at one thread count,
+  with one model. See [`P27`](#p27--two-barrier-implementations-on-one-machine-predictions).
+
+### The specific sentences that were wrong
+
+| Where | Said | Actually |
+|---|---|---|
+| `FINDINGS` "A caveat that applies to every barrier number here" | "measured on the **non-OpenMP** threading path (Windows/MSVC, ggml's own threadpool)" | measured on the OpenMP path, `_vcomp_barrier` |
+| `FINDINGS` F19 caveats | "The barrier and thread numbers are the non-OpenMP path" | OpenMP path |
+| `FINDINGS` F23 caveats | "ggml's own threadpool and not OpenMP" | OpenMP |
+| `HANDOFF` gap table | "F9/F10 both measured the non-OpenMP barrier path" | OpenMP barrier path |
+| `HANDOFF` section 5 item 2 | "`ggml_barrier` is `#pragma omp barrier` instead of the atomic spin-wait measured here" | it is `#pragma omp barrier` in both places |
+
+F22's caveat in F22 was the one that had it right by accident — "the OpenMP
+threading path rather than ggml's own pool" is listed there as something Linux
+would add, which is true of the *shared* configuration question it was about and
+happened not to repeat the error.
+
+### Why it survived four sessions
+
+Nothing depended on it. No test asserted it, no number moved with it, and it
+appears only inside caveats — the part of a document that exists to say what the
+result does *not* cover, which is exactly the part nobody re-derives. It read
+like a fact about Windows ("MSVC has poor OpenMP support, so llama.cpp uses its
+own pool") that is plausible, was never written down as a measurement, and was
+copied forward five times because each copy was quoting the last one.
+
+The general lesson is narrower than "check your assumptions", which is useless
+advice. It is: **a claim about how your code was built is checkable in one
+command, and a caveat is a claim.** `grep GGML_USE_OPENMP build.ninja` would
+have cost four seconds in session 1. The same command answers it for any
+`#ifdef` that a finding's scope depends on, and this project has several — the
+first thing F26 did after finding this was check `TOKENSCOPE_TSC`, which is
+**OFF**, meaning `ts_now()` is `steady_clock::now()` and not `__rdtsc()` in
+every number quoted here too. That one the documents had right.
 
 ---
 

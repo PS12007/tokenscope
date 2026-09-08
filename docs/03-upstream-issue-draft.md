@@ -35,11 +35,21 @@ revised as the data improves.
       with shared libraries on Linux is still untested and folds into the
       Linux gap below
 
-**The Linux gap is the one that should block filing.** Every number below comes
-from the non-OpenMP barrier path, and `GGML_USE_OPENMP` is the default on Linux
-and takes a *different* branch in `ggml_graph_compute`. Filing an issue whose
-central measurements a maintainer cannot reproduce on their own machine is
-worse than not filing.
+**The Linux gap still blocks filing, but for weaker reasons than this paragraph
+used to give.** It used to say that every number below comes from the
+non-OpenMP barrier path while `GGML_USE_OPENMP` is the default on Linux, so a
+maintainer would be reading measurements from a branch they do not run. That
+was **false** — see [`FINDINGS` F26](FINDINGS.md). `GGML_OPENMP` defaults to ON
+here too; every build this project has measured took the `#pragma omp barrier`
+branch and `llama-bench.exe` imports `_vcomp_barrier` to prove it. So the
+measurements come from the *same* branch a Linux maintainer runs, and what
+differs is the OpenMP runtime underneath it (`vcomp` 2.0 against `libgomp` or
+`libomp`) plus the compiler, the vectoriser and the object format.
+
+What remains, and is still enough to wait on: nothing here has been built with
+GCC, so "it compiles and the scopes fire on Linux" is an inference and not an
+observation, and a proposal to instrument ggml that has only ever been built
+with one compiler is not ready to be argued for.
 
 ---
 
@@ -440,7 +450,8 @@ existing conventions.
 - Question 3 is the one that decides everything. If the answer is no, the
   project stays out-of-tree and that is a perfectly good outcome — worth saying
   so in the thread rather than arguing.
-- Do not file without Linux. See the prerequisites note: the OpenMP path is the
-  default there and is a different branch from everything measured here.
+- Do not file without Linux. See the prerequisites note — but note that the
+  reason has changed: the OpenMP path is the default there **and here**
+  (F26), so the remaining gap is GCC, not the barrier branch.
 - Keep it short enough to read on a phone. The findings list is four bullets on
   purpose; the design docs are one link away for anyone who wants them.
