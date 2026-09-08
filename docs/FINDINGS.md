@@ -2376,6 +2376,147 @@ thread-local that points into it.
 
 ---
 
+## P23 — ggml's matmul has two partitioning modes, and adding threads can lose you the good one
+
+**Dated 2026-09-07, session 4. Written and committed before the measurement**,
+which is the habit sessions 2 and 3 found most valuable. Four predictions were
+tested in session 2 and two were wrong; six in session 3 and one was wrong.
+
+### The mechanism, from the source
+
+`ggml_compute_forward_mul_mat` picks its partitioning at runtime:
+
+```c
+int chunk_size = 16;
+if (nr0 == 1 || nr1 == 1) chunk_size = 64;      // decode: nr1 == 1
+
+int64_t nchunk0 = (nr0 + chunk_size - 1) / chunk_size;
+int64_t nchunk1 = (nr1 + chunk_size - 1) / chunk_size;
+
+if (nchunk0 * nchunk1 < nth * 4 || ggml_is_numa()) {
+    nchunk0 = nr0 > nr1 ? nth : 1;              // one chunk per thread
+    nchunk1 = nr0 > nr1 ? 1 : nth;
+}
+...
+int current_chunk = ith;
+while (current_chunk < nchunk0 * nchunk1) {
+    ...
+    current_chunk = ggml_threadpool_chunk_add(params->threadpool, 1);
+}
+```
+
+— `ggml/src/ggml-cpu/ggml-cpu.c`, at the pin `4d91760`.
+
+Above the threshold there are more chunks than threads and they are claimed from
+a shared atomic counter: a slow core takes fewer chunks and the node still ends
+when the *work* ends. **That is work stealing, and it makes core heterogeneity
+free.** Below the threshold each thread gets exactly one equal slice and the
+node ends when the slowest thread ends.
+
+The condition is `nchunk0 * nchunk1 < nth * 4`. `nchunk0` is fixed by the
+model's shape; `nth` is not. **So raising the thread count can move a matmul
+from the self-balancing mode into the equal-slice mode.** `tools/mulmat_chunking.py`
+computes which mode each matmul takes, from the GGUF tensor table alone:
+
+```
+mid.gguf (24L, n_embd 768, n_ff 3072)     t=8         t=16        t=28
+  attn_q            nr0    768        static/8    static/16   static/28
+  attn_output       nr0    768        static/8    static/16   static/28
+  ffn_down          nr0    768        static/8    static/16   static/28
+  ffn_gate          nr0   3072         dynamic    static/16   static/28   <- flips
+  ffn_up            nr0   3072         dynamic    static/16   static/28   <- flips
+  output            nr0   8192         dynamic     dynamic     dynamic
+```
+
+`ffn_gate` and `ffn_up` are 48 natural chunks. At 8 threads the threshold is 32
+and they self-balance; at 16 it is 64 and they do not.
+
+### The baseline is already in a committed trace
+
+`examples/mid-24L-L3-tok10-11.trace.json`, 8 threads, `--barriers`. Imbalance
+divided by work, for the matmuls, with the mode this tool assigns:
+
+| node | mode at t=8 | work | imbalance | imbalance/work |
+|---|---|---|---|---|
+| `ffn_out` (`ffn_down`) | static/8 | 88.93 ms | 10.19 ms | **0.115** |
+| `attn_out` | static/8 | 22.55 ms | 2.90 ms | **0.129** |
+| `Qcur` | static/8 | 23.19 ms | 3.14 ms | **0.135** |
+| `ffn_up` | dynamic | 88.39 ms | 5.61 ms | **0.063** |
+| `ffn_gate` | dynamic | 88.61 ms | 4.05 ms | **0.046** |
+
+Three static matmuls cluster at 0.115–0.135. Two dynamic ones sit at 0.046–0.063,
+roughly half. And `ffn_down` against `ffn_up`/`ffn_gate` is close to a controlled
+comparison: same phase, same layer, adjacent in the graph, the same 768×3072
+parameter count, the same dtype, and **work within 0.6% of each other** (88.93,
+88.39, 88.61 ms). The mode is the salient difference.
+
+That is suggestive and it is not yet a test, because it is one trace at one
+thread count and the modes are confounded with `nr0`. The prediction below is
+the test, because it moves the mode while holding the tensor fixed.
+
+### P23.1 — `ffn_up` and `ffn_gate` lose self-balancing between 8 and 16 threads
+
+**Predict their imbalance/work roughly doubles**, from 0.046–0.063 at 8 threads
+to **above 0.10** at 16 and 28, joining the static cluster.
+
+Falsified if they stay below 0.08 at 16 threads, which would say the mode does
+not govern and the 8-thread gap was about `nr0` or about where the node sits in
+the graph.
+
+### P23.2 — the controls do not move the same way
+
+`ffn_down`, `attn_out` and `Qcur` are static at every thread count tested, so
+their imbalance/work should **not** show the same jump. It need not be flat —
+more threads means more arrivals to wait for, and F10 already measured total
+barrier wait rising from 11.2% to 22.9% between 8 and 28 threads — but the
+*ratio* of `ffn_up` to `ffn_down` should collapse toward 1.
+
+**Predict `ffn_up`/`ffn_down` imbalance-per-work goes from ~0.55 at 8 threads to
+above 0.8 at 16 threads.** This is the sharper form of P23.1 and the one I would
+defend, because it divides out any effect that raises every node's imbalance
+together.
+
+### P23.3 — `output` (`lm_head`) stays self-balancing throughout
+
+8192 rows is 128 chunks, above the threshold even at 28 threads (112). It is the
+control that stays in the good mode the whole way.
+
+**Predict its imbalance/work stays below the static cluster at every thread
+count tested.** Falsified if it rises with the others, which would mean the
+whole effect is thread count rather than mode.
+
+### What this would mean for section 5 item 5
+
+Item 5 is proportional row assignment — give faster cores more rows — and the
+HANDOFF calls it the largest change this project has pointed at. If P23 holds it
+reshapes the proposal in two ways, and both are worth having before writing a
+patch rather than after:
+
+1. **ggml already solves this for large matmuls, by work stealing rather than by
+   prediction.** Proposing static proportional assignment for nodes that are
+   already dynamically chunked would be proposing a worse version of a mechanism
+   that is already there. F15 is what happens when a plausible fix goes out
+   unmeasured.
+2. **The interesting change may be the threshold, not the assignment.** If the
+   equal-slice fallback is what costs, then `nchunk0 * nchunk1 < nth * 4` is the
+   line to argue about — and lowering the multiplier, or chunking more finely
+   when threads are heterogeneous, is a much smaller change than reworking row
+   assignment across every op.
+
+Neither follows unless P23 holds. Recorded before measuring so that it cannot be
+remembered as having been obvious.
+
+### What would make this uninteresting
+
+If total barrier wait at 16 and 28 threads is dominated by something else
+entirely — spin-up, or the near-serial elementwise nodes F9 found — then the
+matmul mode could flip exactly as predicted and be worth nothing. F9 measured
+the elementwise nodes at 14% of imbalance on this model at 8 threads; if that
+share grows sharply with thread count, the matmul story is a footnote. The
+measurement should report both.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
