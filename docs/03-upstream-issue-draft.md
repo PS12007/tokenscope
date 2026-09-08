@@ -22,8 +22,9 @@ revised as the data improves.
 - [x] `BUILD_SHARED_LIBS=ON` linking — F18 found it broken, F22 fixed it. Each
       module caches its own thread-local and they all resolve to the one
       registry-owned buffer, so the hot path keeps its single unguarded load.
-      **MSVC only**; GCC and Clang are untested and fold into the Linux gap
-      below
+      The two-module regression test runs on MSVC, GCC and Clang; llama.cpp
+      with shared libraries on Linux is still untested and folds into the
+      Linux gap below
 
 **The Linux gap is the one that should block filing.** Every number below comes
 from the non-OpenMP barrier path, and `GGML_USE_OPENMP` is the default on Linux

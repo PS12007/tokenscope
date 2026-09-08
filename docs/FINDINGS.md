@@ -2308,12 +2308,17 @@ to assert quantities, not the absence of errors.
 
 ### Caveats
 
-- **MSVC only, again.** GCC and Clang were never the ones complaining — F18's
-  C2492 is an MSVC diagnostic and the ELF thread-local story is different. The
-  change should be harmless there (a `static __thread` in a header is ordinary),
-  but "should be" is doing work in that sentence and CI is the only thing that
-  will check it. This does not close the Linux gap; it removes one thing that
-  was hiding behind it.
+- **The mechanism is verified on GCC and Clang; llama.cpp's shared build on
+  Linux is not.** These are different claims and the difference matters. The
+  two-module test passes on ubuntu-latest (GCC 13.3.0) and macos-latest, so
+  "each shared object gets its own `ts_tls`, and they all resolve to one
+  registry-owned buffer" is measured on all three toolchains rather than
+  reasoned about — which is more than the first draft of this section claimed,
+  and it was written before CI had run. What remains untested is llama.cpp
+  itself with `BUILD_SHARED_LIBS=ON` on Linux, which is a bigger configuration
+  than the test: real `.so` boundaries between `ggml-base`, `ggml-cpu` and
+  `llama`, and the OpenMP threading path rather than ggml's own pool. This
+  narrows the Linux gap. It does not close it.
 - **No overhead re-measurement.** The hot path is unchanged by inspection — same
   instruction sequence, one load of a thread-local — but the shared build has
   never had its overhead measured at all, and the harness has declined to

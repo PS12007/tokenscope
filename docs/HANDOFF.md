@@ -9,8 +9,9 @@ the project back up.
 raw thread-local and the registry's need for one instance across DLLs — both
 true, but `ts_tls` is a cache and the buffer is the state, so the cache never
 needed to be single-instance. Each module now keeps its own and they all resolve
-to one registry-owned buffer; the hot path is unchanged. MSVC only, and the
-shared build's overhead is still unmeasured.
+to one registry-owned buffer; the hot path is unchanged. A two-module test now
+guards it on all three CI platforms. The shared build's overhead is still
+unmeasured.
 
 **Session 3 in one paragraph.** Ran the 8B that section 5 item 4 was waiting on
 — it was already on the machine, pulled by Ollama, no download needed. Wrote six
@@ -65,7 +66,7 @@ The short version:
 |---|---|
 | Linux / GCC never built or measured | Everything so far is MSVC on Windows, and F9/F10 both measured the non-OpenMP barrier path |
 | ~~No real quantized model~~ | **Done (F12).** Qwen2.5-0.5B Q4_K_M is in `models/`, gitignored. Largest real model measured is 630 M params |
-| ~~Shared-library build is BROKEN~~ | **Fixed (F22).** F18's option 2, implemented and verified: each module caches its own `ts_tls`, all resolving to one registry-owned buffer. `BUILD_SHARED_LIBS=ON` links and traces correctly. **MSVC only — GCC/Clang untested**, and the shared build's overhead has never been measured |
+| ~~Shared-library build is BROKEN~~ | **Fixed (F22).** F18's option 2, implemented and verified: each module caches its own `ts_tls`, all resolving to one registry-owned buffer. `BUILD_SHARED_LIBS=ON` links and traces correctly. Two-module regression test passes on all three toolchains; **llama.cpp shared on Linux still untested**, and the shared build's overhead has never been measured |
 | ~~Sampling / tokenizer scopes not written~~ | **Done (F11).** `llama-cli` is now built in `build-ts-on`. Sampling + detokenization are 0.13% of a token |
 | ~~Context-shift behaviour~~ | **Done (F16).** 4 spikes in 699 tokens at `-c 256`, 1.13-1.34x median |
 | Concurrent sequences / server workload | The last untested prediction in F2, and F16 says it is still plausible: the head-pointer trick that makes `find_slot` O(1) is much weaker with many streams |
