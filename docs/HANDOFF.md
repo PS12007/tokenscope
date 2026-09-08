@@ -8,8 +8,8 @@ the project back up.
 build works (**F22**) — and then **re-scoped item 5 out from under itself
 (F23)**: item 5 assumed ggml gives every thread an equal share of rows, and for
 matmul that is only half true. Above `nchunk0 * nchunk1 >= nth * 4` threads
-steal chunks from an atomic counter, and a matmul in that mode carries about a
-third the arrival imbalance per unit work. So ggml already solves core
+steal chunks from an atomic counter, and a matmul in that mode carries roughly a
+third to a half the arrival imbalance per unit work. So ggml already solves core
 heterogeneity for big matmuls, by a method that needs no model of core speed —
 but the threshold contains `nth`, so **adding threads can turn it off**. Twelve
 runs at each of six points, two models, with a cross-model control at a fixed
@@ -378,7 +378,7 @@ the 8B is F19/F21) and added a new one at the top that did not exist before.
    hands every thread an equal share of rows. **F23 found that premise is only
    half true**: `ggml_compute_forward_mul_mat` steals work from a shared atomic
    counter whenever `nchunk0 * nchunk1 >= nth * 4`, and a matmul in that mode has
-   about **a third** the arrival imbalance per unit work of one that is not
+   roughly **a third to a half** the arrival imbalance per unit work of one that is not
    (0.34–0.56 against 0.94–1.51, two models, **twelve runs per arm**, two of the
    comparisons with non-overlapping ranges). Work stealing needs no
    model of core speed, so for large matmuls ggml already solves what
