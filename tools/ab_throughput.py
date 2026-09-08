@@ -2,8 +2,11 @@
 """Compare two llama-bench binaries on throughput, interleaved, with a CI.
 
 Written for FINDINGS F24, which used it to measure a one-line ggml change at
-+1.95% [+1.59, +2.35] on decode -- the first throughput result this project has
-ever certified.
++1.95% [+1.59, +2.35] on decode -- the first throughput result this project
+ever called certified. **That interval was measured with --blocks 1 and is
+narrower than the truth**: it resamples one pass and cannot see drift between
+passes, which FINDINGS F31 caught doing real damage elsewhere. Pass --blocks 3
+and quote the t interval.
 
 Two rules are baked in because breaking either produced a wrong answer once:
 
@@ -46,7 +49,7 @@ import sys
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 
-from bench_overhead import bootstrap_ratio_ci  # noqa: E402
+from bench_overhead import bootstrap_ratio_ci, between_block_ci  # noqa: E402
 
 
 def run_once(exe, model, n_prompt, n_gen, threads, reps):
@@ -80,6 +83,14 @@ def main() -> int:
     ap.add_argument("--n-gen", type=int, default=64)
     ap.add_argument("--n-prompt", type=int, default=64,
                     help="0 to skip the prefill control")
+    ap.add_argument("--blocks", type=int, default=1, metavar="N",
+                    help="run the whole interleave N times as separate blocks "
+                         "and report a t interval over their point estimates. "
+                         "The bootstrap below resamples WITHIN a block and is "
+                         "blind to drift between them -- FINDINGS F31 found two "
+                         "of its intervals, for one quantity on unrebuilt "
+                         "binaries, that did not overlap. Use 3 or more before "
+                         "quoting any number from this tool")
     args = ap.parse_args()
 
     for path in (args.a, args.b):
@@ -90,20 +101,32 @@ def main() -> int:
               "file, everything below is measuring noise.\n")
 
     res = collections.defaultdict(lambda: collections.defaultdict(list))
+    per_block = collections.defaultdict(list)      # test -> [point estimate]
     arms = {"a": args.a, "b": args.b}
 
-    for i in range(args.rounds):
-        order = ["a", "b"] if i % 2 == 0 else ["b", "a"]
-        for name in order:
-            got = run_once(arms[name], args.model, args.n_prompt,
-                           args.n_gen, args.threads, args.reps)
-            for test, ts in got.items():
-                res[test][name].append(ts)
-        print("  round %d/%d" % (i + 1, args.rounds), flush=True)
+    for blk in range(args.blocks):
+        cur = collections.defaultdict(lambda: collections.defaultdict(list))
+        for i in range(args.rounds):
+            # which arm leads flips each round, and the block index offsets it,
+            # so block 2 does not repeat block 1's lead pattern
+            order = ["a", "b"] if (i + blk) % 2 == 0 else ["b", "a"]
+            for name in order:
+                got = run_once(arms[name], args.model, args.n_prompt,
+                               args.n_gen, args.threads, args.reps)
+                for test, ts in got.items():
+                    res[test][name].append(ts)
+                    cur[test][name].append(ts)
+            print("  block %d/%d  round %d/%d"
+                  % (blk + 1, args.blocks, i + 1, args.rounds), flush=True)
+        for test in cur:
+            a, b = cur[test]["a"], cur[test]["b"]
+            if a and b and statistics.median(a) > 0:
+                per_block[test].append(
+                    100.0 * (statistics.median(b) / statistics.median(a) - 1.0))
 
     print()
-    print("throughput, tok/s, %d interleaved rounds per arm, %d threads"
-          % (args.rounds, args.threads))
+    print("throughput, tok/s, %d rounds per arm x %d block(s), %d threads"
+          % (args.rounds, args.blocks, args.threads))
     print("  a = %s" % args.a)
     print("  b = %s" % args.b)
     print()
@@ -119,13 +142,31 @@ def main() -> int:
         print("  %s" % test)
         print("    a  median %9.2f   min %9.2f   max %9.2f" % (ma, min(a), max(a)))
         print("    b  median %9.2f   min %9.2f   max %9.2f" % (mb, min(b), max(b)))
-        print("    b vs a  %+.2f%%  [%+.2f, %+.2f]  95%% CI" % (pt, lo, hi))
-        print("    %s" % ("CERTIFIED: the interval excludes zero" if lo > 0 or hi < 0
-                          else "not certified: the interval contains zero"))
+        print("    b vs a  %+.2f%%  [%+.2f, %+.2f]   bootstrap, WITHIN-RUN only"
+              % (pt, lo, hi))
+        pts = per_block.get(test, [])
+        if len(pts) > 1:
+            mean, blo, bhi, spread = between_block_ci(pts)
+            print("      blocks: %s" % "  ".join("%+.2f" % x for x in pts))
+            print("      spread %.2f pp across blocks" % spread)
+            print("    b vs a  %+.2f%%  [%+.2f, %+.2f]   <-- QUOTE THIS (t, %d blocks)"
+                  % (mean, blo, bhi, len(pts)))
+            if blo > 0 or bhi < 0:
+                print("      resolved: the between-block interval excludes zero")
+            else:
+                print("      NOT resolved: the between-block interval contains zero")
+                if lo > 0 or hi < 0:
+                    print("      -- and the bootstrap above said otherwise. That gap")
+                    print("         is drift the bootstrap cannot see. Believe the t.")
+        else:
+            print("    RESOLVED WITHIN THIS RUN%s -- which is not reproducibility."
+                  % ("" if (lo > 0 or hi < 0) else " (interval contains zero)"))
+            print("    Re-run with --blocks 3 before quoting this. F31 found two")
+            print("    such intervals for one quantity that did not overlap.")
         print()
 
-    print("  A certified control workload means the comparison is wrong, not that")
-    print("  the change is good. Check the binaries differ only as intended.")
+    print("  A control workload that also moves means the comparison is wrong, not")
+    print("  that the change is good. Check the binaries differ only as intended.")
     return 0
 
 

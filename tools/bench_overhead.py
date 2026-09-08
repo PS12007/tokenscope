@@ -129,6 +129,53 @@ def iqr(xs: list[float]) -> float:
     return q[2] - q[0]
 
 
+# Student's t, two-sided 95%, by degrees of freedom. Small-sample values matter
+# here because B is 3 or 5, never 30, and using 1.96 at B=3 would understate the
+# interval by more than a factor of two -- which is the exact failure this whole
+# addition exists to stop repeating.
+_T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447,
+        7: 2.365, 8: 2.306, 9: 2.262, 10: 2.228, 11: 2.201, 12: 2.179,
+        13: 2.160, 14: 2.145, 15: 2.131, 16: 2.120, 17: 2.110, 18: 2.101,
+        19: 2.093, 20: 2.086, 25: 2.060, 30: 2.042}
+
+
+def t95(df: int) -> float:
+    if df <= 0:
+        return float("nan")
+    if df in _T95:
+        return _T95[df]
+    if df > 30:
+        return 1.960
+    return _T95[max(k for k in _T95 if k < df)]
+
+
+def between_block_ci(points: list[float], conf: float = 0.95
+                     ) -> tuple[float, float, float, float]:
+    """Interval on the mean of per-block point estimates. Returns
+    (mean, lo, hi, spread).
+
+    This is the interval to quote. The bootstrap resamples inside ONE block and
+    therefore cannot see drift between blocks; F31 found two of its intervals,
+    for one quantity on unrebuilt binaries, that did not overlap. Each block is
+    a fresh pass over every arm, so the spread of their point estimates carries
+    the between-pass variation the bootstrap is blind to -- and it carries the
+    within-block noise too, since each block's estimate contains it.
+
+    With B blocks the interval is mean +- t(B-1) * s / sqrt(B). At B=3 that t is
+    4.303, which is deliberately unflattering: three passes do not pin a number
+    down, and an interval that pretends otherwise is how this project got here.
+    """
+    good = [x for x in points if x == x]                # drop NaN
+    n = len(good)
+    if n == 0:
+        return float("nan"), float("nan"), float("nan"), float("nan")
+    mean = statistics.mean(good)
+    spread = max(good) - min(good)
+    if n < 2:
+        return mean, float("nan"), float("nan"), spread
+    half = t95(n - 1) * statistics.stdev(good) / (n ** 0.5)
+    return mean, mean - half, mean + half, spread
+
 def bootstrap_ratio_ci(base: list[float], test: list[float],
                        iters: int = 20000, conf: float = 0.95,
                        seed: int = 0xC0FFEE) -> tuple[float, float, float]:
@@ -407,11 +454,11 @@ def main() -> int:
         # for one quantity, on unrebuilt binaries two hours apart, came out
         # NON-OVERLAPPING. Blocks estimate the part the bootstrap cannot see.
         if len(blocks) > 1:
-            print("  each block's own point estimate (bootstrap sees none of this)")
-            print(f"  {'arm':<32}" + "".join(f"{'blk ' + str(i + 1):>9}"
+            print("  each block's own point estimate, and the interval to quote")
+            print(f"  {'arm':<28}" + "".join(f"{'blk ' + str(i + 1):>8}"
                                              for i in range(len(blocks)))
-                  + f"{'spread':>10}")
-            print("  " + "-" * 76)
+                  + f"{'spread':>9}{'mean':>8}{'95% CI (t)':>20}")
+            print("  " + "-" * 88)
             worst = 0.0
             for arm in arms:
                 if arm.kind == "A":
@@ -423,16 +470,17 @@ def main() -> int:
                     mt = statistics.median(t) if t else 0.0
                     pts.append(100.0 * (statistics.median(b) / mt - 1.0)
                                if b and mt > 0 else float("nan"))
-                good = [x for x in pts if x == x]
-                sp = (max(good) - min(good)) if len(good) > 1 else 0.0
-                worst = max(worst, sp)
-                print(f"  {arm.label:<32}"
-                      + "".join(f"{x:>+9.2f}" for x in pts)
-                      + f"{sp:>9.2f}pp")
+                mean, lo, hi, sp = between_block_ci(pts)
+                worst = max(worst, sp if sp == sp else 0.0)
+                ci = f"[{lo:+.2f}, {hi:+.2f}]" if lo == lo else "--"
+                print(f"  {arm.label:<28}"
+                      + "".join(f"{x:>+8.2f}" for x in pts)
+                      + f"{sp:>8.2f}{mean:>+8.2f}{ci:>20}")
             print(f"\n  widest between-block spread: {worst:.2f}pp.")
-            if worst > 0.5:
-                print("  That is the uncertainty a single invocation's CI does NOT")
-                print("  contain. Quote the range across blocks, not one interval.")
+            print("  QUOTE THE t INTERVAL, not the bootstrap one above it. The")
+            print("  bootstrap resamples within a block and cannot see drift")
+            print("  between them; this column can. At 3 blocks t is 4.303, so")
+            print("  the interval is wide on purpose -- three passes prove little.")
             print()
         # -- pair vs pair ---------------------------------------------------
         # The point of one invocation: these four arms shared a round-robin,
