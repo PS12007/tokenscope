@@ -133,7 +133,7 @@ The short version:
 | ~~Context-shift behaviour~~ | **Done (F16).** 4 spikes in 699 tokens at `-c 256`, 1.13-1.34x median |
 | Concurrent sequences / server workload | The last untested prediction in F2, and F16 says it is still plausible: the head-pointer trick that makes `find_slot` O(1) is much weaker with many streams |
 | ~~Larger real model~~ | **Done (F19, F21).** Three more real models measured, to 8.19 B. Biggest is now 8.19 B; **no MoE model at all**, which is the clearest remaining gap. Session 4 asked and was told **not to download one** — it needs several GB and free RAM is ~7 GB against the 8B's 4.86 GiB. Ask again rather than assuming |
-| No Perfetto screenshot | Blocks the README and several posts. **Still the best impact-to-effort item that needs no new code**, and the reference trace for it is now `examples/qwen3-8b-named-attnout.trace.json` |
+| ~~No Perfetto screenshot~~ | **Sidestepped in session 5.** `tools/trace_svg.py` renders one token from a committed trace as a theme-aware SVG, and the README opens with it. That is better than a screenshot for a repo -- it is text, it diffs, and anyone who clones can regenerate it -- but it is **not** the Perfetto UI, and a post that wants to show the UI still wants a screenshot |
 | ~~No thread pinning~~ | **Done (F14).** Mechanism confirmed: homogeneous cores drop spread 13%->2% and halve barrier wait. Pinning is not the fix |
 | Upstream issue not filed | Two issues now, and [`03`](03-upstream-issue-draft.md) says which goes first. **The F20 naming defect is not blocked on Linux** and should be filed on its own; the instrumentation proposal still is. **An agent must not write or file it** — see the box at the top of `03` |
 | Shared build's overhead still unmeasured | The `GGML_TOKENSCOPE=OFF` shared build now exists (`build-ts-shared-off`, session 5) and the run happened — but at a 2.22% noise floor, so every interval spanned zero and the harness refused. **F25 says the fix is not more reps:** the shared and static pairs were two invocations and `bench_overhead.py` only interleaves within one, so the comparison the question needs has never actually been run |
@@ -522,10 +522,13 @@ the 8B is F19/F21) and added a new one at the top that did not exist before.
    F9's *structural* claims should transfer; every barrier *cost* number is a
    `vcomp` 2.0 number and may not transfer to `libgomp`, which is a narrower
    worry than the one this item used to state.
-3. **Perfetto screenshot.** Still the best impact-to-effort item that needs no
-   new code, and now with a better trace to use — open
-   `examples/qwen3-8b-named-attnout.trace.json`, zoom to 2-3 tokens, put it at
-   the top of the README. Blocks post B5.
+3. ~~**Perfetto screenshot.**~~ **Largely done in session 5, by other means.**
+   `tools/trace_svg.py` draws one token per-thread from a committed trace and
+   the README leads with `docs/token-timeline.svg`; a second figure from the 8B
+   is at `docs/token-timeline-8b.svg`. What is left is only the part that
+   genuinely needs a browser: an actual Perfetto screenshot for post B5, where
+   the point is partly "this opens in the tool you already use". Open
+   `examples/qwen3-8b-named-attnout.trace.json` there and zoom to 2-3 tokens.
 4. **An MoE model.** The clearest remaining gap in the byte law. F21 covers three
    architectures and a 13.7x range of `lm_head` share, but every model measured
    is dense, and MoE is the case where bytes-streamed-per-token stops being a
