@@ -100,7 +100,8 @@ runs at each of six points, two models, with a cross-model control at a fixed
 thread count; two of the comparisons have non-overlapping ranges.
 
 Then **F24 acted on it**: one line, `nth * 4` -> `nth * 2` in `mul_mat`,
-measured at **+1.95% [+1.59, +2.35] on decode, certified** by
+re-measured in session 6 at **+1.62% [+1.10, +2.15] on decode** (F33; F24's
+**+1.95% [+1.59, +2.35]** was a single run's bootstrap and too narrow), by
 `bench_overhead.py`'s own bootstrap over 20 interleaved rounds. That harness
 has declined to certify six times across four sessions; this is the first
 thing it has ever passed. Prefill is the control and stays uncertified, which
@@ -199,7 +200,7 @@ The short version:
 | ~~No thread pinning~~ | **Done (F14).** Mechanism confirmed: homogeneous cores drop spread 13%->2% and halve barrier wait. Pinning is not the fix |
 | Upstream issue not filed | Two issues now, and [`03`](03-upstream-issue-draft.md) says which goes first. **The F20 naming defect is not blocked on Linux** and should be filed on its own; the instrumentation proposal still is. **An agent must not write or file it** — see the box at the top of `03` |
 | ~~Shared build's overhead still unmeasured~~ | **Done (F30).** +0.87% [+0.55, +1.19] at level 3, certified. F25 was right that the fix was a harness change and not more reps: `bench_overhead.py` now takes N build pairs with `--pair` and round-robins every arm of every pair together. What is *still* open is the difference between the builds, which came out bounded but unresolved at +0.36pp [-0.32, +1.17] |
-| F24 not raised upstream, and `mul_mat_id` untested | The +1.95% is one machine, one thread count, one model, and no NUMA hardware — and NUMA is what the constant was tuned for |
+| F24 not raised upstream, and `mul_mat_id` untested | Now **+1.62% [+1.10, +2.15]** (F33), one machine, one thread count, one model, no NUMA — and NUMA is what the constant was tuned for. **F33 also found the prefill control drifting negative**, so some unknown fraction may be code layout rather than chunking (audit M6) |
 
 ---
 
@@ -955,7 +956,7 @@ Added by session 5, in rough order of how much they would have saved:
 | Shared-library build | links and traces correctly on MSVC; overhead unmeasured | [`FINDINGS`](FINDINGS.md) F22 |
 | Matmul arrival imbalance, work-stealing vs equal-slice | **0.34-0.56x** against 0.94-1.51; two comparisons with non-overlapping ranges, n=12 per arm | [`FINDINGS`](FINDINGS.md) F23 |
 | Per-node imbalance, spread over 12 identical runs | up to **8.5x** at 8 threads, 1.3-1.5x at 16 | [`FINDINGS`](FINDINGS.md) F23 |
-| Decode speedup from `nth*4` -> `nth*2` in mul_mat | **+1.95% [+1.59, +2.35]**, certified, n=20 interleaved | [`FINDINGS`](FINDINGS.md) F24 |
+| Decode speedup from `nth*4` -> `nth*2` in mul_mat | **+1.62% [+1.10, +2.15]**, t over 6 blocks in 2 runs, 240 rounds/arm. **The prefill control is no longer a clean null** | [`FINDINGS`](FINDINGS.md) F33 |
 | ...same patch on prefill (control) | -0.81% [-2.44, +0.35], **not** certified | [`FINDINGS`](FINDINGS.md) F24 |
 | Barrier wait | 11.2% of worker thread time (post-F28 trace reads 11.5%) | [`FINDINGS`](FINDINGS.md) F6 |
 | ...of which arrival imbalance | **84.6%**, on a post-F28 trace with no artifact to exclude | [`FINDINGS`](FINDINGS.md) F28 |

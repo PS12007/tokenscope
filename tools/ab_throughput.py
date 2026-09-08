@@ -3,10 +3,10 @@
 
 Written for FINDINGS F24, which used it to measure a one-line ggml change at
 +1.95% [+1.59, +2.35] on decode -- the first throughput result this project
-ever called certified. **That interval was measured with --blocks 1 and is
-narrower than the truth**: it resamples one pass and cannot see drift between
-passes, which FINDINGS F31 caught doing real damage elsewhere. Pass --blocks 3
-and quote the t interval.
+ever called certified. **That interval was measured with --blocks 1 and was
+narrower than the truth.** Re-measured over six blocks in FINDINGS F33 it is
++1.62% [+1.10, +2.15]: the effect is real, the precision was not. Pass
+--blocks 3 and quote the t interval.
 
 Two rules are baked in because breaking either produced a wrong answer once:
 

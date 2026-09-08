@@ -23,12 +23,16 @@ Measured on that model at 16 threads, i7-14700HX, Windows/MSVC:
   - arrival imbalance per unit work for `ffn_up` falls 0.210 -> 0.087, and the
     `ffn_up`/`ffn_down` ratio falls 0.967 -> 0.446, with non-overlapping ranges
     over 12 runs per arm
-  - decode throughput +1.95% [+1.59, +2.35], 95% bootstrap CI over 20
-    interleaved rounds per arm, both arms uninstrumented and differing only in
-    this line
-  - prefill throughput -0.81% [-2.44, +0.35], which contains zero — as expected,
-    since prefill is already above the threshold in both arms and so is a
-    control rather than a second result
+  - decode throughput +1.62% [+1.10, +2.15], t interval over six blocks in two
+    independent runs, 240 rounds per arm, both arms uninstrumented and differing
+    only in this line (FINDINGS F33; F24's +1.95% [+1.59, +2.35] came from a
+    single run's bootstrap and was too narrow)
+  - prefill throughput -1.30% [-2.67, +0.06] over the same six blocks, which
+    contains zero but only just, and has been negative in every run. Prefill is
+    above the threshold in both arms and cannot see this change, so a reviewer
+    should treat the control as unclean rather than null. The arms also differ
+    by ~1.1 MB of image, so code layout is not held constant and some unknown
+    fraction of the decode gain may be layout rather than chunking
 
 `ggml_compute_forward_mul_mat_id` carries the identical threshold at the same
 file's line ~1698 and is deliberately NOT changed: it is the MoE path, no MoE

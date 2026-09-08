@@ -12,9 +12,9 @@ and what is broken?**
 Sections 2 and 4 are the ones that did not exist anywhere before. If you read
 two sections, read those.
 
-> **Live caveat.** F24's re-measurement was in flight when this was written.
-> Section 3 marks it accordingly. Anything here that turns out to conflict with
-> the finished F33 should be resolved in favour of F33.
+> **Updated after F33 landed.** F24 has been re-measured: the effect is real at
+> **+1.62% [+1.10, +2.15]** over six blocks, and its prefill control is no
+> longer a clean null, which promotes M6 from caveat to live suspicion.
 
 ---
 
@@ -76,7 +76,7 @@ is a ladder rather than a badge.
 | **A — structural** | Not statistical at all. True by construction, code reading, symbol table or a CI assertion that fails the build | No interval quoted, because none is needed | zero-overhead-when-off; node/barrier alternation; F22's two-module buffer identity; F8/F20 naming coverage |
 | **B — large effect** | Effect is ≫10× the machine's drift term (~0.5pp) | Interval width is irrelevant to the conclusion | F27 (−54% decode), F28 (76–83% of release latency), F10 (2.2× ceiling), F14 (2.88× P/E), F7/F19/F21 byte law ratios |
 | **C — medium, structured** | Effect is several × drift, and supported by a *structure* (control arms, non-overlapping ranges, n≥12) rather than by one interval | Quote with its n and its control | F9 imbalance/release split, F23 chunking-mode ratios (n=12, two non-overlapping comparisons) |
-| **D — near the floor** | Effect is **1–3×** the drift term. This is where every overhead and throughput percentage lives | **Needs a between-block `t` interval. A bootstrap interval here is roughly half as wide as the truth** | F24 (+1.95%), F25 (+1.16%), F30, F31's three overheads |
+| **D — near the floor** | Effect is **1–3×** the drift term. This is where every overhead and throughput percentage lives | **Needs a between-block `t` interval. A bootstrap interval here is roughly half as wide as the truth** | F24 (now +1.62%), F25 (+1.16%), F30, F31's three overheads |
 
 **Everything in Tier D published before session 6 was measured with a
 within-run bootstrap and is over-precise.** Not necessarily wrong in sign — just
@@ -189,7 +189,7 @@ is known to be wrong even though its direction may stand.
 
 | | Finding | Trust |
 |---|---|---|
-| **F24** | One line (`nth*4`→`nth*2`), **+1.95% [+1.59, +2.35]** decode — the only speedup this project claims | ⚠ **D, under re-measurement** |
+| **F24** / **F33** | One line (`nth*4`→`nth*2`), **+1.62% [+1.10, +2.15]** decode over six blocks — the only speedup this project claims. F24's `+1.95% [+1.59, +2.35]` is superseded | **D, re-measured.** Effect real; **the prefill control is no longer a clean null** (-1.30% [-2.67, +0.06]), so part of it may be layout (M6) |
 | **F25** | Static overhead +1.16% [+0.67, +1.87]; shared build's answer eaten by its noise floor | ⚠ D |
 | **F30** | Shared overhead +0.87% [+0.55, +1.19] | ⚠ **D, corrected by F31** |
 | **F31** | Two certified intervals for one quantity that do not overlap; **level 3 is a leveller** | C for the structural claim, ⚠ D for the percentages |
@@ -215,12 +215,16 @@ instrumenting it is cheaper.
 | **M3** | The instability is *within* one invocation (0.47pp between halves of the same run) and its cause is unidentified — not position, not autocorrelation, not the estimator | **Open.** Blocks contain it; nothing explains it |
 | **M4** | F30 and F31 differ in arm order, round length **and** time simultaneously, so the rotation explanation is a story that fits, not evidence | **Open.** The same disease F30 diagnosed in F25 |
 | **M5** | Cross-session comparison of absolute throughput is worthless — the same compiled-out binary read 42.94 and 45.92 tok/s in two sessions (**+6.9%**, ~6× the effects being resolved) | Documented; a standing rule |
-| **M6** | Code layout is not held constant in F24's A/B: stock and patched differ by **1,137,994 bytes** across most of the image. Layout alone can move throughput ~1% | **Open, and unexcludable by this design** |
+| **M6** | Code layout is not held constant in F24's A/B: stock and patched differ by **1,137,994 bytes** across most of the image. Layout alone can move throughput ~1% | **Open, and now supported by evidence.** F33's prefill control — a workload the patch cannot reach — has come back negative in every run (-1.30% [-2.67, +0.06] over six blocks). Separating layout from chunking needs an arm that changes layout without changing behaviour; not done |
 | **M7** | The static pair builds under Ninja and the shared pair under MSBuild, so early cross-pair numbers confound linkage with generator | Fixed by adding a Ninja shared pair (F31); the generator turned out to matter (+0.40% [+0.14, +0.69] on decode) |
 
-**M6 deserves emphasis.** It is the strongest live threat to F24. The prefill
-control argues against a pure layout effect — layout would not politely confine
-itself to decode — but nothing rules it out.
+**M6 deserves emphasis.** It is the strongest live threat to F24, and F33 made
+it worse rather than better. The original argument against it was that the
+prefill control was flat; six blocks later the control is drifting negative,
+which is exactly what a layout effect looks like on a workload that cannot see
+the scheduler change. Decode still moves ~3x further and in the opposite
+direction, which layout alone has no reason to produce — so F24 stands, with an
+unknown fraction of it unattributed.
 
 ### 4.2 Coverage gaps
 
@@ -354,8 +358,9 @@ teaches something and an unanswerable one teaches nothing.
 - F20 as a defect report about llama.cpp naming.
 
 **Safe only with a `t` interval attached** — nothing in Tier D should be quoted
-until re-measured with `--blocks ≥ 3`. Today that means **F24, F25, F30 and
-F31's percentages**.
+until re-measured with `--blocks ≥ 3`. **F24 has been** (F33: +1.62% [+1.10,
++2.15], with M6 attached). Still outstanding: **F25, F30 and F31's
+percentages**.
 
 **Not safe to generalise at all:**
 
@@ -423,23 +428,30 @@ exercised by CI.
 
 ## 8. Open questions, ranked
 
-1. **Re-measure every Tier D number with `--blocks ≥ 3`.** F24 first (in
-   flight), then F25/F30/F31. Until then the project has no quotable percentage.
-2. **Explain M3** — why one invocation's own halves disagree by 0.47pp. Blocks
+1. **Re-measure the remaining Tier D numbers with `--blocks ≥ 3`.** F24 is
+   done (F33). **F25, F30 and F31's overhead percentages are not**, and until
+   they are, the only quotable percentage in this project is F24's.
+   `bench_overhead.py --blocks 3` with the static and shared pairs is one
+   ~45-minute run and closes all three.
+2. **Separate layout from chunking in F24 (M6).** Build a third arm that changes
+   code layout without changing behaviour and measure it against stock. If it
+   moves decode, part of F24 is layout. This is the single most valuable
+   experiment left, because F24 is the one result a maintainer might act on.
+3. **Explain M3** — why one invocation's own halves disagree by 0.47pp. Blocks
    contain the symptom; nothing explains it. Candidates not yet tested: Windows
    scheduler migration, page-cache state, SMT partner activity, turbo residency.
-3. **Sweep "certified" out of the prose** (M2), replacing each use with what was
+4. **Sweep "certified" out of the prose** (M2), replacing each use with what was
    actually established.
-4. **Linux + GCC** (G1) — the blocker for the upstream conversation, and smaller
+5. **Linux + GCC** (G1) — the blocker for the upstream conversation, and smaller
    than it looked once F26 corrected the barrier-path premise.
-5. **An MoE model** (G2) — the most informative single test available, because
+6. **An MoE model** (G2) — the most informative single test available, because
    the byte law should *fail* there. Needs a download and a RAM check; **ask.**
-6. **Decide whether to raise F20 and F24 upstream.** Needs a person, not an
+7. **Decide whether to raise F20 and F24 upstream.** Needs a person, not an
    agent. F20 is the smaller, unblocked one and should go first.
-7. **F27 on a second machine** — the biggest unexploited result in the repo, and
+8. **F27 on a second machine** — the biggest unexploited result in the repo, and
    meaningless as a general claim until someone runs the same protocol on a
    homogeneous part with `libgomp`.
-8. **A Perfetto screenshot**, the one thing `trace_svg.py` cannot replace, for a
+9. **A Perfetto screenshot**, the one thing `trace_svg.py` cannot replace, for a
    post that wants to show the UI.
 
 ---
