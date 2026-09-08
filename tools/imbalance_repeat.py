@@ -52,24 +52,43 @@ DEFAULT_NODES = ("ffn_up", "ffn_gate", "ffn_out", "attn_out", "Qcur", "Kcur")
 
 
 def node_stats(path: str):
-    """work and arrival imbalance per node base name, from one trace.
+    """work, arrival imbalance and total barrier wait per node base name.
 
     Uses trace_analyze's own barrier matching, so these are the same numbers
-    `--barriers` reports rather than a second implementation of them.
+    `--barriers` reports rather than a second implementation of them. Release
+    latency -- the part of the wait that happens after the last thread has
+    arrived -- is `wait - imbalance`, exactly as `--barriers` computes it.
+
+    The synthetic node `ALL` aggregates every matched barrier in the trace, so
+    a whole-trace figure can be repeated across runs the same way a per-node
+    one can. P27.2 predicts a whole-trace quantity.
     """
     tr = Trace(path)
     _, _, nw = tr.split_totals(only_decode=bool(tr.decode))
     slices = tr.decode if tr.decode else tr.prefill
-    agg = collections.defaultdict(lambda: [0.0, 0.0])
+    agg = collections.defaultdict(lambda: [0.0, 0.0, 0.0])
     for t in slices:
         for nd, ba in _barrier_groups(tr, t["args"]["tok"], nw):
             if not ba:
                 continue
             last = max(e["ts"] for e in ba)
-            a = agg[_node_base(nd[0]["name"])]
-            a[0] += sum(e.get("dur", 0.0) for e in nd)
-            a[1] += sum(last - e["ts"] for e in ba)
+            work = sum(e.get("dur", 0.0) for e in nd)
+            imb  = sum(last - e["ts"] for e in ba)
+            wait = sum(e.get("dur", 0.0) for e in ba)
+            for key in (_node_base(nd[0]["name"]), "ALL"):
+                a = agg[key]
+                a[0] += work
+                a[1] += imb
+                a[2] += wait
     return agg
+
+
+# metric -> (human name, function of the [work, imbal, wait] triple)
+METRICS = {
+    "imbalance": ("arrival imbalance / work", lambda a: a[1] / a[0]),
+    "release":   ("release latency / work",   lambda a: (a[2] - a[1]) / a[0]),
+    "wait":      ("total barrier wait / work", lambda a: a[2] / a[0]),
+}
 
 
 def one_run(binary, model, nth, tokens, mask, tmpdir, i):
@@ -118,6 +137,11 @@ def main() -> int:
     ap.add_argument("--ratio", default=None, metavar="A/B",
                     help="also report node A's imbalance/work divided by node "
                          "B's -- the form to prefer for a claim")
+    ap.add_argument("--metric", default="imbalance", choices=sorted(METRICS),
+                    help="which half of the barrier decomposition to repeat: "
+                         "imbalance (default, F23's quantity), release (the "
+                         "part after the last arrival, which is what a barrier "
+                         "IMPLEMENTATION changes -- P27.2), or wait (both)")
     ap.add_argument("--tokens", default="10:11",
                     help="TOKENSCOPE_TOKENS capture window (default 10:11)")
     ap.add_argument("-C", "--cpu-mask", default=None,
@@ -137,6 +161,7 @@ def main() -> int:
     ratio = args.ratio.split("/") if args.ratio else None
     if ratio and len(ratio) != 2:
         sys.exit("--ratio takes the form A/B")
+    metric_name, metric = METRICS[args.metric]
 
     per = collections.defaultdict(lambda: collections.defaultdict(list))
     ratios = collections.defaultdict(list)
@@ -148,14 +173,15 @@ def main() -> int:
                             args.cpu_mask, tmpdir, i)
                 for n in nodes:
                     if n in a and a[n][0] > 0:
-                        per[nth][n].append(a[n][1] / a[n][0])
+                        per[nth][n].append(metric(a[n]))
                 if ratio and all(r in a and a[r][0] > 0 for r in ratio):
-                    ratios[nth].append((a[ratio[0]][1] / a[ratio[0]][0]) /
-                                       (a[ratio[1]][1] / a[ratio[1]][0]))
+                    den = metric(a[ratio[1]])
+                    if den > 0:
+                        ratios[nth].append(metric(a[ratio[0]]) / den)
             print("  run %d/%d done" % (i + 1, args.runs), flush=True)
 
     print()
-    print("arrival imbalance / work, %d identical runs per thread count" % args.runs)
+    print("%s, %d identical runs per thread count" % (metric_name, args.runs))
     if args.cpu_mask:
         print("affinity mask %s, --cpu-strict 1" % args.cpu_mask)
     print()

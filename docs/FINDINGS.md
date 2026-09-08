@@ -3401,6 +3401,130 @@ reader can act on instead of one they can only worry about.
 
 ---
 
+## P28 — The "thread-pool spin-up" barrier is probably tokenscope's own allocator
+
+**Dated 2026-09-08, session 5. Written and committed before the test.** Found
+while extending `imbalance_repeat.py` to report release latency for
+[`P27`](#p27--two-barrier-implementations-on-one-machine-predictions), which
+meant looking at what release latency actually contains.
+
+### The observation
+
+`--barriers` on the committed reference trace `mid-24L-L3-tok10-11` says:
+
+```
+  total barrier wait      62.31 ms   thread-time
+    arrival imbalance     34.59 ms    55.5%
+    after last arrival    27.72 ms    44.5%   release latency and spin-up
+
+  A single barrier accounts for    20.98 ms of the after-arrival time: token 10,
+  before "embd". On the first traced token that is thread-pool spin-up,
+  not a property of the graph.
+```
+
+One barrier out of 824 is **76% of all after-arrival time in the trace**. The
+tool already flags it and excludes it from the headline split, which is good
+practice — and then explains it with a sentence nobody has ever tested.
+
+### Why the stated explanation does not survive reading
+
+"Thread-pool spin-up" would be a cost paid when the pool is cold. This trace
+captures **tokens 10 and 11**, which is roughly the twelfth graph of the
+process: two prefill batches and ten decode steps have already run. The pool
+was warm long before the barrier in question, and there is no mechanism that
+makes graph number twelve special.
+
+What *is* special about token 10 is that it is the first token inside
+`TOKENSCOPE_TOKENS=10:11` — the first token where `ts_g_capture` is true.
+
+### The mechanism this predicts instead
+
+At level 3 a worker thread's buffer is allocated **lazily, on its first
+record**. `ts_reserve` returns early while `ts_g_capture` is false, so no
+worker touches `ts_thread_init()` until capture opens. On the first captured
+token, all eight workers then call it at once: each takes the registry mutex,
+allocates a 1 MiB chunk, and first-touches 256 pages.
+
+And that cost lands **in the barrier**, not in the node, because of how the
+two-clock-read optimisation is arranged:
+
+```
+TS_NODE_WORK_END:  ts_t1 = ts_now();      <- clock read happens FIRST
+                   ts_emit(...)           <- ts_thread_init() happens HERE
+                   ts_t_mark = ts_t1;
+ggml_barrier(...);
+TS_NODE_WAIT_END:  ts_t1' = ts_now();
+                   wait = ts_t1' - ts_t_mark
+```
+
+The allocation happens after `ts_t1` is read and before `ts_t1'`, so the node's
+recorded work *excludes* it and the following barrier's recorded wait
+*includes* it. Every thread pays it once, on the same node, in the same
+barrier. That is exactly the shape observed: one barrier, first captured token,
+before the first node of the graph.
+
+If this is right it is a **measurement artifact produced by the instrument**,
+sitting in the quantity the instrument exists to measure, wearing a label that
+blames the thing being measured. That is the worst category of profiler bug,
+and this project has an entry for its own version of it already: F16, where a
+scope's name was a claim about what it wrapped and the claim was wrong.
+
+### P28.1 — the spike does not decay with pool age
+
+Level 3, `mid.gguf`, 8 threads, two capture windows: `1:2` (pool almost cold)
+and `40:41` (pool warm through forty graphs). n=8 per arm, because F23.
+
+- **Thread-pool spin-up predicts** the `40:41` spike is much smaller than the
+  `1:2` spike — a warm pool has nothing to spin up.
+- **First-touch allocation predicts** the two are the same size within their
+  ranges, because the allocation is paid once wherever the window opens.
+
+**Prediction: they are the same size, and the medians differ by less than 2x
+where the spin-up story needs an order of magnitude.**
+
+### P28.2 — the spike scales with thread count, not with graph size
+
+Each thread allocates one 1 MiB chunk. Total artifact time should be roughly
+linear in the number of threads and independent of the model.
+
+**Prediction: at 16 threads the artifact's total thread-time is 1.5x to 2.5x
+its value at 8, on the same model and window.** Not exactly 2x, because the
+mutex serialises the allocations and page-faulting is not perfectly parallel
+anyway.
+
+### P28.3 — pre-touching the buffer removes it
+
+The fix, if the diagnosis holds, is one line in the right place:
+`TS_THREAD_PREPARE` already runs once per thread per graph, **outside** the
+node loop, and already exists to keep level 2 from allocating mid-graph. It is
+the same problem and the same answer. Calling `ts_buffer_get()` there — at every
+level, not only level 2, and regardless of whether the current token is inside
+the capture window — moves the allocation to the first graph of the run, where
+nothing is being measured.
+
+**Prediction: with that change, the largest single after-arrival barrier in a
+`10:11` trace drops by more than 80%, and the trace-wide imbalance/release split
+moves from roughly 55/45 to something near the 84/16 the tool currently reports
+only after manually excluding the spike.**
+
+Falsified if the spike survives, which would mean the allocation is not what is
+being timed and the tool's original sentence deserves more credit than this
+prediction gives it.
+
+### What it changes if all three hold
+
+Every level-3 trace this project has taken has a corrupted first captured
+token, and `--barriers` has been printing an explanation that points at ggml
+for something tokenscope did. The headline number F6 quotes — 11.2% of worker
+thread time is barrier wait — is computed over a whole run, so the artifact is
+diluted there; the ones at risk are the narrow-window level-3 traces, which is
+most of what sessions 3 and 4 used. **The imbalance figures are unaffected**:
+imbalance is measured between arrival timestamps, and the artifact is entirely
+in the after-arrival term. F23 and F24 rest on imbalance, so they should
+survive intact. That prediction is part of this one.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
