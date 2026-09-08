@@ -356,7 +356,7 @@ where your time goes.
 | Constraint | How it is enforced | Status |
 |---|---|---|
 | **Zero overhead when disabled** | Everything behind `TOKENSCOPE_ENABLED`. Off ⇒ macros expand to nothing; no symbol, no branch, no storage. | ✅ verified against the symbol table |
-| **Under 2% when enabled** | Measured with interleaved arms and bootstrap CIs, not assumed. | ✅ static build, 8 threads: level 3 is **+1.16% [+0.67, +1.87]**, re-measured and certified in session 5 ([F25](docs/FINDINGS.md)). At 28 threads: +0.66% [-1.85, +4.18], which the harness declined to certify — see [F10](docs/FINDINGS.md). **The shared build's overhead is still unmeasured**; its arms ran with a 2.22% noise floor and every interval spanned zero |
+| **Under 2% when enabled** | Measured with interleaved arms and bootstrap CIs, not assumed. | ✅ 8 threads, level 3: **shared build +0.87% [+0.55, +1.19]**, certified in session 6 ([F30](docs/FINDINGS.md)) — and the static build's **+1.16% [+0.67, +1.87]** from session 5 ([F25](docs/FINDINGS.md)). At 28 threads: +0.66% [-1.85, +4.18], which the harness declined to certify — see [F10](docs/FINDINGS.md) |
 | **No new dependencies** | C++17 standard library on the engine side. Python stdlib for analysis. | ✅ |
 | **No locks in the hot path** | Thread-local buffers, merged at flush. | ✅ |
 | **Deterministic, not sampled** | Explicitly placed scopes, so the trace is *interpretable* rather than statistical. | ✅ |
@@ -391,6 +391,24 @@ estimate. Prefill is the control and stays uncertified at every level.
 This supersedes session 1's +0.67% [+0.12, +1.67], which session 2 then failed
 to reproduce twice on a noisier machine. Same workload, same thread count, same
 binary pair, rebuilt and re-run in session 5 ([F25](docs/FINDINGS.md)).
+
+**The shared build costs the same, and that took a harness change to find out**
+([F30](docs/FINDINGS.md)). `BUILD_SHARED_LIBS=ON` at level 3 is **+0.87%
+[+0.55, +1.19]**, certified — which is the measurement behind F22's claim that
+per-module `ts_tls` caching keeps a cross-DLL call off the hot path. Session 5
+tried to compare the two builds and could not, because it ran them as two
+invocations thirteen minutes apart and the machine's noise floor moved by more
+than the effect in between. `bench_overhead.py` now round-robins every arm of
+every build pair together, which is the only way that comparison is a
+comparison. The difference between the two builds' overheads is **+0.36pp
+[-0.32, +1.17]** — still not resolved away from zero, but bounded for the
+first time.
+
+The same run retired a number this README never printed: session 5 had the
+compiled-out shared build 0.7% slower than the static one, hedged hard.
+Interleaved, it is **-0.22% [-0.79, +0.26]** on decode — consistent with zero,
+and the opposite sign. On this workload llama.cpp's shared build costs nothing
+measurable, despite giving up cross-module inlining across three DLLs.
 
 And the number is not an artifact of a full buffer, which would make recording
 look cheap by doing less of it:
@@ -516,7 +534,7 @@ patches/                01: the instrumentation. 02: F20 naming. 03: the F24 chu
 examples/               committed reference traces (level 1 and level 3), used by CI
 scripts/bootstrap.py    clone at the pin, copy sources, apply patches
 tools/trace_analyze.py  summary · per-token · outliers with cause · diff
-tools/bench_overhead.py interleaved A/B/C arms, medians, bootstrap CIs
+tools/bench_overhead.py N build pairs, rotating interleave, bootstrap CIs
 tools/make_tiny_model.py synthesize a random-weight GGUF so tests need no network
 tools/model_bytes.py     per-phase weight bytes from a GGUF, to score the byte law
 tools/mulmat_chunking.py which matmuls ggml load-balances, and at which thread counts
