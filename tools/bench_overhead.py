@@ -118,6 +118,69 @@ def run_bench(exe: str, model: str, n_gen: int, n_prompt: int, threads: int,
     return out
 
 
+def free_ram_bytes():
+    """Best-effort available physical memory, or None if it cannot be read."""
+    try:
+        if os.name == "nt":
+            import ctypes
+
+            class _MS(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong),
+                            ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong),
+                            ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong),
+                            ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong),
+                            ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+
+            st = _MS()
+            st.dwLength = ctypes.sizeof(_MS)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st)):
+                return int(st.ullAvailPhys)
+            return None
+        with open("/proc/meminfo", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024
+    except Exception:
+        return None
+    return None
+
+
+def preflight_ram(model_path: str, force: bool = False, margin: float = 1.5) -> None:
+    """Refuse to start a measurement that the machine cannot hold.
+
+    F34 was run with 870 MB free against an 840 MB model and produced a table
+    in which the *instrumented* build was faster than the compiled-out one in
+    all three pairs -- physically impossible, and one pair's between-block
+    interval excluded zero, so it looked resolved. The launch command printed
+    the free-memory figure and started the run in the same breath, which is no
+    check at all. Decode is bandwidth-bound (F14): once the weights do not stay
+    resident, every number is about paging.
+    """
+    try:
+        need = os.path.getsize(model_path)
+    except OSError:
+        return
+    free = free_ram_bytes()
+    if free is None:
+        print("note: could not read free memory; skipping the RAM pre-flight\n")
+        return
+    gb = 1024.0 ** 3
+    print(f"free RAM  {free / gb:.2f} GiB against a {need / gb:.2f} GiB model")
+    if free >= need * margin:
+        return
+    msg = (f"free memory ({free / gb:.2f} GiB) is under {margin:g}x the model "
+           f"({need / gb:.2f} GiB). The weights will not stay resident and "
+           f"every number will be about paging, not about the code.")
+    if force:
+        print(f"WARNING: {msg}\n  --force given, continuing anyway.\n")
+        return
+    raise SystemExit(f"error: {msg}\n"
+                     f"       Close what is using the memory, or pass --force.")
+
 # ---------------------------------------------------------------------------
 # statistics
 # ---------------------------------------------------------------------------
@@ -337,6 +400,11 @@ def main() -> int:
     ap.add_argument("--no-rotate", action="store_true",
                     help="keep one fixed arm order every round (the pre-F30 "
                          "protocol). Rotation is on by default; see F30")
+    ap.add_argument("--force", action="store_true",
+                    help="run even if free memory is under 1.5x the model size. "
+                         "F34 was run at 870 MB free against an 840 MB model and "
+                         "reported the instrumented build as FASTER in all three "
+                         "pairs")
     ap.add_argument("--json-out", default=None)
     args = ap.parse_args()
 
@@ -349,6 +417,8 @@ def main() -> int:
         for p in missing:
             print(f"error: not found: {p}", file=sys.stderr)
         return 1
+
+    preflight_ram(args.model, args.force)
 
     levels = [int(x) for x in args.levels.split(",") if x.strip()]
     arms = build_arms(pairs, levels, not args.no_level0)
@@ -432,7 +502,8 @@ def main() -> int:
         for name, spread in floors.items():
             tag = f" [{name}]" if name else ""
             print(f"  baseline IQR{tag} is {spread:.2f}% of median.")
-        if any(s > 2.0 for s in floors.values()):
+        gate_failed = any(s > 2.0 for s in floors.values())
+        if gate_failed:
             print("  NOTE: that is wider than the 2% budget being tested.")
             print("  This machine cannot resolve a 2% effect right now. Close")
             print("  background work, pin threads, and rerun before quoting a number.")
@@ -460,6 +531,7 @@ def main() -> int:
                   + f"{'spread':>9}{'mean':>8}{'95% CI (t)':>20}")
             print("  " + "-" * 88)
             worst = 0.0
+            impossible = 0
             for arm in arms:
                 if arm.kind == "A":
                     continue
@@ -472,15 +544,33 @@ def main() -> int:
                                if b and mt > 0 else float("nan"))
                 mean, lo, hi, sp = between_block_ci(pts)
                 worst = max(worst, sp if sp == sp else 0.0)
+                if hi == hi and hi < 0:
+                    impossible += 1
                 ci = f"[{lo:+.2f}, {hi:+.2f}]" if lo == lo else "--"
                 print(f"  {arm.label:<28}"
                       + "".join(f"{x:>+8.2f}" for x in pts)
                       + f"{sp:>8.2f}{mean:>+8.2f}{ci:>20}")
             print(f"\n  widest between-block spread: {worst:.2f}pp.")
-            print("  QUOTE THE t INTERVAL, not the bootstrap one above it. The")
-            print("  bootstrap resamples within a block and cannot see drift")
-            print("  between them; this column can. At 3 blocks t is 4.303, so")
-            print("  the interval is wide on purpose -- three passes prove little.")
+            if gate_failed:
+                # F34. Blocks defend against drift BETWEEN passes. They do
+                # nothing about contamination spanning every pass: three
+                # blocks inside one bad window agree with each other and are
+                # consistently wrong, which reads exactly like a resolved
+                # result. The baseline-IQR gate is the defence, and it fired.
+                print("  DO NOT QUOTE ANY OF THE ABOVE. The baseline gate failed,")
+                print("  so all three blocks sit inside one bad window and agree")
+                print("  with each other while being wrong together. Blocks see")
+                print("  drift BETWEEN passes, not contamination across all of")
+                print("  them. Fix the machine and rerun.")
+            else:
+                print("  QUOTE THE t INTERVAL, not the bootstrap one above it.")
+                print("  The bootstrap resamples within a block and cannot see")
+                print("  drift between them; this column can. At 3 blocks t is")
+                print("  4.303, so the interval is wide on purpose.")
+            if impossible:
+                print(f"  IMPLAUSIBLE: {impossible} arm(s) came out FASTER than")
+                print("  their own compiled-out baseline, interval excluding zero.")
+                print("  Instrumentation does not speed code up. Something else moved.")
             print()
         # -- pair vs pair ---------------------------------------------------
         # The point of one invocation: these four arms shared a round-robin,
