@@ -4797,6 +4797,60 @@ run it errs the other way.
 
 ---
 
+## P34 — The overhead numbers, with an interval that can see drift
+
+**Dated 2026-09-08, session 6. Written and committed before the run.**
+[`F33`](#f33--f24-survives-at-162-the-interval-that-can-see-drift-works-and-the-control-stopped-being-clean)
+repaired F24 and demonstrated that two independent `t` intervals for one
+quantity overlap where two bootstrap intervals did not. The remaining Tier D
+numbers — the **overheads** in F25, F30 and F31 — have never had that treatment.
+
+Three pairs, `--no-level0` to keep the round affordable, `--blocks 3`, n=15:
+`static` (ninja/static), `nshared` (ninja/shared), `shared` (MSBuild/shared).
+The level-0 arm is dropped because it has been unresolvable every time it has
+been measured (P30.2, P31.2 both held it spanning zero), and it is the cheapest
+thing to give up.
+
+### The four quantities this settles
+
+1. **static level-3 overhead** — F25 said +1.16% [+0.67, +1.87], F30 +0.50%, F31 +1.16%
+2. **shared level-3 overhead** — F30 said +0.87% [+0.55, +1.19], F31 +0.31% [+0.01, +0.52], **non-overlapping**
+3. **the shared−static difference** — F30 +0.36pp, F31 −0.85pp, also inconsistent
+4. **the generator contrast** — F31's +0.40% [+0.14, +0.69] on the compiled-out arms
+
+### The predictions
+
+**P34.1 — every `t` interval here is wider than its bootstrap counterpart, and
+at least one of the four spans zero that previously did not.** F33 found the
+bootstrap running 2–3× *wider* than the `t` on a dirty run, so this is not
+automatic; on a clean run the ordering should revert. The one to watch is the
+shared overhead, which "resolved" at +0.87% and again at +0.31% without those
+intervals meeting.
+
+**P34.2 — the shared and static overheads become indistinguishable.** F31's
+structural finding was that the instrumented arms converge (0.27% apart on
+decode, 0.06% on prefill) while the baselines spread. Overhead-as-a-ratio is
+therefore mostly reporting baseline differences, and once the interval is
+honest the two should overlap heavily. **Predicted: both means in +0.4%..+1.3%,
+and the difference spanning zero.**
+
+**P34.3 — F31's generator effect does not survive.** +0.40% [+0.14, +0.69] was
+a single-run bootstrap on exactly the kind of small effect this session has
+twice found over-precise. Predicted to span zero once it has a `t` interval.
+If it *does* survive, it is the more interesting outcome, because it footnotes
+every cross-generator comparison in the repo.
+
+**P34.4 — the block-to-block spread on the overheads is 0.4pp to 1.0pp**, in
+line with F33's 0.77/0.82pp on a larger effect and with the 0.66pp gap between
+F30 and F31 that started all of this.
+
+**P34.5 — the static overhead's mean lands in +0.8%..+1.4%**, i.e. near F25's
+and F31's agreeing +1.16% rather than F30's +0.50%. F30's static arm ran first
+in every round under a fixed order, and that is the one number with a named
+mechanism for being wrong.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
