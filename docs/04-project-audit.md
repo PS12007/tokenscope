@@ -123,6 +123,28 @@ quote it over the bootstrap.
 
 **Rule: no Tier D number leaves this repo without a `--blocks ≥ 3` interval.**
 
+### But the interval is third in the order of trust, not first
+
+**F34 is the correction to everything above.** A run that started with 870 MB of
+free RAM against an 840 MB model reported every instrumented arm as *faster*
+than its own compiled-out baseline, and the shared pair's three blocks agreed to
+within 0.55pp — **the tightest spread in the run** — with a `t` interval
+excluding zero. Sustained contamination does not widen the blocks; it makes them
+agree, and their agreement reads as precision.
+
+Blocks defend against drift **between** passes. They do nothing about
+contamination spanning **every** pass. So the order is:
+
+1. **The baseline-IQR gate.** If the baseline cannot resolve the effect, nothing
+   below it is worth reading, whatever its interval says.
+2. **Physical plausibility.** Negative overhead, or a control that moves as much
+   as the treatment, voids the run regardless of statistics.
+3. **The `t` interval**, meaningful only once 1 and 2 pass.
+
+Two further guards now enforce this: `preflight_ram()` refuses to start below
+1.5x the model size, and a failed gate makes the tool refuse its own block table
+rather than printing "quote this" underneath a refusal.
+
 ### Harness version matters when reading old numbers
 
 | Since | Change | Affects |
@@ -213,6 +235,8 @@ instrumenting it is cheaper.
 | **M1** | **Bootstrap CIs are within-run and understate the truth by roughly 2×** in Tier D | Diagnosed and fixed in tooling (§2); **published numbers not yet all re-measured** |
 | **M2** | The word "certified" promised reproducibility the method never tested; it appears ~44 times across three documents | Removed from tool output; **doc sweep still outstanding** |
 | **M3** | The instability is *within* one invocation (0.47pp between halves of the same run) and its cause is unidentified — not position, not autocorrelation, not the estimator | **Open.** Blocks contain it; nothing explains it |
+| **M8** | **Blocks manufacture confidence under sustained contamination.** F34's three blocks agreed to 0.55pp and excluded zero while reporting a physically impossible result | Guarded by the gate + plausibility check (F34); **the underlying limitation is permanent** |
+| **M9** | The machine is shared with whatever else the user is running. A 5.17 GiB `javaw` process voided a 44-minute run | `preflight_ram()` refuses to start; **it cannot detect load that arrives mid-run** |
 | **M4** | F30 and F31 differ in arm order, round length **and** time simultaneously, so the rotation explanation is a story that fits, not evidence | **Open.** The same disease F30 diagnosed in F25 |
 | **M5** | Cross-session comparison of absolute throughput is worthless — the same compiled-out binary read 42.94 and 45.92 tok/s in two sessions (**+6.9%**, ~6× the effects being resolved) | Documented; a standing rule |
 | **M6** | Code layout is not held constant in F24's A/B: stock and patched differ by **1,137,994 bytes** across most of the image. Layout alone can move throughput ~1% | **Open, and now supported by evidence.** F33's prefill control — a workload the patch cannot reach — has come back negative in every run (-1.30% [-2.67, +0.06] over six blocks). Separating layout from chunking needs an arm that changes layout without changing behaviour; not done |
@@ -358,9 +382,10 @@ teaches something and an unanswerable one teaches nothing.
 - F20 as a defect report about llama.cpp naming.
 
 **Safe only with a `t` interval attached** — nothing in Tier D should be quoted
-until re-measured with `--blocks ≥ 3`. **F24 has been** (F33: +1.62% [+1.10,
-+2.15], with M6 attached). Still outstanding: **F25, F30 and F31's
-percentages**.
+until re-measured with `--blocks ≥ 3` **on a machine that passes the gate**.
+**F24 has been** (F33: +1.62% [+1.10, +2.15], with M6 attached). Still
+outstanding: **F25, F30 and F31's percentages** — the run that would have closed
+them was voided by F34 and has to happen again.
 
 **Not safe to generalise at all:**
 

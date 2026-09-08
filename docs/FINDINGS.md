@@ -4851,6 +4851,103 @@ mechanism for being wrong.
 
 ---
 
+## F34 — A void run, and the lesson that blocks do not defeat contamination
+
+**Workload:** intended as the re-measurement of every remaining Tier D number —
+`mid.gguf`, 8 threads, three build pairs, `--blocks 3`, n=15, 2640 s.
+[`P34`](#p34--the-overhead-numbers-with-an-interval-that-can-see-drift) holds
+the predictions. **The run is void and none of the predictions can be scored.**
+
+It is written up anyway, because how it failed is worth more than what it was
+going to measure.
+
+### What it produced
+
+```
+  arm                               median tok/s     IQR   overhead vs A
+  A: compiled out [static]                 35.05    4.4%                  -
+  C3: active level 3 [static]              35.72    3.4%    -1.89%  [-3.43, -0.23]
+  A: compiled out [nshared]                35.30    4.3%                  -
+  C3: active level 3 [nshared]             35.87    2.8%    -1.59%  [-3.01, -0.61]
+  A: compiled out [shared]                 35.43    3.5%                  -
+  C3: active level 3 [shared]              35.73    3.7%    -0.85%  [-2.31, +0.39]
+```
+
+**Every instrumented arm is faster than its own compiled-out baseline.** That is
+not a small effect in an unexpected direction; it is impossible. Adding 2.9
+million record writes does not speed a build up.
+
+Throughput is ~35 tok/s where F30 and F31 both saw ~46. Prefill baseline IQR
+reached **37.6%, 43.5% and 32.6%**.
+
+### Why
+
+`javaw` — unrelated to this project — started at 17:10:46 with a **5.17 GiB
+working set**, and the run launched into **870 MB of free physical memory
+against an 840 MB model**. Decode is bandwidth-bound (F14). Once the weights
+stop staying resident, every number is about paging.
+
+**The launch command printed the free-memory figure and started the run in the
+same breath**, which is no check at all. `preflight_ram()` now refuses to start
+below 1.5× the model size, with `--force` to override.
+
+### The part that matters: blocks agreed with each other and were wrong
+
+The block machinery reported this for the shared pair:
+
+```
+  C3: active level 3 [shared]    -0.76   -1.29   -1.30    0.55   -1.12   [-1.89, -0.34]
+```
+
+Three block estimates, a spread of **0.55pp — the tightest in the whole run** —
+and a `t` interval **excluding zero**. By the rule this session spent hours
+building, that is a resolved result. It is also nonsense.
+
+**Blocks defend against drift *between* passes. They do nothing about
+contamination that spans every pass.** Three blocks taken back to back inside
+one bad window agree with each other, and their agreement reads exactly like
+precision. Worse, the contamination *tightened* the interval: paging dominated
+the timing so completely that it swamped the machine's ordinary variability.
+
+So [`F33`](#f33--f24-survives-at-162-the-interval-that-can-see-drift-works-and-the-control-stopped-being-clean)'s
+conclusion needs qualifying. It said the block method is "robust to the
+contamination that widens a pooled bootstrap", and that is true of *sporadic*
+contamination — the odd bad round a median absorbs. It is false of *sustained*
+contamination, where blocks do not merely fail to help, they actively
+manufacture confidence.
+
+**The defence is the baseline-IQR gate, which fired correctly**, and which the
+tool was simultaneously undermining by printing "QUOTE THE t INTERVAL"
+underneath it. Two sentences that cannot both be true. Fixed: when the gate
+fails, the tool now refuses the whole block table, and it counts arms whose
+interval excludes zero on the impossible side.
+
+### The ordering of trust, corrected
+
+Session 6 spent most of its length arguing that the bootstrap interval was the
+weak link and the `t` interval the fix. F34 says the ordering is:
+
+1. **The gate first.** If the baseline cannot resolve the effect, nothing below
+   is worth reading, whatever its interval says.
+2. **Then physical plausibility.** An overhead that is negative, or a control
+   that moves as much as the treatment, voids the run regardless of statistics.
+3. **Then the `t` interval**, which is only meaningful once 1 and 2 pass.
+
+The `t` interval is not a licence to stop looking at the machine. It was
+promoted, in this session's own prose, into something close to one.
+
+### What this costs
+
+**F25, F30 and F31's overhead percentages remain un-re-measured.** They are
+still Tier D on a within-run bootstrap. The run that was going to fix them has
+to happen again on a quiet machine, and this one needs `javaw` closed — which
+is the user's call, not an agent's.
+
+F24/F33 is unaffected: it was measured before `javaw` started, at 16 threads,
+and its control behaved (badly, but in a documented way).
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
