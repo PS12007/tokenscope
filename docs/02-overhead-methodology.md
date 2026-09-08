@@ -104,6 +104,43 @@ turned off." **B vs C** is what a user pays to actually profile.
 
 Implementation: [`tools/bench_overhead.py`](../tools/bench_overhead.py).
 
+### The arms are whatever you are comparing (session 6)
+
+Interleaving protects a comparison only if the things being compared are *in*
+the interleave. Session 5 measured the shared and static builds' overheads as
+two invocations thirteen minutes apart, and the machine's baseline IQR moved by
+more than a factor of two in between; the comparison drowned in exactly the
+between-run noise the round-robin exists to cancel (F25). The harness had been
+correct since session 1 and the design still could not answer the question,
+because the question spanned two runs.
+
+So `--pair NAME=OFF_DIR,ON_DIR` is repeatable, and every arm of every pair
+enters one round-robin:
+
+```
+A_static, B_static, C3_static, A_shared, B_shared, C3_shared, A_static, ...
+```
+
+Each pair is scored against **its own** compiled-out arm -- a pair's overhead
+means nothing except relative to the same build without tokenscope in it. Two
+comparisons then exist that cannot exist with one pair:
+
+- **the difference of overheads**, in percentage points, with its own bootstrap
+  interval. Subtracting two published point estimates yields no interval at all;
+  this resamples all four arms and forms the difference inside each iteration.
+- **the compiled-out arms against each other**, which is not an overhead at all.
+  Both are uninstrumented builds of one tree differing only in linkage, so this
+  measures what DLL boundaries cost llama.cpp.
+
+`--bin-off`/`--bin-on` still work and still produce identical labels, so the
+invocation in section 4 below is unchanged.
+
+The bootstrap resamples arms independently rather than pairing them by round.
+Paired resampling would take credit for the drift the round-robin cancels and
+return tighter intervals; the conservative choice is kept because every figure
+in `FINDINGS.md` was computed that way. Intervals here are wider than the design
+earns, never narrower.
+
 ### Session 1: levels 0 and 1 only
 
 Taken before Tier 2 existed, when level 1 meant a single scope per
