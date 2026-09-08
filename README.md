@@ -462,6 +462,7 @@ tools/make_tiny_model.py synthesize a random-weight GGUF so tests need no networ
 tools/model_bytes.py     per-phase weight bytes from a GGUF, to score the byte law
 tools/mulmat_chunking.py which matmuls ggml load-balances, and at which thread counts
 tools/imbalance_repeat.py N identical runs, because one trace is one draw (F23)
+tools/ab_throughput.py   interleaved A/B between two llama-bench binaries, with a CI
 docs/                   the engineering log
 ```
 

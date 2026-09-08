@@ -424,6 +424,7 @@ python tools/trace_analyze.py A.json --diff B.json   # did my change help, and w
 python tools/mulmat_chunking.py M.gguf -t 8,16,28    # NEW: matmul partitioning mode
 python tools/imbalance_repeat.py -m M.gguf -t 8,16 -n 12 --ratio ffn_up/ffn_out
 python tools/mulmat_chunking.py M.gguf -t 16 --mult 2   # model a PATCHED build
+python tools/ab_throughput.py --a old.exe --b new.exe -m M.gguf -t 16 -n 20
 ```
 
 `--barriers` needs `TOKENSCOPE_LEVEL=3`. It matches the k-th barrier across
