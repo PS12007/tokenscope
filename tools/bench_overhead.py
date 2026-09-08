@@ -29,6 +29,10 @@ Method:
     "1.2% [0.9, 1.6]" rather than "1.2%"
   - if the baseline arm's own spread is wider than the effect, the honest
     output is "this machine cannot resolve it", not a number
+  - and with --blocks N the whole round-robin runs N times, reporting the
+    spread of each block's point estimate. The bootstrap resamples INSIDE one
+    invocation and knows nothing about the next one; F31 found two of its
+    intervals, for one quantity on unrebuilt binaries, that did not overlap
 
 N pairs, one invocation (F25). A "pair" is an off/on build directory couple --
 one baseline and one instrumented binary built the same way. Passing more than
@@ -272,6 +276,12 @@ def main() -> int:
                     help="drop the B arm. Arms multiply by pair -- two pairs "
                          "at all three levels is ten runs a round; this trades "
                          "the residual-branch control for finishing")
+    ap.add_argument("--blocks", type=int, default=1, metavar="N",
+                    help="run the whole round-robin N times as separate blocks "
+                         "and report the spread of each block's point estimate "
+                         "next to the bootstrap CI. F31: the bootstrap is a "
+                         "WITHIN-invocation interval, and two of them for one "
+                         "quantity came out non-overlapping. Costs N x the time")
     ap.add_argument("--no-rotate", action="store_true",
                     help="keep one fixed arm order every round (the pre-F30 "
                          "protocol). Rotation is on by default; see F30")
@@ -297,30 +307,41 @@ def main() -> int:
     print(f"reps     {args.reps} per arm, interleaved, first discarded")
     print(f"arms     {len(arms)} across {len(pairs)} pair(s)\n")
 
+    # per-block, so the between-block spread can be reported; `results` is the
+    # pooled view every existing report path already expects.
+    blocks: list[dict[str, dict[str, list[float]]]] = []
     results: dict[str, dict[str, list[float]]] = {
         a.label: {"pp": [], "tg": []} for a in arms}
 
     t_start = time.time()
-    for rep in range(args.reps):
-        # Rotate the order each round (F30). Interleaving stops drift landing
-        # on one arm, but with a FIXED order every transient shorter than a
-        # round lands on the same arms every time -- in F30's own run one extra
-        # warm-up round hit all three arms of the pair that happened to run
-        # first, and cost that pair its certification. An interleave with a
-        # fixed order is a Latin square with one row.
-        order = arms if args.no_rotate else arms[rep % len(arms):] + arms[:rep % len(arms)]
-        for arm in order:
-            try:
-                r = run_bench(arm.binary, args.model, args.n_gen, args.n_prompt,
-                              args.threads, arm.env)
-            except (RuntimeError, subprocess.TimeoutExpired) as e:
-                print(f"\nerror in arm {arm.label}, rep {rep}: {e}", file=sys.stderr)
-                return 1
-            if rep > 0:                                  # discard warm-up
-                results[arm.label]["pp"].append(r.get("pp", 0.0))
-                results[arm.label]["tg"].append(r.get("tg", 0.0))
-            print(f"\r  rep {rep + 1}/{args.reps}  {arm.label:<30} "
-                  f"tg={r.get('tg', 0):7.2f} tok/s   ", end="", flush=True)
+    for block in range(args.blocks):
+        cur: dict[str, dict[str, list[float]]] = {
+            a.label: {"pp": [], "tg": []} for a in arms}
+        blocks.append(cur)
+        for rep in range(args.reps):
+            # Rotate the order each round (F30). Interleaving stops drift
+            # landing on one arm, but with a FIXED order every transient
+            # shorter than a round lands on the same arms every time -- in
+            # F30's own run one extra warm-up round hit all three arms of the
+            # pair that ran first, and cost that pair its certification. An
+            # interleave with a fixed order is a Latin square with one row.
+            k = (rep + block) % len(arms)
+            order = arms if args.no_rotate else arms[k:] + arms[:k]
+            for arm in order:
+                try:
+                    r = run_bench(arm.binary, args.model, args.n_gen,
+                                  args.n_prompt, args.threads, arm.env)
+                except (RuntimeError, subprocess.TimeoutExpired) as e:
+                    print(f"\nerror in arm {arm.label}, block {block}, "
+                          f"rep {rep}: {e}", file=sys.stderr)
+                    return 1
+                if rep > 0:                              # discard warm-up
+                    for ph in ("pp", "tg"):
+                        cur[arm.label][ph].append(r.get(ph, 0.0))
+                        results[arm.label][ph].append(r.get(ph, 0.0))
+                tag = f"block {block + 1}/{args.blocks}  " if args.blocks > 1 else ""
+                print(f"\r  {tag}rep {rep + 1}/{args.reps}  {arm.label:<30} "
+                      f"tg={r.get('tg', 0):7.2f} tok/s   ", end="", flush=True)
     print(f"\n\nelapsed {time.time() - t_start:.0f}s\n")
 
     # -- report -------------------------------------------------------------
@@ -365,6 +386,39 @@ def main() -> int:
             print("  background work, pin threads, and rerun before quoting a number.")
         print()
 
+        # -- between-block spread ------------------------------------------
+        # F31: the bootstrap resamples inside one invocation, so it answers
+        # "if I redrew these runs from the same afternoon". Two such intervals
+        # for one quantity, on unrebuilt binaries two hours apart, came out
+        # NON-OVERLAPPING. Blocks estimate the part the bootstrap cannot see.
+        if len(blocks) > 1:
+            print("  each block's own point estimate (bootstrap sees none of this)")
+            print(f"  {'arm':<32}" + "".join(f"{'blk ' + str(i + 1):>9}"
+                                             for i in range(len(blocks)))
+                  + f"{'spread':>10}")
+            print("  " + "-" * 76)
+            worst = 0.0
+            for arm in arms:
+                if arm.kind == "A":
+                    continue
+                base_lbl = base_of[arm.pair]
+                pts = []
+                for blk in blocks:
+                    b, t = blk[base_lbl][phase], blk[arm.label][phase]
+                    mt = statistics.median(t) if t else 0.0
+                    pts.append(100.0 * (statistics.median(b) / mt - 1.0)
+                               if b and mt > 0 else float("nan"))
+                good = [x for x in pts if x == x]
+                sp = (max(good) - min(good)) if len(good) > 1 else 0.0
+                worst = max(worst, sp)
+                print(f"  {arm.label:<32}"
+                      + "".join(f"{x:>+9.2f}" for x in pts)
+                      + f"{sp:>9.2f}pp")
+            print(f"\n  widest between-block spread: {worst:.2f}pp.")
+            if worst > 0.5:
+                print("  That is the uncertainty a single invocation's CI does NOT")
+                print("  contain. Quote the range across blocks, not one interval.")
+            print()
         # -- pair vs pair ---------------------------------------------------
         # The point of one invocation: these four arms shared a round-robin,
         # so this difference is not a between-run comparison the way F25's was.
@@ -406,7 +460,8 @@ def main() -> int:
 
     if args.json_out:
         with open(args.json_out, "w", encoding="utf-8") as f:
-            json.dump({"config": vars(args), "results": results}, f, indent=2)
+            json.dump({"config": vars(args), "results": results,
+                       "blocks": blocks}, f, indent=2)
         print(f"raw results -> {args.json_out}")
 
     return 0
