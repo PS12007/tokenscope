@@ -65,8 +65,21 @@ if (TOKENSCOPE_ENABLED AND BUILD_SHARED_LIBS)
     target_link_libraries(ts_dllmod PRIVATE tokenscope_shared)
     set_target_properties(ts_dllmod PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
 
-    add_executable(ts_dlltest src/ts_dlltest.cpp)
-    target_link_libraries(ts_dlltest PRIVATE tokenscope_shared ts_dllmod)
+    # A third module, same source, deliberately NOT linked to the executable.
+    # ts_dlltest opens it with LoadLibrary/dlopen partway through the run, which
+    # is the shape llama.cpp's GGML_BACKEND_DL uses -- a module arriving after
+    # threads already exist and have already recorded. That is the case where a
+    # cache-based design is most likely to be wrong, so it gets its own test.
+    add_library(ts_dynmod MODULE src/ts_dllmod.cpp)
+    target_link_libraries(ts_dynmod PRIVATE tokenscope_shared)
+    set_target_properties(ts_dynmod PROPERTIES
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+        PREFIX "")
 
-    add_test(NAME dlltest COMMAND ts_dlltest)
+    add_executable(ts_dlltest src/ts_dlltest.cpp)
+    target_link_libraries(ts_dlltest PRIVATE tokenscope_shared ts_dllmod ${CMAKE_DL_LIBS})
+    add_dependencies(ts_dlltest ts_dynmod)
+
+    add_test(NAME dlltest COMMAND ts_dlltest dlltest.trace.json
+             $<TARGET_FILE:ts_dynmod>)
 endif()

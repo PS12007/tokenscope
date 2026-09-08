@@ -15,7 +15,7 @@
 // not a crash, not a dropped record, and not visible in any way except by
 // counting. So the test counts.
 //
-// Run: ts_dlltest <out.json>
+// Run: ts_dlltest <out.json> [path to a runtime-loadable copy of the module]
 //
 // SPDX-License-Identifier: MIT
 
@@ -28,6 +28,13 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+#if defined(_WIN32)
+#  define WIN32_LEAN_AND_MEAN
+#  include <windows.h>
+#else
+#  include <dlfcn.h>
+#endif
 
 extern "C" {
 void * ts_mod_buffer(void);
@@ -78,17 +85,22 @@ static void worker(observation * obs, int n_iter) {
     obs->mod_depth      = ts_mod_depth_addr();
 }
 
-// Count distinct "tid" values among the trace's X events. This is the check
-// that would catch two modules building separate thread_states per thread: the
-// records would all be present and the JSON would be valid, but one OS thread's
-// work would be split across two trace thread ids.
+// Count distinct thread ids in the trace. This is the check that would catch
+// two modules building separate thread_states per thread: the records would all
+// be present and the JSON would be valid, but one OS thread's work would be
+// split across two trace thread ids.
+//
+// Negative ids are excluded because they are not threads. Token slices are
+// emitted on a synthetic tid of -1 so that Perfetto draws them as their own
+// track above the workers rather than interleaved with one thread's scopes.
 static size_t count_distinct_tids(const std::string & s) {
     std::set<long long> tids;
     const std::string key = "\"tid\":";
     size_t i = 0;
     while ((i = s.find(key, i)) != std::string::npos) {
         i += key.size();
-        tids.insert(std::strtoll(s.c_str() + i, nullptr, 10));
+        const long long tid = std::strtoll(s.c_str() + i, nullptr, 10);
+        if (tid >= 0) tids.insert(tid);
     }
     return tids.size();
 }
@@ -106,6 +118,12 @@ int main(int argc, char ** argv) {
     std::printf("tokenscope shared-library test\n");
     std::printf("  level=%d\n", ts_g_level);
     check(TS_ACTIVE, "instrumentation is active");
+
+    // Give the main thread a buffer unconditionally, so the thread-id count at
+    // the end is a fixed number rather than one that depends on which later
+    // phases happened to run.
+    TS_SCOPE("exe.main");
+    bool dyn_thread_ran = false;
 
     const int n_threads = 4;
 
@@ -160,7 +178,59 @@ int main(int argc, char ** argv) {
               "different threads still get different buffers");
     }
 
-    std::printf("\n2. trace output\n");
+    // -----------------------------------------------------------------------
+    // 2. A module loaded at RUNTIME, onto a thread that already has a buffer.
+    //
+    // This is the GGML_BACKEND_DL shape: llama.cpp can load backends with
+    // dlopen/LoadLibrary rather than linking them, so a module can arrive after
+    // threads exist and have already recorded. It is also the case where a
+    // cache-based design is most likely to be wrong, because the newcomer's
+    // cache starts null at a point where the registry already has an answer --
+    // it must join the existing buffer, not allocate a second one.
+    //
+    // Skipped rather than failed when no path is given, so the test still runs
+    // for anyone invoking the binary by hand.
+    // -----------------------------------------------------------------------
+    if (argc > 2) {
+        std::printf("\n2. a module loaded after the threads already ran\n");
+        const char * mod_path = argv[2];
+
+#if defined(_WIN32)
+        HMODULE h = LoadLibraryA(mod_path);
+        void * sym = h ? (void *) GetProcAddress(h, "ts_mod_buffer") : nullptr;
+#else
+        void * h = dlopen(mod_path, RTLD_NOW | RTLD_LOCAL);
+        void * sym = h ? dlsym(h, "ts_mod_buffer") : nullptr;
+#endif
+        check(h != nullptr, "the runtime-loaded module opened");
+        check(sym != nullptr, "ts_mod_buffer resolved from the loaded module");
+
+        if (sym) {
+            void * (*dyn_buffer)(void) = (void * (*)(void)) sym;
+
+            // The main thread has a buffer already: it opened the token slice
+            // above, which records.
+            const void * mine = (const void *) ts_buffer_get();
+            check(mine == dyn_buffer(),
+                  "a module loaded mid-run joins this thread's existing buffer");
+
+            // And a thread created after the load still gets exactly one
+            // buffer, shared with the newcomer.
+            const void * t_exe = nullptr;
+            const void * t_dyn = nullptr;
+            std::thread([&] {
+                TS_SCOPE("exe.after-load");
+                t_exe = (const void *) ts_buffer_get();
+                t_dyn = dyn_buffer();
+            }).join();
+            dyn_thread_ran = true;
+            check(t_exe != nullptr && t_exe == t_dyn,
+                  "a thread created after the load also sees one buffer");
+            check(t_exe != mine, "...and it is that thread's own, not the main thread's");
+        }
+    }
+
+    std::printf("\n3. trace output\n");
     ts_flush(out_path);
 
     std::string data;
@@ -185,14 +255,21 @@ int main(int argc, char ** argv) {
     check(data.find("\"dropped\":0")    != std::string::npos,
           "no records were dropped");
 
-    // One trace thread id per OS thread, plus the main thread that opened the
-    // token slice. Two modules building separate state would double the first
-    // term while leaving every record present.
+    // Exactly one trace thread id per OS thread that recorded. Asserted as
+    // equality against a count this test knows exactly, not as an upper bound:
+    // two modules building separate state per thread would double it while
+    // leaving every record present and the JSON valid, and a bound generous
+    // enough to survive edits to the test is generous enough to miss that.
     {
-        const size_t tids = count_distinct_tids(data);
-        std::printf("  %zu distinct trace thread ids for %d worker threads + main\n",
-                    tids, n_threads);
-        check(tids <= (size_t) n_threads + 1,
+        const size_t tids     = count_distinct_tids(data);
+        const size_t expected = (size_t) n_threads   // the workers
+                              + 1                    // main, which records below
+                              + (size_t) (dyn_thread_ran ? 1 : 0);
+        std::printf("  %zu distinct trace thread ids, expected %zu "
+                    "(%d workers + main%s)\n",
+                    tids, expected, n_threads,
+                    dyn_thread_ran ? " + 1 created after the module load" : "");
+        check(tids == expected,
               "one trace thread id per thread, not one per thread per module");
     }
 

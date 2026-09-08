@@ -2245,6 +2245,7 @@ counter belongs in it.
 | Disabled build | still 0 symbols, still an 864-byte archive |
 | Barrier decomposition on a fresh level-3 trace | every barrier matched |
 | Two-module test, standalone shared build | passes, and fails when the fix is reverted — see below |
+| A module opened at runtime, mid-run | joins the calling thread's existing buffer (the GGML_BACKEND_DL shape) |
 
 **The thread count is the real evidence.** `llama-bench -t 4` with the fix
 produces a trace with four worker threads. Had the two DLLs each built their own
@@ -2282,23 +2283,48 @@ while checking that a variable equals itself. The fourth is the opposite guard:
 sharing *everything* would satisfy lines two and three and reintroduce the
 cross-thread contention the whole design exists to avoid.
 
+A second phase covers the case the design is most likely to get wrong: a module
+that arrives **after** threads already exist and have already recorded. That is
+the `GGML_BACKEND_DL` shape, where backends are `dlopen`ed rather than linked,
+and the newcomer's cache starts null at a point where the registry already has
+an answer — so it must join the existing buffer rather than allocate a second.
+
+```
+[ ok ] a module loaded mid-run joins this thread's existing buffer
+[ ok ] a thread created after the load also sees one buffer
+[ ok ] ...and it is that thread's own, not the main thread's
+```
+
+It works, and it works for a reason worth stating: `ts_thread_init()` consults
+the registry, not the caller, so "which module asked" and "when it asked" are
+both irrelevant to the answer. The third line is there because the first two
+would both pass if every thread shared one buffer, which would be a different
+and worse bug.
+
 **Then the check was tested by breaking what it checks**, as F20's shadow test
 was. Disabling `ts_thread_init`'s idempotency — one `if` — and rebuilding:
 
 ```
-[ ok ]  each module has its own ts_tls cache
+[ ok ] each module has its own ts_tls cache
 [FAIL] both modules resolve to the same buffer on each thread
 [FAIL] both modules share one host-scope depth counter
-[ ok ]  no records were dropped
-       9 distinct trace thread ids for 4 worker threads + main
+[FAIL] a module loaded mid-run joins this thread's existing buffer
+[FAIL] a thread created after the load also sees one buffer
+[ ok ] no records were dropped
+       12 distinct trace thread ids, expected 6
 [FAIL] one trace thread id per thread, not one per thread per module
 ```
 
 Note what did **not** fail. The trace was written. It was valid JSON. Zero
 records were dropped. Every scope name from both modules was present, correctly
 nested. `llama-bench` would have printed a plausible table. The only visible
-symptom was in the header line — `8 threads` where the run used four — and in a
-count that had to be taken deliberately.
+symptom was the thread count — exactly doubled, 12 where 6 were used — and it
+had to be taken deliberately to be seen.
+
+The count is asserted as **equality against a number the test knows exactly**,
+not as an upper bound. The first version of it used a bound, which passed a
+run it should have failed as soon as the test grew a sixth thread; a bound loose
+enough to survive edits to the test is loose enough to miss a doubling.
 
 That is the third time this project has found a defect whose entire symptom is a
 number being quietly wrong (F5's over-100% attribution, F20's dead table entry,
@@ -2332,8 +2358,11 @@ to assert quantities, not the absence of errors.
   works — the slot is a cache whose only possible values are null or this
   thread's buffer, so folding changes the number of cold init calls and nothing
   observable.
-- Not tested with `GGML_BACKEND_DL`, where backends are loaded at runtime rather
-  than linked. That is a third case and neither F18 nor this covers it.
+- `GGML_BACKEND_DL` — llama.cpp loading backends with `dlopen`/`LoadLibrary`
+  rather than linking them — is **covered as a shape but not as a build.** The
+  test opens a third module at runtime and checks it joins correctly (below);
+  llama.cpp configured that way has not been built. The mechanism is the part
+  that could have been wrong, and it is the part that is now tested.
 
 ### What this changes about the upstream story
 
