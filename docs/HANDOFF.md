@@ -1,12 +1,36 @@
 # HANDOFF — state of the project, and what to do next
 
-Updated during **session 4 (2026-09-07)**. Everything here is either a fact
-about the current tree or an explicit next step. Read this first when picking
-the project back up.
+Updated at the **end of session 4 (2026-09-07)**. Everything here is either a
+fact about the current tree or an explicit next step. Read this first when
+picking the project back up.
 
-**Session 4 so far.** Two things. Closed section 5 item 6 — the shared-library
-build works (**F22**) — and then **re-scoped item 5 out from under itself
-(F23)**: item 5 assumed ggml gives every thread an equal share of rows, and for
+**Cold-start checklist, in order.** Each takes seconds and each has caught
+something real:
+
+```bash
+cd "C:/-CS/TLI profiler/tokenscope"
+git log --oneline origin/main..main     # MUST be empty
+git status --short                      # MUST be empty
+git -C ../llama.cpp status --short      # MUST match section 3's list exactly
+grep -n 'nchunk0 \* nchunk1 <' ../llama.cpp/ggml/src/ggml-cpu/ggml-cpu.c
+                                        # two `nth * 4` lines = stock (F24 not applied)
+for f in tokenscope.h tokenscope-ggml.h tokenscope.cpp; do
+  diff -q src/$f ../llama.cpp/ggml/src/tokenscope/$f; done   # MUST be silent
+```
+
+Then, before trusting any measurement, rebuild rather than assuming the binaries
+match the tree — see the A/B trap in section 3.
+
+**Session 4 in one paragraph.** Closed section 5 item 6 — the shared-library
+build works (**F22**) — then **re-scoped item 5 out from under itself (F23)**
+and **acted on the re-scoped version (F24)**, which produced the first
+throughput improvement this project has ever certified. Findings went F21 ->
+**F24**. 16 commits, all pushed, CI green on all three platforms. The F20
+upstream issue is *not* filed: llama.cpp's `AGENTS.md` forbids an agent writing
+issue or PR text, so `docs/03` now holds an evidence pack to write from instead
+of a draft to paste.
+
+On F23: item 5 assumed ggml gives every thread an equal share of rows, and for
 matmul that is only half true. Above `nchunk0 * nchunk1 >= nth * 4` threads
 steal chunks from an atomic counter, and a matmul in that mode carries roughly a
 third to a half the arrival imbalance per unit work. So ggml already solves core
@@ -79,7 +103,12 @@ commits from sessions 2 and 3 are pushed.
   2-4%, wider than the effect). Quote the session-1 number only with its
   thread count, and expect to have to re-measure on a quiet machine.
 - Zero-overhead-when-off verified against the symbol table.
-- CI for three platforms, including the over-attribution regression check.
+- **Shared-library builds work (F22).** Each module keeps its own `ts_tls`
+  cache over one registry-owned buffer. `ts_dlltest` builds two binaries plus a
+  third opened at runtime and asserts they share one buffer per thread.
+- CI for **three platforms x three configurations** (instrumentation on, off,
+  and shared), including the over-attribution regression check and the F22
+  two-module test.
 
 **The upstream patch is 174 changed lines across 7 files.** F9 and F10 needed
 no new instrumentation at all -- only analysis of traces the existing scopes
@@ -101,7 +130,9 @@ The short version:
 | ~~Larger real model~~ | **Done (F19, F21).** Three more real models measured, to 8.19 B. Biggest is now 8.19 B; **no MoE model at all**, which is the clearest remaining gap. Session 4 asked and was told **not to download one** — it needs several GB and free RAM is ~7 GB against the 8B's 4.86 GiB. Ask again rather than assuming |
 | No Perfetto screenshot | Blocks the README and several posts. **Still the best impact-to-effort item that needs no new code**, and the reference trace for it is now `examples/qwen3-8b-named-attnout.trace.json` |
 | ~~No thread pinning~~ | **Done (F14).** Mechanism confirmed: homogeneous cores drop spread 13%->2% and halve barrier wait. Pinning is not the fix |
-| Upstream issue not filed | Two issues now, and [`03`](03-upstream-issue-draft.md) says which goes first. **The F20 naming defect is not blocked on Linux** and should be filed on its own; the instrumentation proposal still is |
+| Upstream issue not filed | Two issues now, and [`03`](03-upstream-issue-draft.md) says which goes first. **The F20 naming defect is not blocked on Linux** and should be filed on its own; the instrumentation proposal still is. **An agent must not write or file it** — see the box at the top of `03` |
+| Shared build's overhead never measured | F22 left the hot path unchanged *by inspection*, which is not a measurement. Needs a `GGML_TOKENSCOPE=OFF` shared build to compare against |
+| F24 not raised upstream, and `mul_mat_id` untested | The +1.95% is one machine, one thread count, one model, and no NUMA hardware — and NUMA is what the constant was tuned for |
 
 ---
 
@@ -166,19 +197,77 @@ call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build
 
 ```
 C:\-CS\TLI profiler\
-├── tokenscope\            the repo
-├── llama.cpp\             upstream clone, pinned at 4d91760, patched in place
-│   ├── build-ts-on\       GGML_TOKENSCOPE=ON,  static  (ninja, bin\)
-│   ├── build-ts-off\      GGML_TOKENSCOPE=OFF, static  (baseline arm; keep it)
-│   └── build-ts-shared\   BUILD_SHARED_LIBS=ON (VS generator, bin\Release\)
+├── tokenscope\            the repo (git; origin github.com/PS12007/tokenscope)
+│   ├── build-on\          ninja, TOKENSCOPE_ENABLED=ON   -> ts_selftest.exe
+│   ├── build-off\         ninja, TOKENSCOPE_ENABLED=OFF  -> the 0-symbol proof
+│   └── build-shared\      ninja, ENABLED=ON + BUILD_SHARED_LIBS=ON
+│                          -> ts_selftest + ts_dlltest (F22's two-module test)
+├── llama.cpp\             upstream clone, pinned at 4d91760, PATCHED IN PLACE
+│   ├── build-ts-on\       ninja, static, GGML_TOKENSCOPE=ON
+│   │                      bin\llama-bench.exe, llama-cli.exe, llama-batched.exe
+│   ├── build-ts-off\      ninja, static, GGML_TOKENSCOPE=OFF
+│   │                      bin\llama-bench.exe   <- ALL throughput numbers
+│   └── build-ts-shared\   VS 17 2022, BUILD_SHARED_LIBS=ON, TOKENSCOPE=ON
+│                          bin\Release\llama-bench.exe  (needs --config Release)
 └── models\
-    ├── tiny.gguf          8L,  34 MB   synthetic F32
-    ├── mid.gguf           24L, 840 MB  synthetic F32
+    ├── tiny.gguf          8L,   34 MB  synthetic F32
+    ├── mid.gguf           24L, 840 MB  synthetic F32   <- the workhorse
     └── qwen-q4km.gguf     Qwen2.5-0.5B-Instruct Q4_K_M, 469 MB, REAL
+```
 
-**A real 8B model is already on disk**, pulled by Ollama before this project
-started, so item 4 of section 5 needs no download at all. Ollama stores GGUF
-blobs unmodified and content-addressed; `llama-bench -m` opens one directly:
+### Exactly what is non-stock in `llama.cpp`, as of the end of session 4
+
+`models/` and `llama.cpp/` are gitignored. The clone is **modified in place** and
+`git -C ../llama.cpp status --short` should show precisely this:
+
+```
+ M ggml/CMakeLists.txt          | patch 01, the instrumentation
+ M ggml/src/CMakeLists.txt      |   (regenerate with bootstrap.py --make-patch)
+ M ggml/src/ggml-cpu/ggml-cpu.c |
+ M src/llama-context.cpp        |
+ M src/llama-kv-cache.cpp       |
+ M src/llama-sampler.cpp        |
+ M src/llama-vocab.cpp          |
+ M src/llama-graph.cpp            patch 02, the F20 naming fix -- NOT in patch 01
+?? ggml/src/tokenscope/          copies of src/tokenscope.*, build inputs
+```
+
+Anything else in that list is something a previous session left behind and did
+not write down.
+
+**`patches/03-mulmat-chunk-threshold.patch` (F24) is NOT applied.** The tree is
+at stock `nth * 4` at both `ggml-cpu.c:1422` and `:1698`. Check with:
+
+```bash
+grep -n 'nchunk0 \* nchunk1 <' ../llama.cpp/ggml/src/ggml-cpu/ggml-cpu.c
+```
+
+Two `nth * 4` lines means stock. To reproduce F24, `git -C ../llama.cpp apply`
+the patch, rebuild **both** `build-ts-on` and `build-ts-off`, measure, then
+reverse-apply it. It is deliberately kept out of `01-instrument.patch` even
+though `ggml-cpu.c` is in `bootstrap.py`'s `TOUCHED` list, for the same reason
+`llama-graph.cpp` is: it is a behaviour change and has nothing to do with the
+instrumentation. **`--make-patch` while it is applied would silently fold a
+scheduler change into the instrumentation patch.**
+
+Three trees, one source of truth: `tokenscope/src/tokenscope.*` is authoritative
+and `llama.cpp/ggml/src/tokenscope/` are copies. Session 4 ended with them in
+sync; verify before believing a build:
+
+```bash
+for f in tokenscope.h tokenscope-ggml.h tokenscope.cpp; do
+  diff -q src/$f ../llama.cpp/ggml/src/tokenscope/$f
+done
+```
+
+That drifted once during session 4 — a comment added to `src/tokenscope.h` after
+the copy — which is harmless only because it was a comment.
+
+### The models Ollama already has
+
+**A real 8B is already on disk**, pulled by Ollama before this project started,
+so nothing about it needs a download. Ollama stores GGUF blobs unmodified and
+content-addressed; `llama-bench -m` opens one directly:
 
 ```
 ~/.ollama/models/blobs/sha256-a3de86cd1c132c822487ededd47a324c50491393e6565cd14bafa40d0b8e686f
@@ -188,28 +277,32 @@ That is **Qwen3 8B Q4_K_M**, 4.86 GiB, 8.19 B params, 36 layers, `n_embd` 4096,
 `n_ff` 12288, GQA 32/8 — 13x the parameters of the Qwen2.5-0.5B used in F12.
 Read the metadata with `gguf-py` rather than trusting the tag; the manifest at
 `~/.ollama/models/manifests/registry.ollama.ai/library/qwen3/8b` maps tags to
-blobs. `dolphin-llama3` (8B) and `dolphin-mistral` (7B) are there too, and **both were
-measured in F21** — blobs `sha256-ea025c10...` and `sha256-11a57a9b...`
-respectively.
+blobs. `dolphin-llama3` (8B) and `dolphin-mistral` (7B) are there too, and **both
+were measured in F21** — blobs `sha256-ea025c10...` and `sha256-11a57a9b...`
+respectively. **No MoE model is present**, and session 4 asked and was told not
+to download one.
 
 **The constraint is RAM, not disk.** This machine has 15.7 GB total and about
-7.4 GB free, against a 4.86 GiB model. It fits and it does not thrash — measured
+7 GB free, against a 4.86 GiB model. It fits and it does not thrash — measured
 38.78 pp32 / 7.39 tg16 tok/s at 8 threads — but the margin is thin enough that
 anything else running can page the weights out and quietly corrupt a decode
 number, because decode is bandwidth-bound (F14). Check free memory before
-trusting a run at this size.
-```
+trusting a run at this size, and again after.
 
-**`build-ts-on` now contains a change that is NOT upstream.** Session 3 applied
-`patches/02-name-attn-output.patch` to `llama.cpp/src/llama-graph.cpp` in place
-and rebuilt, so `llama-bench` from that directory names the attention output
-projection where stock llama.cpp does not. Traces taken from it are not
-byte-comparable with pre-session-3 traces in that one respect — `attn.out`
-appears and `~attn` nearly vanishes (F20). `git -C ../llama.cpp diff
-src/llama-graph.cpp` shows it; `git -C ../llama.cpp checkout src/llama-graph.cpp`
-reverts it. `bootstrap.py --make-patch` does **not** touch it, deliberately:
-`llama-graph.cpp` is kept out of `TOUCHED` so the naming fix stays a separate
-patch from the instrumentation.
+**One consequence of the F20 naming patch, for reading old traces.** Because
+`llama-graph.cpp` carries it, traces from `build-ts-on` are not comparable with
+pre-session-3 traces in one respect: `attn.out` appears and `~attn` nearly
+vanishes. That is the fix working, not a regression. `git -C ../llama.cpp
+checkout src/llama-graph.cpp` reverts it if a comparison ever needs the old
+behaviour.
+
+**And a trap that cost real time in session 4, generalised.** An A/B where one
+arm is a binary built earlier is not an A/B. `build-ts-off`'s binary was three
+days older than the tree, so it silently lacked the F20 patch, and a throughput
+comparison came out **+2.71% when the true figure was +1.95%** — with clean
+non-overlapping ranges, which made it *more* convincing rather than less. Before
+trusting any A/B, check the binary's timestamp against `git -C ../llama.cpp
+status`, and build both arms in the same session. (F24.)
 
 **`llama-cli` is required** for anything involving sampling, tokenization or
 context shift (F11, F16) -- `llama-bench` calls none of them. It is built in
@@ -274,6 +367,26 @@ python tools/make_tiny_model.py --llama-cpp ../llama.cpp -o ../models/mid.gguf \
        --layers 24 --embd 768 --heads 12 --heads-kv 4 --vocab 8192
 ```
 
+And the repo's own three, which need no llama.cpp, no model and no network. The
+third is new in session 4 and is what CI runs to guard F22:
+
+```bash
+cmake -S . -B build-on     -DCMAKE_BUILD_TYPE=Release -DTOKENSCOPE_ENABLED=ON
+cmake -S . -B build-off    -DCMAKE_BUILD_TYPE=Release -DTOKENSCOPE_ENABLED=OFF
+cmake -S . -B build-shared -DCMAKE_BUILD_TYPE=Release -DTOKENSCOPE_ENABLED=ON \
+      -DBUILD_SHARED_LIBS=ON
+cmake --build build-on && cmake --build build-off && cmake --build build-shared
+ctest --test-dir build-on          # selftest
+ctest --test-dir build-shared      # selftest + dlltest (two modules, one buffer)
+```
+
+`build-shared` adds three targets that only exist in that configuration:
+`tokenscope_shared` (the DLL with the registry), `ts_dllmod` (a second module,
+linked) and `ts_dynmod` (a third, opened at runtime). If `dlltest` ever fails on
+its *first* assertion — "each module has its own ts_tls cache" — the modules have
+collapsed into one binary and every other assertion in it has gone vacuous;
+fix that before reading the rest.
+
 ### The edit loop that is easy to get wrong
 
 `src/tokenscope.*` in this repo is the **source of truth**. The copies in
@@ -322,16 +435,21 @@ rather than guess if that ever stops holding.
 *outside* it (sampling, detokenization run after `decode` returns). Charging the
 latter against the former is what pushed attribution over 100% in F11.
 
-**Five reference traces** in `examples/`, 1012 decode tokens, all exercised by
-CI:
+**Eight reference traces** in `examples/`, **1138 decode tokens**, ~19 MB, all
+exercised by CI. (The table said five and 1012 until session 4 counted them; the
+three 8B/batched ones were added in sessions 2-3 without the table being
+updated.)
 
-| trace | what it covers |
-|---|---|
-| `mid-24L-tg256` | level 1, host scopes |
-| `mid-24L-L3-tok10-11` | level 3, the F9 barrier data |
-| `mid-24L-L3-pp64` | level 3 prefill, the other half of F9's test |
-| `mid-24L-cli-sampling` | `llama-cli`, sampling + detokenization (F11) |
-| `qwen-ctxshift-c256` | real model, context shift, `find_slot` (F16) |
+| trace | level | decode tok | what it covers |
+|---|---|---|---|
+| `mid-24L-tg256` | 1 | 257 | host scopes, the F1 control-plane result |
+| `mid-24L-L3-tok10-11` | 3 | 25 | the F9 barrier data, and F23's baseline |
+| `mid-24L-L3-pp64` | 3 | 0 | level-3 prefill, the other half of F9's test |
+| `mid-24L-cli-sampling` | 1 | 31 | `llama-cli`, sampling + detokenization (F11) |
+| `qwen-ctxshift-c256` | 1 | 699 | real model, context shift, `find_slot` (F16) |
+| `qwen-batched-np16` | 1 | 92 | 16 concurrent sequences (F17) |
+| `qwen3-8b-L3-tok8-13` | 3 | 17 | the 8B, before the F20 naming fix |
+| `qwen3-8b-named-attnout` | 3 | 17 | the 8B, after it — **use this one for Perfetto** |
 
 **CI mechanizes five claims**, and each fails the build if the finding stops
 being true: attribution never exceeds 100% (inside-slice only), every barrier is
@@ -347,6 +465,17 @@ went undetected for a session purely because nothing here ever built a DLL.
 ---
 
 ## 5. Next steps, in the order I would do them
+
+**Session 4 closed item 6 (F22) and item 5 (F23/F24).** The ordering below is
+unchanged otherwise, but the shape of the project has changed: it now has a
+measured, certified performance result in ggml itself, which is a different kind
+of thing to take upstream than a profiler. Items 1 and 5 are both "decide
+whether to raise this", and **neither can be done by an agent** — see the box at
+the top of [`03`](03-upstream-issue-draft.md).
+
+The two items that need hardware this machine does not have are 2 (Linux) and
+the SMT question inside 5. The two that need only a person are 1 and 3.
+
 
 Session 3 closed items 3 and 4 (concurrent sequences had already gone in F17;
 the 8B is F19/F21) and added a new one at the top that did not exist before.
@@ -434,7 +563,11 @@ the 8B is F19/F21) and added a new one at the top that did not exist before.
    hot path is unchanged by inspection, but that is not a measurement), and the
    GCC/ELF behaviour still needs checking alongside item 2. Both fold into
    items 2 and 7 rather than standing on their own.
-7. **Re-measure overhead on a quiet machine.** The harness refused to certify
+7. **Measure the shared build's overhead, and re-measure the static one.**
+   New half: F22 changed how `ts_tls` is reached and argued the hot path is
+   unchanged *by inspection*, which is not a measurement. `bench_overhead.py`
+   needs a `GGML_TOKENSCOPE=OFF` **shared** build to compare against; only the
+   ON one exists. Old half: The harness refused to certify
    twice in session 2 and nothing has changed. Every quoted overhead number is
    still the session-1 8-thread one.
 
