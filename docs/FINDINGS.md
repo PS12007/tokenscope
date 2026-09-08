@@ -2637,10 +2637,22 @@ No claim about the cause. The most likely candidate is that 28 threads on this
 machine is 28 logical cores over **20 physical** ones — 8 P-cores with SMT plus
 12 E-cores — so at 28 the threads stop being merely unequal and start contending
 in pairs, which is a second kind of heterogeneity and one that scales with how
-many rows each thread holds. That is a hypothesis with an obvious test (`-C` masks
-for 20 threads, one per physical core) which was not run. Recorded as open rather
-than explained, per session 3's lesson that two mechanisms can move at once and
-you will model one.
+many rows each thread holds.
+
+**P23.4, written before the test is run.** If SMT contention is what breaks the
+ratio at 28 threads, then removing it should restore it. `-C 0x0FFF5555
+--cpu-strict 1` gives **20 threads, one per physical core** — the 8 P-core
+primaries plus all 12 E-cores — and at 20 threads `ffn_up` is still static
+(48 chunks against a threshold of 80), so both nodes of the pair are in the same
+mode exactly as at 28.
+
+**Predict the ratio returns to ~1.0 at 20 pinned threads**, in the 0.8–1.2 band
+the 16-thread rows occupy. Falsified if it stays near 0.558, which would say SMT
+is not the second mechanism and something about this model at high thread counts
+is, leaving the anomaly open.
+
+Note this test cannot distinguish "SMT pairing" from "20 threads rather than 28"
+on its own, since it changes both. It is a first cut, not a clean separation.
 
 ### What this does to section 5 item 5
 
