@@ -510,9 +510,14 @@ def report_barriers(tr: "Trace", top: int) -> None:
         tok, nm = biggest[1]
         print("\n  A single barrier accounts for {} of the after-arrival time:"
               " token {},".format(fmt_us(biggest[0]), tok))
-        print("  before \"{}\". On the first traced token that is thread-pool"
-              " spin-up,".format(nm))
-        print("  not a property of the graph. Excluding it, the split is")
+        print("  before \"{}\". On the FIRST token of the capture window that is"
+              " tokenscope's".format(nm))
+        print("  own first-touch buffer allocation, not ggml -- see FINDINGS"
+              " F28, which")
+        print("  measured it and moved it out of the node loop. A trace from"
+              " before that")
+        print("  fix carries it; a trace from after should not."
+              " Excluding it, the split is")
         rest = tot_wait - biggest[0]
         print("  {:.1f}% imbalance / {:.1f}% release latency."
               .format(100.0 * tot_imb / rest,

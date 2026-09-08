@@ -442,9 +442,24 @@ extern "C" TS_API void ts_note_build(int threading, int shared_linkage) {
 }
 
 extern "C" TS_API void ts_thread_prepare(uint32_t n_nodes) {
-    if (ts_g_level != TS_LEVEL_AGG) return;
+    if (ts_g_level < TS_LEVEL_AGG) return;
+
+    // Allocate this thread's buffer HERE, on the first graph, outside the node
+    // loop and regardless of the capture window -- not lazily on its first
+    // record. FINDINGS F28: `ts_reserve` returns early while `ts_g_capture` is
+    // false, so every worker used to reach `ts_thread_init` for the first time
+    // simultaneously on the first captured token, take one mutex, allocate and
+    // pre-touch 1 MiB each, and land the whole serialised cost inside the
+    // barrier following the first node -- because TS_NODE_WORK_END reads its
+    // clock before it emits. That artifact was 75-83% of all after-arrival
+    // barrier time in a level-3 trace and scaled as the SQUARE of the thread
+    // count, and `--barriers` blamed it on ggml's thread pool.
+    //
+    // Below level 2 no worker records anything, so nothing is allocated and
+    // there is nothing to move.
     ts_buffer * b = ts_buffer_get();
     if (!b) return;
+    if (ts_g_level != TS_LEVEL_AGG) return;      // level 3 needs nothing more
     auto * st = static_cast<thread_state *>(b->chunks);
     if (!st) return;
     if (st->acc_work.size() < n_nodes) {

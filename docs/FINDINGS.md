@@ -3653,6 +3653,146 @@ survive intact. That prediction is part of this one.
 
 ---
 
+## F28 — The barrier this profiler blamed on ggml was the profiler's own allocator, and it was 76-83% of all release latency
+
+**Workload:** `mid.gguf`, level 3, 8 and 16 threads, two capture windows (`1:2`
+and `40:41`), **n=8 runs per cell**, `tools/spinup_probe.py`. Then the same
+sixteen cells again after a four-line change. Predictions in
+[`P28`](#p28--the-thread-pool-spin-up-barrier-is-probably-tokenscopes-own-allocator),
+committed before either run.
+
+### Before
+
+```
+                     biggest single barrier      trace after-arrival   imbalance
+  t=8   window 1:2         17.899 ms  (75.1%)          23.682 ms       28.527 ms
+  t=8   window 40:41       21.372 ms  (78.0%)          27.533 ms       48.191 ms
+  t=16  window 1:2         80.133 ms  (81.8%)          97.615 ms      139.163 ms
+  t=16  window 40:41       84.572 ms  (83.4%)         101.810 ms      135.316 ms
+```
+
+In **32 of 32 runs** that barrier was the one before `embd` — the first node of
+the graph — on the **first token of the capture window**, wherever the window
+was put. Medians of 8; the spike's own run-to-run spread is 1.0-1.2x, which for
+this project is remarkably tight and is itself a clue: a mechanism this
+repeatable is not contention with the rest of the machine.
+
+### After
+
+Four lines: `ts_thread_prepare()` now calls `ts_buffer_get()` on entry, at
+every level from 2 up and regardless of the capture window. It already ran
+once per thread per graph, outside the node loop, and already existed to stop
+level 2 allocating mid-graph. It was the right place for this too.
+
+```
+                     biggest single barrier      trace after-arrival   imbalance
+  t=8   window 1:2          0.085 ms  ( 1.5%)           5.567 ms       30.051 ms
+  t=8   window 40:41        0.134 ms  ( 2.3%)           5.982 ms       32.346 ms
+  t=16  window 1:2          0.296 ms  ( 1.6%)          17.408 ms      144.126 ms
+  t=16  window 40:41        0.322 ms  ( 1.9%)          16.949 ms      139.597 ms
+```
+
+The spike is gone — **160x to 271x smaller**, and no longer attached to any
+particular node or token: across the eight post-fix cells the largest barrier
+lands on `ffn_up-1`, `ffn_out-13`, `l_out-22`, `Qcur-10`, `node_579` and others,
+one run each. That is what noise looks like, and it is the strongest evidence
+in the whole finding: the *pattern* dissolved, not just the magnitude.
+
+Total after-arrival time fell **76% to 83%**. Arrival imbalance did not move:
+three of the four cells changed by 3-5%, against a run-to-run spread of
+2.0-2.8x for that quantity.
+
+### The mechanism, confirmed
+
+At level 3 a worker's buffer was allocated lazily on its first record.
+`ts_reserve` returns early while `ts_g_capture` is false, so no worker reached
+`ts_thread_init()` until the capture window opened — and then all of them did
+at once, each taking the registry mutex, allocating 1 MiB and pre-touching 256
+pages (`chunk::chunk` uses `resize`, not `reserve`, deliberately).
+
+It landed in the barrier rather than the node because of the two-clock-read
+optimisation:
+
+```
+TS_NODE_WORK_END:  ts_t1 = ts_now();      <- clock read happens FIRST
+                   ts_emit(...)           <- ts_thread_init() happens HERE
+                   ts_t_mark = ts_t1;
+ggml_barrier(...);
+TS_NODE_WAIT_END:  wait = ts_now() - ts_t_mark   <- so the allocation is in here
+```
+
+The node's recorded work excludes it; the following barrier's recorded wait
+includes it. Every thread, once, on the same node, in the same barrier.
+
+### Scoring the predictions
+
+**P28.1 — held, decisively.** Thread-pool spin-up needed the `40:41` spike to
+be much smaller than the `1:2` one. It was **larger**: 21.372 against 17.899 at
+8 threads (1.19x), 84.572 against 80.133 at 16 (1.06x). The prediction allowed
+2x in either direction and the effect came in at 1.1x — a warm pool of forty
+graphs makes no difference, because the pool was never what was being timed.
+
+**P28.2 — failed, and the failure is the more useful half.** Predicted 1.5x to
+2.5x going from 8 to 16 threads, reasoning that the mutex serialises the
+allocations so the total could not double. Measured **4.48x** and **3.96x** —
+which is 2², not 2, and not 2^0.7.
+
+The error is a category error, and a clean one. The mutex *does* serialise, so
+the stall's **wall-clock** duration grows about linearly with thread count. But
+the quantity being measured is **thread time**: every one of the *n* threads
+sits in the barrier for that whole stall. Linear duration, summed over a linear
+number of threads, is **quadratic**. I predicted the scaling of a wall-clock
+quantity for a measurement denominated in thread-time, and the sub-linear
+argument I was so pleased with was answering a different question.
+
+*Predict the scaling of the quantity you are actually going to read.* Every
+number in `--barriers` is thread time; the project has known that since F1 and
+still made this mistake.
+
+**P28.3 — held, including the number.** Predicted "more than 80%" off the
+biggest barrier (measured 99.5-99.6%) and that the trace-wide split would move
+"from roughly 55/45 to something near the 84/16 the tool currently reports only
+after manually excluding the spike". The new reference trace measures
+**84.6% imbalance / 15.4% release latency**. The old trace with its spike
+manually excluded said 83.7/16.3. Two routes to the same split is the
+cross-check that makes the diagnosis a mechanism rather than a story.
+
+### What this invalidates, precisely
+
+- **The 55.5% / 44.5% split quoted in the README and F9 is wrong.** The real
+  steady-state split on this workload is **84.6 / 15.4**. Barrier wait is much
+  more dominated by threads waiting for each other, and much less by release
+  latency, than this project has been saying.
+- **F6's 11.2%** — barrier wait as a share of worker thread time — **survives.**
+  It comes from a whole-run trace with no capture window, so the artifact is
+  paid once over 257 tokens rather than once over two. The new reference trace
+  reads 11.5% on the same model.
+- **F23 and F24 survive**, as P28 predicted they would. Both rest on *arrival
+  imbalance*, which is computed between arrival timestamps and cannot contain
+  an interval that ends before the first arrival. The measurement above
+  confirms it rather than assuming it: imbalance moved 3-5% across the fix.
+- **`examples/mid-24L-L3-tok10-11.trace.json` is kept** rather than regenerated,
+  because F9, F23 and CI all reference it and silently swapping the data under a
+  finding is worse than carrying an old file. `mid-24L-L3-tok10-11-f28.trace.json`
+  is its post-fix counterpart — same model, same window, same thread count,
+  chosen as the **median of seven candidate runs by total imbalance**, not the
+  prettiest.
+
+### The tool was lying in a sentence, which is the part worth keeping
+
+`--barriers` did flag the spike, did exclude it from the corrected split, and
+then explained it: *"On the first traced token that is thread-pool spin-up, not
+a property of the graph."* Everything up to the explanation was good practice.
+The explanation was a guess written once, and it pointed at ggml for something
+tokenscope did.
+
+**An anomaly detector that also explains the anomaly has two outputs, and only
+one of them was measured.** The detection was real; the attribution was prose.
+This project already knew that a scope's *name* is a claim (F16) — a diagnostic
+message is a claim too, printed in a more authoritative voice.
+
+---
+
 ## F29 — `TOKENSCOPE_TOKENS=10:11` captured one token, and had done so since session 4
 
 **Workload:** none. Found by reading the parser while writing

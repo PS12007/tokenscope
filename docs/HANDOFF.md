@@ -447,7 +447,7 @@ rather than guess if that ever stops holding.
 *outside* it (sampling, detokenization run after `decode` returns). Charging the
 latter against the former is what pushed attribution over 100% in F11.
 
-**Eight reference traces** in `examples/`, **1138 decode tokens**, ~19 MB, all
+**Nine reference traces** in `examples/`, **1164 decode tokens**, ~21 MB, all
 exercised by CI. (The table said five and 1012 until session 4 counted them; the
 three 8B/batched ones were added in sessions 2-3 without the table being
 updated.)
@@ -461,7 +461,8 @@ updated.)
 | `qwen-ctxshift-c256` | 1 | 699 | real model, context shift, `find_slot` (F16) |
 | `qwen-batched-np16` | 1 | 92 | 16 concurrent sequences (F17) |
 | `qwen3-8b-L3-tok8-13` | 3 | 17 | the 8B, before the F20 naming fix |
-| `qwen3-8b-named-attnout` | 3 | 17 | the 8B, after it — **use this one for Perfetto** |
+| `qwen3-8b-named-attnout` | 3 | 17 | the 8B, after it — the second `trace_svg.py` figure comes from here |
+| `mid-24L-L3-tok10-11-f28` | 3 | 26 | **new in session 5.** Same model, window and thread count as `mid-24L-L3-tok10-11`, taken after the F28 fix. Median of seven candidate runs by total imbalance, not the best one. The README's barrier split and its timeline figure both come from here |
 
 **CI mechanizes five claims**, and each fails the build if the finding stops
 being true: attribution never exceeds 100% (inside-slice only), every barrier is

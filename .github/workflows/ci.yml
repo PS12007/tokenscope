@@ -225,6 +225,43 @@ jobs:
           print("ok: F16 holds -- shifts visible, cell search is a small part of the scope")
           PY
 
+      # FINDINGS F28 as a regression test. Worker buffers used to be allocated
+      # lazily on first record, so every thread hit the allocator at once on the
+      # first token of the capture window and the whole serialised cost landed
+      # inside one barrier -- 76-83% of all after-arrival time, and --barriers
+      # blamed it on ggml's thread pool. ts_thread_prepare now allocates outside
+      # the node loop. The post-fix trace must not contain a barrier that holds
+      # a large share of after-arrival time; the pre-fix trace is kept alongside
+      # it and MUST still show the artifact, so this check is proved to be
+      # capable of failing.
+      - name: F28 - no single barrier dominates after-arrival time
+        run: |
+          python - <<'PY'
+          import sys
+          sys.path.insert(0, "tools")
+          from spinup_probe import trace_stats
+
+          POST = "examples/mid-24L-L3-tok10-11-f28.trace.json"
+          PRE  = "examples/mid-24L-L3-tok10-11.trace.json"
+
+          big, node, tok, imb, rel, n = trace_stats(POST)
+          share = big / rel if rel else 0.0
+          print("post-fix %s: biggest barrier %.1f us = %.1f%% of %.1f us"
+                % (POST, big, 100 * share, rel))
+          if share > 0.25:
+              sys.exit("F28 regressed: one barrier is %.1f%% of after-arrival "
+                       "time in %s" % (100 * share, POST))
+
+          big, node, tok, imb, rel, n = trace_stats(PRE)
+          share = big / rel if rel else 0.0
+          print("pre-fix  %s: biggest barrier %.1f us = %.1f%% of %.1f us"
+                % (PRE, big, 100 * share, rel))
+          if share < 0.5:
+              sys.exit("the pre-fix trace no longer shows the artifact, so the "
+                       "check above has never been shown to fail")
+          print("ok: F28 holds, and the check is falsifiable")
+          PY
+
       - name: attribution must not exceed 100%
         run: |
           python - <<'PY'

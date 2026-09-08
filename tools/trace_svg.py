@@ -188,11 +188,17 @@ def main() -> int:
         a('<text x="%d" y="%.1f" class="mut" font-size="10" text-anchor="end">'
           'worker %d</text>' % (gutter - 8, y + row_h / 2 + 3.5, tid))
 
+        # One <path> per class per row instead of one <rect> per span. A level-3
+        # row holds thousands of nodes; at ~75 bytes of markup each that is a
+        # 600 KB file, and at ~18 bytes of path data each it is a 150 KB one
+        # that draws exactly the same picture. Node and barrier scopes strictly
+        # alternate, so merging adjacent same-class spans is not available --
+        # there are never two in a row.
+        paths = {"ffn": [], "attn": [], "other": [], "barrier": []}
         for e in sorted(by_tid.get(tid, []), key=lambda e: e["ts"]):
-            dur = e.get("dur", 0.0)
-            x0, x1 = x(e["ts"]), x(e["ts"] + dur)
-            w = x1 - x0
             cls = bucket(e.get("cat", "other"))
+            x0, x1 = x(e["ts"]), x(e["ts"] + e.get("dur", 0.0))
+            w = x1 - x0
             # A 2px surface gap between adjacent fills is the mark spec, but at
             # this density most spans are under 2px wide. Inset only where
             # there is room, so separation appears exactly where it can be
@@ -201,10 +207,12 @@ def main() -> int:
                 x0 += 0.5
                 w -= 1.0
             w = max(w, 0.4)
-            a('<rect x="%.2f" y="%.1f" width="%.2f" height="%d" rx="%s" '
-              'class="%s"/>' % (x0, y, w, row_h, "1.5" if w > 4 else "0", cls))
+            paths[cls].append("M%.1f %.0fh%.1fv%dh-%.1fz" % (x0, y, w, row_h, w))
             if cls != "barrier":
-                labelled.append((w, x0, y, _node_base(e.get("name", "")), dur))
+                labelled.append((w, x0, y, _node_base(e.get("name", ""))))
+        for cls, segs in paths.items():
+            if segs:
+                a('<path class="%s" d="%s"/>' % (cls, "".join(segs)))
 
     # --- direct labels on the widest spans ----------------------------------
     # The light-mode aqua sits below 3:1 on the surface, so the relief rule
@@ -212,8 +220,8 @@ def main() -> int:
     if args.labels:
         seen = set()
         n = 0
-        for w, x0, y, name, dur in sorted(labelled, reverse=True):
-            if n >= args.labels or w < 34:
+        for w, x0, y, name in sorted(labelled, reverse=True):
+            if n >= args.labels or w < 26:
                 break
             if name in seen:
                 continue
