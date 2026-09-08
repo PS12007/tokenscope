@@ -4160,6 +4160,177 @@ remove.
 
 ---
 
+## F30 — The shared build's overhead certifies at +0.87%, the static build's does not, and F25's DLL penalty was noise
+
+**Workload:** `mid.gguf` (24L, F32, 220 M), 8 threads, pp512 / tg256, MSVC
+19.44 Release, `-n 20` interleaved with the first rep discarded, **six arms
+across two build pairs in one invocation**, 899 s, `tools/bench_overhead.py`.
+All four binaries rebuilt in this session before the run.
+[`P30`](#p30--what-the-interleaved-four-arm-run-should-say-written-before-it-runs)
+holds the predictions, committed before any output was read.
+
+This closes section 5 item 7 and the gap-table row that has said "the shared
+build's overhead has never been measured" since session 4.
+
+### The result
+
+**Decode.** Every baseline IQR under 2%, so the harness answered everything it
+was asked — the first time in six sessions that nothing was refused.
+
+```
+  arm                               median tok/s     IQR   overhead vs A
+  A: compiled out [static]                 45.92    1.4%                  -
+  B: in, level 0 [static]                  46.01    1.5%    -0.19%  [-0.84, +0.93]
+  C3: active level 3 [static]              45.69    0.7%    +0.50%  [-0.23, +1.05]
+
+  A: compiled out [shared]                 46.03    0.3%                  -
+  B: in, level 0 [shared]                  46.06    0.8%    -0.06%  [-0.31, +0.61]
+  C3: active level 3 [shared]              45.63    0.6%    +0.87%  [+0.55, +1.19]
+```
+
+**The shared build's level-3 overhead is +0.87% [+0.55, +1.19], certified.**
+That is the number the gap table has been waiting for since F18 broke the shared
+build and F22 fixed it, and it says the fix costs what the static one costs: the
+per-module `ts_tls` cache does not put a cross-DLL call on the hot path, which
+is exactly what F22 claimed by inspection and never demonstrated.
+
+**And the static build's level-3 overhead did not certify: +0.50% [-0.23,
++1.05].** The roles are the reverse of F25's, in the same invocation. Nothing
+about the static build got noisier in any absolute sense — its baseline IQR was
+1.40% against the shared pair's 0.28%, and section "the confound this design
+still has" below says where that asymmetry comes from.
+
+### P25.1, answered at last — as a bound, not a value
+
+```
+  overhead difference vs pair [static], percentage points
+  B:  shared - static                 +0.13pp  [-1.02, +1.07]
+  C3: shared - static                 +0.36pp  [-0.32, +1.17]
+```
+
+F25 asked whether the shared build's overhead exceeds the static build's and
+could not answer, because the two halves of the comparison were separate
+invocations. Interleaved, the answer is **+0.36pp [-0.32, +1.17]** — still not
+resolved away from zero, but for the first time it is *bounded*. The shared
+build does not cost dramatically more to instrument; whatever it costs is under
+about 1.2 percentage points, against a static overhead of the same order.
+
+That is a weaker claim than "shared costs X" and a much stronger one than F25's
+"nothing was resolved in either direction". A bound is a result. It is also the
+right shape of answer for the mechanism P30 predicted from: four `dllimport`
+globals, an extra dependent load each, all from one hot import-table line, is
+not a thing that should show up at 1% resolution.
+
+### F25's DLL penalty does not survive being measured properly
+
+F25 offered one observation "weakly", from between-run data: the compiled-out
+shared build ran 0.7% slower on decode and 0.9% on prefill than the compiled-out
+static one, and it said to "take it as an order of magnitude and nothing more."
+
+Interleaved, both arms in the same rounds:
+
+```
+  compiled-out arms only
+  decode    A: shared vs static      -0.22%   [-0.79, +0.26]
+  prefill   A: shared vs static      -0.23%   [-0.49, +0.14]
+```
+
+**Consistent with zero, and the point estimates have the opposite sign.** The
+0.7%/0.9% was between-run noise. F25 was right to hedge it and the hedge was
+not excessive caution — the number was wrong in direction, not just in
+magnitude.
+
+What replaces it is a real if unglamorous result: **on this workload,
+llama.cpp's shared build costs nothing measurable against its static build**,
+to a resolution of about half a percent. Given that `BUILD_SHARED_LIBS=ON`
+gives up cross-module inlining across `ggml.dll`, `ggml-cpu.dll` and
+`llama.dll` entirely, that is worth knowing, and it is a fact about llama.cpp
+rather than about this profiler.
+
+### Scoring the predictions
+
+| | claim | outcome |
+|---|---|---|
+| **P30.1** | C3 difference positive, spans zero, point under +0.5pp | **held, on all three specifics.** +0.36pp [-0.32, +1.17] |
+| **P30.2** | level 0 unresolvable in both builds, and its difference too | **held.** -0.19% [-0.84, +0.93] static, -0.06% [-0.31, +0.61] shared, difference +0.13pp [-1.02, +1.07] |
+| **P30.3** | compiled-out arms differ by 0.5-1.5% on decode, excluding zero | **failed, on both specifics.** -0.22% [-0.79, +0.26]: wrong sign and spans zero. This was the prediction with the most confidence behind it and the most reasoning — lost cross-module inlining across three DLLs is a far larger surface than four imported globals — and the reasoning was sound while the conclusion was wrong. Inlining across `ggml.dll`'s boundary evidently is not on any path that matters at 512-token prefill or 256-token decode |
+| **P30.4** | prefill shows a larger DLL penalty than decode | **not testable.** It presupposed P30.3. Decode -0.22% and prefill -0.23% are indistinguishable and both span zero; there is no penalty in either to compare |
+| **P30.5** | at least one block refused | **failed.** Baseline IQRs 0.28%, 0.38%, 0.65%, 1.40% — all four under 2%, no refusal anywhere. Six sessions, seven previous refusals, and the quietest machine this project has seen |
+
+Two of five held, one failed, one failed loudly, one was unanswerable for the
+same structural reason F25 hit — a prediction that depends on another
+prediction cannot be scored when the first one fails.
+
+### The confound this design still has
+
+Arm order within a round is **fixed**: `A_static, B_static, C3_static,
+A_shared, B_shared, C3_shared`, every round. Any transient shorter than a round
+therefore lands on the same arms every time, which is a different failure mode
+from the one interleaving was built to prevent.
+
+It is visible in the raw data. In rep 2 all three static arms read ~43.0 while
+all three shared arms read ~45.7 — one extra warm-up round, absorbed entirely
+by the arms that run first. That single rep is most of why the static pair's
+baseline IQR is 1.40% against the shared pair's 0.28%, and it is why the static
+overhead lost its certification while the shared one kept it.
+
+It does not change any conclusion here. Discarding a second warm-up rep:
+
+| | as run, n=19 | 2 reps discarded, n=18 |
+|---|---|---|
+| C3 static | +0.50% [-0.23, +1.05] | +0.56% [-0.13, +1.02] |
+| C3 shared | **+0.87% [+0.55, +1.19]** | **+0.89% [+0.55, +1.24]** |
+| C3 difference | +0.36pp [-0.32, +1.17] | +0.33pp [-0.28, +1.08] |
+| A shared vs static | -0.22% [-0.79, +0.26] | -0.08% [-0.73, +0.25] |
+| baseline IQR, static | 1.40% | 0.96% |
+
+Every conclusion survives, which is why the headline numbers are the ones
+actually produced by the committed protocol rather than the reprocessed ones.
+But the fix is obvious and unimplemented: **rotate the arm order each round**,
+so position within a round is not confounded with arm. Session 1's lesson was
+"interleave the arms", F25's was "the arms are whatever you are comparing", and
+this one is **an interleave with a fixed order is a Latin square with one row**.
+
+Rep 13 is the contrasting case and the reassuring one: all six arms dip
+together, which is drift landing on everything equally, which is what the
+round-robin is for.
+
+### The between-session drift, which is larger than everything above
+
+The compiled-out static arm read **42.94 tok/s in F25 and 45.92 tok/s here** —
+**+6.9%**, on the same model, thread count, workload and machine. That arm is
+built with `GGML_TOKENSCOPE=OFF` and contains no tokenscope code at all;
+neither F26 nor F28 changed anything that survives the compile-out, so this is
+very nearly the same code measured twice.
+
+**That between-session difference is roughly six times the largest effect any
+of these arms is trying to resolve.** Every number in this finding is a
+within-invocation comparison and is unaffected. Every cross-session comparison
+of absolute throughput in this repo is worth very little, and the +1.16% of F25
+and the +0.50% here cannot be compared to each other to argue that F28 made the
+instrumentation cheaper — they are two different days, and the days differ by
+7%.
+
+### Caveats
+
+- The static pair is built by Ninja and the shared pair by the Visual Studio
+  generator, as they have been since session 4. Both are MSVC 19.44 Release;
+  they are not the same command line. Within each pair the generator is shared,
+  so each pair's own overhead figure is clean — the cross-pair comparisons carry
+  this difference in addition to linkage, and P30 named it in advance as the
+  thing that could make the design measure a confound instead.
+- One machine, one model, one thread count, one workload. F10 predicts overhead
+  grows with thread count and only 8 has ever been measured.
+- `+0.87%` describes level 3, the most expensive level, on a 220 M F32 model.
+  A model with more arithmetic per node dilutes it.
+- The shared arms load `ggml.dll`, `ggml-cpu.dll`, `ggml-base.dll` and
+  `llama.dll` from a build tree; the static arm is one executable. Process
+  start-up differs, and `llama-bench` reports steady-state throughput, so this
+  should not enter the numbers — but it is the kind of thing that has caught
+  this project before.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
