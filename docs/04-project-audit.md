@@ -253,7 +253,7 @@ is known to be wrong even though its direction may stand.
 
 | | Finding | Trust |
 |---|---|---|
-| **F24** / **F33** | One line (`nth*4`→`nth*2`), **+1.62% [+1.10, +2.15]** decode over six blocks — the only speedup this project claims. F24's `+1.95% [+1.59, +2.35]` is superseded | **D, re-measured.** Effect real and **~3× the whole width of F39's decode null** (`-0.04% [-0.49, +0.42]`), which is the strongest thing that has ever been said for it. But **its prefill control is now worthless in both directions** (F39/M13), so the structural argument is gone and only the layout question (M6) can settle what the +1.62% is made of |
+| **F24** / **F33** | One line (`nth*4`→`nth*2`), **+1.62% [+1.10, +2.15]** decode over six blocks — the only speedup this project claims. F24's `+1.95% [+1.59, +2.35]` is superseded. **F49/F50 closed its layout confound**: the effect is the chunking change | **D, re-measured, and now controlled.** Effect real and **~3× the whole width of F39's decode null** (`-0.04% [-0.49, +0.42]`), which is the strongest thing that has ever been said for it. But **its prefill control is now worthless in both directions** (F39/M13), so the structural argument is gone and only the layout question (M6) can settle what the +1.62% is made of |
 | **F25** | Static overhead +1.16% [+0.67, +1.87]; shared build's answer eaten by its noise floor | ⚠ D |
 | **F30** | Shared overhead +0.87% [+0.55, +1.19] | ⚠ **D, corrected by F31** |
 | **F31** | Two bootstrap intervals for one quantity that do not overlap | **A for that** (it is a fact about two runs). **Its "level 3 is a leveller" claim and its generator effect are both RETRACTED by F36** |
@@ -264,6 +264,7 @@ is known to be wrong even though its direction may stand.
 | **F43** | **VOID.** The layout arm's first run — A-arm 40.37 tok/s against F40's floor at 46.8, gate 2.65% | A (a fact about a failure) |
 | **F44** | **M10 caught switching.** Thirteen identical probes: four at **46.09**, then eight at **40.92**, a **12.6% gap**, unprompted transition, nothing else running | **A.** Contradicts this document's own "not two stable regimes" |
 | **F45** | **VOID, both halves.** Layout arm and matched null, gates 9.37% and 5.61%. The layout arm *resolved* at −0.34% with a 0.18pp block spread, from a run whose timeline shows a 50-second excursion onto another level | A (a fact about a failure). **The `timeline` field's first use, and it worked** |
+| **F49** / **F50** | **M6 closed.** A verified 16-byte shift moves decode **−0.08% [−0.16, +0.00]** and a 48-byte shift — F24's own alignment — **+0.06% [−0.11, +0.22]**, both against matched nulls of −0.08%, **all four passing the gate**. The design change that made it possible: 6 blocks of 10 rounds instead of 3 of 20, halving the drift a block can contain, which cut per-block IQR from 0.70–2.31% to 0.17–0.90% | **C→B for the conclusion** (four runs, two shift sizes, matched controls, non-overlapping with F24 by more than a percentage point). Closes M6 |
 | **F48** | An incident: `git checkout` on `ggml-cpu.c` silently reverted patch 01 twice; the cold-start checklist caught it. **Verified not to have invalidated F42/F47** — the maps show the only symbol difference between the arms is the pad and every other function moved 0 or +16. Incidentally the **strongest check of zero-overhead-when-off the project has**: instrumentation source present vs physically absent gives identical code for all 14,419 functions | **A.** A fact about builds, and a new trap |
 | **F47** | The layout arm's best pair: **−0.00% [−0.18, +0.18]** against a matched null of −0.11%. Gate marginal both sides, so uncertified — but three attempts on three levels all land far below F24's +1.62%, and the arm with a real perturbation came back closer to zero than the arm with none. **Corrects F46: a fourth baseline value (44.8) means "discrete levels" overstates the data** | **D, uncertified but bounding.** Moves M6 from "unknown fraction" to a bounded one |
 | **F46** | The slow level is **not load, not idle-reversible, and not the page cache** — the last refuted from existing data, so no `EmptyStandbyList` download is needed. Temperature is unreadable on this chassis. **Correction to F44: at least three levels (40.9 / 43.5 / 46.0), not two** | **A.** Eleven M10 candidates now refuted; the survivor is below the OS |
@@ -302,11 +303,21 @@ re-measurement that would have caught it.
 | **M13** | **The prefill control cannot arbitrate anything at the ~1% level *at 16 threads*, which is where F24/F33 used it.** F39 measured it returning a resolved `+0.59%` with nothing to detect; F33 had already found it drifting. **F40 qualifies this:** at 8 threads the same control is clean to ±0.12pp and would be an excellent control — but F24's effect depends on `nth` (F23), so it cannot simply be re-measured there | **Open.** Do not cite F24/F33's prefill control in either direction. M6 needs the layout arm |
 | **M4** | F30 and F31 differ in arm order, round length **and** time simultaneously, so the rotation explanation is a story that fits, not evidence | **Open.** The same disease F30 diagnosed in F25 |
 | **M5** | Cross-session comparison of absolute throughput is worthless — the same compiled-out binary read 42.94 and 45.92 tok/s in two sessions (**+6.9%**, ~6× the effects being resolved) | Documented; a standing rule |
-| **M6** | Code layout is not held constant in F24's A/B. **Reduced to one number by F42:** the difference is a *uniform 16-byte downstream shift*, not 31% of a regenerated image — and `ggml_vec_dot_f32`, the hottest function in an F32 decode, moves with it (0→48 mod 64). **The control now exists** (`patches/05-layout-arm.patch`, a verified +16 shift with `mul_mat` byte-identical) and **has been measured three times: F43 +0.14%, F45 −0.34%, F47 −0.00% [−0.18, +0.18]**, on three different baseline levels, none near F24's +1.62%. All three fail the gate (2.65%, 9.37%, **2.21% marginal**), so none is certified — but F47's is nine times tighter than the effect it would have to explain, and in that run the layout arm (−0.00%) came back *closer to zero than the matched null* (−0.11%, resolved). Previously quantified in F38: the 1,137,994 differing bytes are one contiguous block inside `.text`, ~94% dense — **about 31% of the entire code section** — and **0 of 36 code probes appear at the same address** in both binaries | **Open, and the strongest live threat to F24.** F33's prefill control (a workload the patch cannot reach) is negative in every run. **The control built for it does not work** (F38): the same edit in `mul_mat_id` perturbs 5 bytes, so layout cannot be dialled in by choosing a small edit |
+| **M6** | ~~Code layout is not held constant in F24's A/B.~~ **CLOSED (F49, F50).** F42 read the linker map and found the 1.1 MB of differing bytes is one *uniform 16-byte shift* — `mul_mat` shrinks by 16, all 7,721 functions after it move down by it, nothing else changes — which made a real control constructible after F38 had declared it impossible. `patches/05` (+16 bytes) and `patches/06` (+48 bytes, **F24's own alignment**: `ggml_vec_dot_f32` at 48 mod 64) were measured against matched nulls: **−0.08% [−0.16, +0.00]** and **+0.06% [−0.11, +0.22]**, against nulls of −0.08% and −0.08%. Four gate-passing runs spanning 0.14pp | **Closed.** **F24/F33's +1.62% is attributable to the chunking change**; layout contributes nothing measurable at either tested alignment. What is untested is other alignments and other CPUs, which is G1, not M6 |
 | **M7** | The static pair builds under Ninja and the shared pair under MSBuild, so early cross-pair numbers confound linkage with generator | Fixed by adding a Ninja shared pair (F31); the generator turned out to matter (+0.40% [+0.14, +0.69] on decode) |
 
-**M6 deserves emphasis.** It is the strongest live threat to F24, and F33, F38
-then F39 each made it worse rather than better. **F39 removed the instrument the
+**M6 is closed, and how it closed is the instructive part.** It was the strongest
+live threat to F24, and F33, F38 then F39 each made it worse rather than better.
+What broke it open was not a better measurement but a **different instrument**:
+nobody had produced a linker map. One `/MAP` build turned "31% of `.text` is
+relocated or regenerated" into "everything after `mul_mat` moved 16 bytes", and
+a control that F38 had declared unbuildable became a fifteen-line patch. The
+lesson generalises past this issue: **F38's byte-window probe could not have
+answered the question it was asked**, and three sessions of increasingly worried
+prose were spent on a fact that the right tool reports in one command.
+
+The historical account below is left in place because the wrong turns are the
+useful part. **F39 removed the instrument the
 question was being argued with**: the prefill control returns a resolved +0.59%
 between binaries that cannot differ, so neither its flatness nor its drift means
 anything at this scale. What survives is that F39's decode null is clean at
@@ -391,6 +402,14 @@ Each of these cost real time at least once.
 - **Do not run anything on the machine during a measurement.** Session 6
   contaminated one run by executing a smoke test alongside it, and then
   discarded that run.
+- **No git-based revert is safe inside `../llama.cpp`.** The clone is modified
+  in place, so git's baseline is *upstream*, not your pre-edit state. `git
+  checkout <file>` discards tokenscope from that file (F48), and **`git apply -R`
+  on a diff produced by `git diff` does the same**, because that diff contains
+  patch 01's additions too — session 7 hit both, the second while following the
+  rule written for the first. Undo a temporary edit with the inverse of the
+  script that made it, or from a copy of the file saved beforehand, and then
+  check `git status --short` shows **9** entries.
 - **Never `git checkout <file>` inside `../llama.cpp`.** Eight files carry
   `patches/01-instrument.patch` and the clone is modified in place, so a
   checkout silently discards tokenscope from that file — and everything still
@@ -491,8 +510,13 @@ So:
   estimates 2.3–3.8× the null's half-width outside it. They read marginal only
   because F36's own three-block intervals are wide.
 - **F24's +1.62% clears its own (16-thread) floor by 3.6×**, its lower bound
-  +1.10 sitting 0.68pp above the null's +0.42. That is the strongest statement
-  ever made for F24 and it did not exist before F39.
+  +1.10 sitting 0.68pp above the null's +0.42.
+- **And its layout confound is now closed (F49/F50).** Relocating every function
+  after `mul_mat` by 16 bytes gives −0.08% [−0.16, +0.00]; by 48 bytes, which is
+  F24's own alignment for the hottest function, +0.06% [−0.11, +0.22]. Both
+  against matched nulls of −0.08%, all four runs passing the gate. **F24 is
+  safe to state as a result about the chunking threshold**, on this machine,
+  with the one-machine caveat that applies to everything here.
 - a **prefill** effect at ~1% **at 16 threads** should not be quoted; the null
   resolved there. At 8 threads prefill is the cleanest thing measured here.
 - **prefer 8 threads for any Tier D measurement** that is not specifically about
