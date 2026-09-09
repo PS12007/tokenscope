@@ -370,7 +370,7 @@ where your time goes.
 | Constraint | How it is enforced | Status |
 |---|---|---|
 | **Zero overhead when disabled** | Everything behind `TOKENSCOPE_ENABLED`. Off ⇒ macros expand to nothing; no symbol, no branch, no storage. | ✅ verified against the symbol table |
-| **Under 2% when enabled** | Measured with interleaved arms, rotating order, and a between-block `t` interval — not assumed. | ✅ 8 threads, level 3, **every build under 1%**: static **+0.56% [-0.05, +1.16]**, ninja-shared **+0.92% [+0.38, +1.46]**, MSBuild-shared **+0.77% [+0.05, +1.48]** ([F36](docs/FINDINGS.md)), three blocks each, and the three builds cannot be told apart. Prefill is the control and is unresolvable everywhere. **Earlier single-run bootstrap figures (+1.16%, +0.87%) were too narrow** — F36's intervals contain them all |
+| **Under 2% when enabled** | Measured with interleaved arms, rotating order, a between-block `t` interval, and a **null control** that establishes what the harness reports when there is nothing to find — not assumed. | ✅ 8 threads, level 3, **every build under 1%**: static **+0.56% [-0.05, +1.16]**, ninja-shared **+0.92% [+0.38, +1.46]**, MSBuild-shared **+0.77% [+0.05, +1.48]** ([F36](docs/FINDINGS.md)), three blocks each, and the three builds cannot be told apart. All three clear the measured false-positive floor of **±0.24pp** at the same thread count ([F40](docs/FINDINGS.md)). **Earlier single-run bootstrap figures (+1.16%, +0.87%) were too narrow** — F36's intervals contain them all |
 | **No new dependencies** | C++17 standard library on the engine side. Python stdlib for analysis. | ✅ |
 | **No locks in the hot path** | Thread-local buffers, merged at flush. | ✅ |
 | **Deterministic, not sampled** | Explicitly placed scopes, so the trace is *interpretable* rather than statistical. | ✅ |
@@ -406,6 +406,15 @@ decode column believable ([F36](docs/FINDINGS.md)).
 The static row spans zero, so strictly it is bounded under +1.16% rather than
 resolved away from zero. Three blocks is three numbers, `t(2) = 4.303`, and the
 interval is wide on purpose.
+
+**What the harness reports when there is nothing to report** was measured in
+session 7, against two binaries differing by one byte of code in a function this
+model never executes: **+0.02% [-0.21, +0.26]** on decode at 8 threads
+([F40](docs/FINDINGS.md)). All three overhead numbers above sit outside that
+interval, so they are measurements rather than noise. The same null at 16
+threads is twice as wide on decode and **resolves a +0.59% effect on prefill
+that cannot exist** — so the floor is a property of the thread count, and a
+number must be compared against the floor at its own.
 
 **Getting here took six measurements across three sessions, and the earlier
 five were all too confident.** Session 1 said +0.67% [+0.12, +1.67]; session 2

@@ -141,6 +141,37 @@ return tighter intervals; the conservative choice is kept because every figure
 in `FINDINGS.md` was computed that way. Intervals here are wider than the design
 earns, never narrower.
 
+### The false-positive floor, and why it comes before the interval (session 7)
+
+Everything above measures a *difference between two builds*. None of it
+established what this harness reports when there is **no difference to find**.
+Session 7 measured that, against two binaries three bytes apart — one byte of
+code, in `ggml_compute_forward_mul_mat_id`, a function a dense model never
+enters (zero `MUL_MAT_ID` events across all nine reference traces, against 2,704
+`MUL_MAT` events in the level-3 mid trace alone).
+
+| threads | decode | prefill |
+|---|---|---|
+| **8** | **+0.02% [−0.21, +0.26]** | **−0.01% [−0.12, +0.11]** |
+| **16** | −0.04% [−0.49, +0.42] | **+0.59% [+0.01, +1.16]** — *resolved* |
+
+Six blocks each ([F39](FINDINGS.md), [F40](FINDINGS.md)). Three rules follow,
+and the third was learned by getting it wrong:
+
+1. **At 8 threads this harness is trustworthy to ±0.24pp on decode.** Every
+   overhead number in this document was taken at 8 threads, and all of them
+   clear that: ninja-shared's interval does not overlap the null at all, and the
+   other two sit 2.3–3.8× the null's half-width outside it.
+2. **At 16 threads prefill is not usable as a control.** It returned a resolved
+   `+0.59%` with nothing to detect. Consistent with `01`'s argument that
+   overhead is a `max()` across threads, and with F10 — past four threads the
+   measurement is largely scheduling.
+3. **Compare a number against the floor at its own thread count.** F39 compared
+   this document's 8-thread overheads against the 16-thread floor, concluded
+   they were indistinguishable from nothing, and was refuted fifty minutes
+   later. *A comparison you have labelled as forbidden does not become usable by
+   labelling it.*
+
 ### Session 1: levels 0 and 1 only
 
 Taken before Tier 2 existed, when level 1 meant a single scope per
@@ -354,13 +385,19 @@ moves.
   characteristics that shaped the design are Windows-specific, and GCC's
   `__thread` is cheaper, so the expectation is that Linux is no worse — but
   expectation is not measurement.
-- **Shared-library builds untested.** All measurements are
-  `BUILD_SHARED_LIBS=OFF`. The `__declspec(dllimport)` path adds an indirection
-  per global read on Windows.
+- ~~**Shared-library builds untested.**~~ **Closed by F36**, which measured two
+  of them (ninja and MSBuild) in the same round-robin as the static pair; see
+  the claim table at the top of this file. The `__declspec(dllimport)`
+  indirection costs +0.92% / +0.77% against +0.56% static, and every pairwise
+  difference spans zero.
 - **Thread-count sweep not done.** docs/01 argued that barrier effects make
   overhead a `max()` across threads rather than a mean, which predicts that
   overhead grows with thread count. Only 8 threads has been measured. A 1 / 4 /
-  8 / oversubscribed sweep is the test of that prediction.
+  8 / oversubscribed sweep is the test of that prediction. **Session 7 supplies
+  a suggestive half of it from the null side**: the harness's own noise floor
+  roughly doubles on decode from 8 to 16 threads and prefill becomes unusable,
+  which is what the `max()` argument predicts should also happen to the overhead
+  itself. Measuring the overhead there is still not done.
 - **Quantized models untested**, as noted in section 1.
 
 ### The isolated per-scope cost
