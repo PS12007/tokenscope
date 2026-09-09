@@ -794,7 +794,16 @@ ladder and the issue register (M1–M14) that the items below refer to.
    property of `--blocks`; and **8 threads is the configuration to measure in**
    unless the question is about thread count.
 
-2. **The layout arm for M6 — BUILT, and blocked on the machine.**
+2. **The layout arm for M6 — BUILT, MEASURED THREE TIMES, and owed one clean
+   run.** Best result **−0.00% [−0.18, +0.18]** (F47), against a matched null of
+   −0.11%; the other two attempts gave +0.14% and −0.34%. All three fail the
+   gate (2.65%, 9.37%, 2.21%), so none is certified — but none is anywhere near
+   F24's **+1.62%**, and F47 bounds it **nine times** below that. What is owed
+   is one run on a still machine where the gate actually passes, and then the
+   **−16** arm, since this one shifts +16 and an alignment effect need not be
+   symmetric.
+
+   *(previous framing, kept because the work behind it stands)*
    `patches/05-layout-arm.patch` exists and is verified against the linker map:
    exactly two address deltas (0 and **+16**) across all 14,419 `.text`
    functions, `mul_mat` the same size in both arms and 98.6% byte-identical
