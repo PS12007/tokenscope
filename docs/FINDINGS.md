@@ -6184,6 +6184,140 @@ invocation, `-p 0 -n 64 -t 8 -r 3`, 55 seconds apart, 13 of them.
 
 ---
 
+## F43 — void: the layout arm's first run
+
+**Recorded rather than discarded**, per the project's habit of keeping failed
+runs. Raw: `data/overhead/f43a-void.json`.
+
+`bench-stock.exe` vs `bench-pad.exe` (`patches/05-layout-arm.patch`), 8 threads,
+three blocks, the protocol [`P43`](#p43--predictions-before-the-layout-arm-the-experiment-m6-has-needed-since-session-4)
+specified. It reported `tg64 +0.14% [-0.31, +0.59]` and `pp64 +0.35% [-0.35,
++1.06]`, neither resolved.
+
+**It is void on two independent counts, both checked before the numbers were
+read:**
+
+1. **P43.5, written before the run.** The A-arm median is **40.37 tok/s**, where
+   F40 and F41 read 46.78–46.91 across four consecutive runs. P43.5 said in
+   advance that without a matching median the comparison against F40's floor is
+   void. It is.
+2. **The gate.** Worst-block baseline IQR **2.65%** on decode and 2.51% on
+   prefill, against a 2% budget.
+
+The A-arm was stable *within* the run (40.49, 40.32, 40.37), so this was a
+sustained state rather than drift — and [`F44`](#f44--m10-caught-in-the-act-the-machine-holds-two-regimes-for-minutes-at-a-time-and-switches-between-them-unprompted)
+then identified what it was.
+
+**The unresolved result is probably right**, since interleaving protects the
+internal A/B, and it agrees with P43.1. **It is still not evidence.** A run whose
+baseline is 14% off and whose gate failed does not get to contribute because its
+answer looks agreeable — that is the failure mode this whole apparatus exists to
+prevent, and the temptation was real.
+
+The layout arm is re-measured in the fast regime instead.
+
+---
+
+## F44 — M10 caught in the act: the machine holds two regimes for minutes at a time and switches between them unprompted
+
+**Workload:** thirteen identical `llama-bench` probes, `mid.gguf`, `-p 0 -n 64
+-t 8 -r 3`, **55 seconds apart, nothing else running on the machine**. Provoked
+by [`F43`](#f43--void-the-layout-arms-first-run)'s void run.
+[`P44`](#p44--a-prediction-about-the-machine-written-while-it-is-visibly-slow)
+holds the predictions, all of which were essentially wrong.
+
+### The curve
+
+```
+   t(s)   tok/s
+      0   39.99      <- immediately after six rebuilds
+     61   45.46
+    120   46.05
+    180   46.16      fast regime, four consecutive probes
+    240   46.13
+    299   41.00      <- switches, unprompted
+    359   41.15
+    420   40.56
+    480   40.63
+    540   41.04      slow regime, eight consecutive probes
+    600   38.52
+    661   40.84
+    721   41.05
+```
+
+| regime | probes | median | range |
+|---|---|---|---|
+| fast (t=61–240) | 4 | **46.09** | 45.46–46.16 |
+| slow (t=299–721) | 8 | **40.92** | 38.52–41.15 |
+
+**A 12.6% gap between two states the machine holds for minutes at a time**, with
+an unprompted transition between them, under a workload that never varied.
+
+### What this adds to M10, and what it takes away
+
+The audit says M10 is "bimodal rather than smooth" and that "the full range
+appears **inside one 4.5-minute window**, so it is run-to-run variance whose
+median moves, **not two stable regimes**."
+
+**That last clause is now doubtful.** This is two stable regimes: four
+consecutive probes at 46.09 ± 0.35 and then eight at 40.92 ± 1.3, with a clean
+step between them. The 46.09 band is exactly where F40 and F41 sat for four
+consecutive 25-minute runs, and the 40.92 band is exactly where F43's void run
+sat for all three of its blocks. **The regimes are the same ones the measurement
+runs live in**, which is why an A-arm median identifies them so reliably.
+
+What it does *not* explain is the switch. Nothing changed: same binary, same
+model, same thread count, same 55-second cadence, CPU otherwise at 1%, 6 GB
+free. The machine simply stopped being fast at around t=290 and stayed slow for
+the next seven minutes.
+
+### Scoring the predictions, all three of which missed
+
+| | claim | outcome |
+|---|---|---|
+| **P44.1** | recovery toward ~46.8 over ten minutes, monotonic-ish | **failed.** It recovered in **two** minutes, not ten, and then went *back down* and stayed. Monotonic recovery is the wrong shape entirely |
+| **P44.2** | it does not fully reach 46.8 within 12 minutes | **held in letter, and the letter is worthless.** It reached 46.16 and the reason it stopped there is that 46.1 *is* the fast regime's ceiling, not that recovery was still in progress |
+| **P44.3** | a flat 42–43 curve would point at page-cache | **failed** — the curve is not flat, and the disjunction the prediction set up (recovery *or* stuck) did not contain the answer |
+
+**All three predictions shared one wrong assumption**: that the machine was
+*recovering from* something I had done to it, so the curve should have a
+direction. It does not have a direction. It has **states**. The six rebuilds
+probably did cause the initial 40.0, since the first probe recovered within a
+minute — but that recovery finished long before the interesting thing happened.
+
+This is the most useful prediction failure of the session, because the whole
+prediction set was built on a frame that the data discards.
+
+### What it means for every measurement here
+
+**A 25-minute run can span a regime switch**, and the two regimes differ by 12.6%
+— roughly **twenty times** the effects being measured. Three consequences:
+
+1. **The A-arm median is doing more work than the gate.** It identifies which
+   regime a run lived in. F40/F41 at 46.78–46.91 were entirely in the fast
+   regime; F43's void run at 40.32–40.49 was entirely in the slow one.
+2. **Interleaving is what makes any of this work.** A regime switch mid-run hits
+   both arms nearly equally because they alternate every round, which is why
+   F43's *internal* A/B (+0.14%) is probably sound even though the run is not
+   comparable to F40's floor. The baseline-IQR gate is what catches the
+   inflation a switch causes, and it did.
+3. **M14 may have this as its mechanism.** F41's run A blocks agreed to 0.05pp
+   and run B's to 0.37pp. A run wholly inside one regime should produce the
+   former; a run containing a switch, the latter. Stated as a candidate, **not
+   tested** — it needs per-round timestamps that the harness does not currently
+   record.
+
+### The cheap thing this suggests next, and does not do
+
+`ab_throughput.py --json-out` records measurements in order but **no
+timestamps**. Adding a wall-clock stamp per measurement would let any past or
+future run be checked for a regime switch directly, and would test the M14
+mechanism above for free on data already collected. That is a one-line change
+and it is not made here, because this session has already published enough
+mechanisms before testing them.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
