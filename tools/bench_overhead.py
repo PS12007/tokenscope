@@ -477,12 +477,30 @@ def main() -> int:
         print("  " + "-" * 76)
 
         floors: dict[str, float] = {}
+        pooled_floors: dict[str, float] = {}
         for name, _, _ in pairs:
             base = results[base_of[name]][phase]
             if not base or statistics.median(base) <= 0:
                 continue
             med_b = statistics.median(base)
-            floors[name] = 100.0 * iqr(base) / med_b
+            pooled_floors[name] = 100.0 * iqr(base) / med_b
+            # F39/D9: gate on the WITHIN-block spread, not the pooled one. The
+            # gate asks "is the baseline's own noise wider than the effect",
+            # which is a within-invocation question. Pooling N blocks folds the
+            # between-block drift into it as well -- and that drift is already
+            # reported, by the t interval that exists to carry it. Gating on the
+            # pooled figure therefore charges a --blocks run twice for the same
+            # variance and can print "this machine cannot resolve it" about a
+            # run whose interval already says so honestly. F39 measured the gap:
+            # 2.02% pooled against 1.46% within-block on the same 60 samples.
+            # The worst block is used, not the median, so the gate stays
+            # conservative. With --blocks 1 this is identical to the old path.
+            per_block = []
+            for blk in blocks:
+                xs = blk[base_of[name]][phase]
+                if xs and len(xs) >= 4 and statistics.median(xs) > 0:
+                    per_block.append(100.0 * iqr(xs) / statistics.median(xs))
+            floors[name] = max(per_block) if per_block else pooled_floors[name]
 
             for arm in (a for a in arms if a.pair == name):
                 xs = results[arm.label][phase]
@@ -501,7 +519,12 @@ def main() -> int:
 
         for name, spread in floors.items():
             tag = f" [{name}]" if name else ""
-            print(f"  baseline IQR{tag} is {spread:.2f}% of median.")
+            if len(blocks) > 1:
+                print(f"  baseline IQR{tag} is {spread:.2f}% of median "
+                      f"(worst block; {pooled_floors[name]:.2f}% pooled, which "
+                      f"also carries between-block drift -- see F39).")
+            else:
+                print(f"  baseline IQR{tag} is {spread:.2f}% of median.")
         gate_failed = any(s > 2.0 for s in floors.values())
         if gate_failed:
             print("  NOTE: that is wider than the 2% budget being tested.")

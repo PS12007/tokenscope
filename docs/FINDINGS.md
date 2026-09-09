@@ -5423,6 +5423,14 @@ a 39.09 median at these settings. If the blocks disagree by more than that, the
 run is describing the machine's drift and not its own arms, and nothing below it
 counts.
 
+**P39.8 — added after run A, before run B.** One three-block run is exactly
+what F31 condemned, so the false-positive rate gets the treatment F33 gave
+F24: a second independent three-block run, pooled to six. **Prediction: run B's
+`t` interval on `tg64` overlaps run A's**, which is the property the bootstrap
+failed. Run A read `-0.04% [-1.26, +1.18]`. I also predict run B's `pp64` point
+estimate is again **above** `-0.8%`, since P39.5's whole content is that the
+persistent negativity belongs to F24's binaries and not to the harness.
+
 ### What would make this run void rather than informative
 
 Per F34's ordering — gate first, physical plausibility second, interval third.

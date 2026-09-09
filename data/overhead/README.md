@@ -1,4 +1,4 @@
-# Raw measurement data, session 6
+# Raw measurement data, sessions 6-7
 
 Every number in `FINDINGS.md` F30–F36 is computed from one of these files. They
 are committed because the findings argue *about the intervals themselves*, and
@@ -17,6 +17,7 @@ diagnosed afterwards).
 | `f34.json` | **F34** | **VOID.** 870 MB free against an 840 MB model; every instrumented arm came out *faster* than its baseline | as a failure specimen only |
 | `f35.json` | **F35** | **REFUSED.** Baseline IQR 3.5–4.7%, gate failed | as a failure specimen only |
 | `f36.json` | **F36** | 6 arms, 3 pairs, 15 reps × **3 blocks**. The settled overhead numbers | **yes — this is the one to quote** |
+| `f39a.json` | **F39** | `ab_throughput` A/B of the **null control**, 3 blocks × 20 rounds. Two binaries differing in one code byte, in a function this model never enters | yes |
 
 ## Structure
 
