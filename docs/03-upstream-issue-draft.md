@@ -398,27 +398,49 @@ of per-thread overhead rather than the mean, so I would expect overhead to grow
 with thread count. I could not detect that growth up to 28 threads, which is
 weaker than saying it does not happen.
 
-### One thing a reviewer should be told about the chunking measurement
+### The layout question a reviewer would ask, and its answer
 
 The `nth * 4` -> `nth * 2` result (+1.62% [+1.10, +2.15] on decode, `t` over six
 blocks) was measured between two binaries built from one tree in one session,
-differing only in that constant. **They also differ in about 31% of their code
-section.** The 1,137,994 differing bytes form one contiguous ~1.1 MB block
-inside `.text` at ~94% density, and no code probe from that block appears at the
-same address in both binaries (FINDINGS F38).
+differing only in that constant. **They also differ in 1,137,994 bytes.** The
+obvious objection is that code layout, not scheduling, produced the speedup.
 
-Code layout affects throughput on this kind of workload at around the size of
-the effect being claimed, so **an unknown fraction of that 1.62% may be layout
-rather than scheduling.** The reasons to still believe the mechanism: decode
-moves roughly three times further than prefill and in the opposite direction,
-which layout has no reason to arrange; and the mechanism was predicted before it
-was measured, including which matmuls change partitioning mode and at what
-thread count. The reason for caution: the prefill control, which cannot see this
-change at all, has come back negative in every run.
+**That objection has been tested and does not hold.**
 
-An attempt at a layout control failed informatively — the identical edit applied
-to `mul_mat_id` perturbs **5 bytes**, so layout perturbation cannot be produced
-on demand by making a similarly small change elsewhere.
+First, what the difference actually is. The linker map for both arms shows
+exactly two address deltas across all 14,419 functions in `.text`:
+`ggml_compute_forward_mul_mat` shrinks by **16 bytes**, and every one of the
+7,721 functions after it moves down by exactly 16. Nothing else changes. The 1.1
+MB is that shift, not regeneration (FINDINGS F42).
+
+Second, that shift was reproduced without the behaviour change. Two control
+patches add never-called functions between `mul_mat` and `mul_mat_id`, shifting
+everything below them by 16 and by 48 bytes, with `mul_mat` itself byte-identical
+and every arm verified against the map before measurement:
+
+```
+  arm                          ggml_vec_dot_f32   decode
+                                     mod 64
+  null (one byte of dead code)         0          -0.08% [-0.20, +0.04]
+  layout, +16 bytes                   16          -0.08% [-0.16, +0.00]
+  null (second run)                    0          -0.08% [-0.25, +0.09]
+  layout, +48 bytes                   48          +0.06% [-0.11, +0.22]
+  ---
+  the chunking change                 48          +1.62% [+1.10, +2.15]
+```
+
+The 48-byte arm places the hottest function in this workload at **the same
+alignment the chunking patch gives it**. All four control runs pass the harness's
+baseline gate, span 0.14pp between them, and every one contains zero (FINDINGS
+F49, F50).
+
+**So the +1.62% is the scheduler change.** Layout, tested at the shift size the
+patch actually produces and at the alignment it actually produces, contributes
+nothing measurable.
+
+The caveats that remain are the ones that apply to everything in this document:
+one machine, one compiler, MSVC on Windows, and no NUMA hardware — which matters
+here because `nth * 4` was tuned for NUMA (PR #6915).
 
 ### Size of the change
 
