@@ -246,7 +246,7 @@ re-measurement that would have caught it.
 | # | Issue | Status |
 |---|---|---|
 | **M1** | **Bootstrap CIs are within-run and understate the truth by roughly 2×** in Tier D | Diagnosed and fixed in tooling (§2); **published numbers not yet all re-measured** |
-| **M2** | The word "certified" promised reproducibility the method never tested; it appears ~44 times across three documents | Removed from tool output; **doc sweep still outstanding** |
+| **M2** | The word "certified" promised reproducibility the method never tested | **Done.** Removed from tool output and from README, `02` and `03` entirely. In `FINDINGS.md` the historical uses are **deliberately left** — they are what each session believed at the time — under a banner at the top of the file defining what the word actually meant and pointing at this ladder |
 | **M3** | The instability is *within* one invocation (0.47pp between halves of the same run) and its cause is unidentified — not position, not autocorrelation, not the estimator | **Open.** Blocks contain it; nothing explains it |
 | **M8** | **Blocks manufacture confidence under sustained contamination.** F34's three blocks agreed to 0.55pp and excluded zero while reporting a physically impossible result | Guarded by the gate + plausibility check (F34); **the underlying limitation is permanent** |
 | **M9** | The machine is shared with whatever else the user is running. A 5.17 GiB `javaw` process voided a 44-minute run | `preflight_ram()` refuses to start; **it cannot detect load that arrives mid-run** |
@@ -491,8 +491,8 @@ exercised by CI.
 3. **Explain M3** — why one invocation's own halves disagree by 0.47pp. Blocks
    contain the symptom; nothing explains it. Candidates not yet tested: Windows
    scheduler migration, page-cache state, SMT partner activity, turbo residency.
-4. **Sweep "certified" out of the prose** (M2), replacing each use with what was
-   actually established.
+4. ~~**Sweep "certified" out of the prose**~~ **Done (M2).** Gone from the tools,
+   README, `02` and `03`; annotated rather than erased in `FINDINGS.md`.
 5. **Linux + GCC** (G1) — the blocker for the upstream conversation, and smaller
    than it looked once F26 corrected the barrier-path premise.
 6. **An MoE model** (G2) — the most informative single test available, because

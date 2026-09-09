@@ -6,6 +6,24 @@ states the workload, because a finding without a workload is an opinion.
 Numbers here come from real traces produced by the committed code. Where a
 finding is provisional, it says so.
 
+> ### On the word "certified" — read this before quoting a percentage
+>
+> It appears throughout F10–F31 and it **overpromised**. It meant only that a
+> run's bootstrap interval excluded zero while its baseline IQR cleared 2% —
+> that is **resolved within one invocation**, not reproducible. F31 put two
+> "certified" intervals for *one quantity on the same unrebuilt binaries* side
+> by side and they **did not overlap**; F36's block interval later contained
+> both, so the runs never disagreed, only their intervals did.
+>
+> The uses below are left in place deliberately. They are what the sessions
+> believed at the time, and editing them out would hide the thing worth
+> learning. **Treat every "certified" here as "resolved within that run", and
+> check [`04-project-audit.md`](04-project-audit.md)'s trust ladder before
+> quoting the number.** The tools no longer print the word.
+>
+> Superseded by measurement, not just by wording: **F24 → F33**, and
+> **F25 / F30 / F31's percentages → F36**.
+
 ---
 
 ## F1 — Host-side control-plane work is not where decode time goes. At all.
@@ -3181,6 +3199,15 @@ negative and is worth the run, but is not a result anybody would quote.
 ---
 
 ## F25 — The static overhead certifies for the first time since session 1, and the shared build's noise floor ate its own answer
+
+> **Superseded by [`F36`](#f36--the-overhead-numbers-settled-every-build-under-1-linkage-and-generator-both-null-and-two-f31-claims-retracted).**
+> `+1.16% [+0.67, +1.87]` was a single-run bootstrap and is too narrow; the
+> current figure for this quantity is **+0.56% [-0.05, +1.16]** over three
+> blocks. F36's interval contains this one's point estimate. **What stands is
+> this finding's own post-mortem** — that a comparison spanning two invocations
+> has not been interleaved — which is what led to `--pair`, `--blocks`, and
+> everything after it.
+
 
 **Workload:** `mid.gguf` (24L, F32, 220 M), 8 threads, pp512 / tg256, MSVC
 Release, `-n 20` interleaved per arm with the first rep discarded, five arms
