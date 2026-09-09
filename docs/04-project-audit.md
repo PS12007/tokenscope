@@ -89,7 +89,7 @@ is a ladder rather than a badge.
 | Tier | What it means | How to tell | Examples |
 |---|---|---|---|
 | **A — structural** | Not statistical at all. True by construction, code reading, symbol table or a CI assertion that fails the build | No interval quoted, because none is needed | zero-overhead-when-off; node/barrier alternation; F22's two-module buffer identity; F8/F20 naming coverage |
-| **B — large effect** | Effect is ≫10× the machine's drift term (~0.5pp) | Interval width is irrelevant to the conclusion | F27's −54% / −78% / −13% rows (**but not its −2.06% row**), F28 (76–83% of release latency), F10 (2.2× ceiling), F14 (2.88× P/E), F7/F19/F21 byte law ratios |
+| **B — large effect** | Effect is ≫10× the machine's drift term (~0.5pp) | Interval width is irrelevant to the conclusion | F27's −54% / −78% / −13% rows (**its −2.06% row is Tier D and now re-measured — F41**), F28 (76–83% of release latency), F10 (2.2× ceiling), F14 (2.88× P/E), F7/F19/F21 byte law ratios |
 | **C — medium, structured** | Effect is several × drift, and supported by a *structure* (control arms, non-overlapping ranges, n≥12) rather than by one interval | Quote with its n and its control | F9 imbalance/release split, F23 chunking-mode ratios (n=12, two non-overlapping comparisons) |
 | **D — near the floor** | Effect is **1–3×** the drift term. This is where every overhead and throughput percentage lives | **Needs a between-block `t` interval** and must clear the measured false-positive floor, which **depends on thread count** (F39, F40): decode **±0.24pp at 8 threads**, **±0.45pp at 16**; prefill **±0.12pp at 8** and *unusable at 16*. A bootstrap interval here is roughly half as wide as the truth | F24 (now +1.62%), F25 (+1.16%), F30, F31's three overheads |
 
@@ -99,9 +99,12 @@ narrower than the evidence supports.
 
 **Tier is a property of a number, not of a finding.** F27 is the trap: its
 headline is −54% (Tier B, safe at any interval width) but the same table's
-8-thread row is −2.06% (Tier D, never re-measured). A finding can carry rows
-from two different tiers, and this document filed F27 under B for a session
-before anyone noticed.
+8-thread row was −2.06% (Tier D). A finding can carry rows from two different
+tiers, and this document filed F27 under B for a session before anyone noticed.
+**F41 closed it**, and the closure vindicated the worry: the decode row survived
+at −2.15%, and the *prefill* row on the same line turned out **wrong by 2.7×**
+(−1.15% → −0.43%, the old estimate outside the new interval). The row nobody had
+checked was the row that was wrong.
 
 ### Why Tier D is broken, precisely
 
@@ -142,7 +145,12 @@ over the per-block point estimates, with a real small-sample `t` table. At N=3,
 number down. Both `bench_overhead.py` and `ab_throughput.py` print it and say to
 quote it over the bootstrap.
 
-**Rule: no Tier D number leaves this repo without a `--blocks ≥ 3` interval.**
+**Rule: no Tier D number leaves this repo without a `--blocks ≥ 3` interval** —
+and after F41, **without two such runs pooled to six blocks**. F41 ran one
+comparison twice and got interval widths 7× apart (0.14pp against 0.95pp) with
+point estimates agreeing to 0.02pp: three blocks can be tight by luck, because
+the interval is computed from a block spread that is itself a random variable
+(M14).
 
 ### But the interval is third in the order of trust, not first
 
@@ -207,7 +215,7 @@ is known to be wrong even though its direction may stand.
 | **F15** | Fusion removes 10.6% of barriers and buys nothing — **F9's recommendation was wrong** | B |
 | **F23** | ggml already solves core heterogeneity for big matmuls via work stealing, and a thread count can turn it off | C (n=12) |
 | **F26** | **Every measurement in the project was on the OpenMP path, and five documents said the opposite** | A |
-| **F27** | ggml's own barrier is not the cheap one: −54% of decode at 28 threads | **B for the large rows, D for one.** −54.17%, −78.64% and −13.07% are 13–78× the drift term and safe. **−2.06% at 8 threads is Tier D**, was a single-run bootstrap, and has never been re-measured with `--blocks` |
+| **F27** / **F41** | ggml's own barrier is not the cheap one: −54% of decode at 28 threads | **B for the large rows, D re-measured for the rest.** −54.17%, −78.64% and −13.07% are 13–78× the drift term and safe. **F41 re-measured the 8-thread rows over six blocks: decode confirmed at −2.15% [−2.28, −2.02]** (9× the floor), **prefill corrected from −1.15% to −0.43% [−0.65, −0.21]** — F27's prefill estimate is *outside* the new interval, so that row was wrong rather than merely over-precise |
 | **F37** | Four candidate causes for M10 tested and all refuted — thermal, thread placement, CPU frequency, workload. Confirms the logical-processor numbering is interleaved, so `0x5555` **is** one thread per P-core | A (they are facts about tests that were run). **Corrects a claim this document published**, and eliminates F14's first candidate |
 | **F28** | The barrier this profiler blamed on ggml was **its own allocator**, 76–83% of all release latency | B |
 
@@ -243,6 +251,7 @@ is known to be wrong even though its direction may stand.
 | **F34** | A void run: 870 MB free against an 840 MB model produced *negative* overhead in all three pairs, and the tightest block agreement in the run | A (a fact about a failure). Source of M8 and the gate-first ordering |
 | **F36** | The overhead numbers settled: static **+0.56% [-0.05, +1.16]**, ninja-shared **+0.92% [+0.38, +1.46]**, MSBuild-shared **+0.77% [+0.05, +1.48]**, three blocks each. Linkage null, generator null | **D, properly measured.** The interval contains every earlier estimate of the same quantity |
 | **F39** | **The false-positive rate, measured for the first time.** Two binaries differing in one dead code byte: decode **-0.04% [-0.49, +0.42]** over six blocks (clean, and the same point estimate in two independent runs), prefill **+0.59% [+0.01, +1.16]** (**resolved — a false positive**) | **A for the decode floor** (it is a fact about a null pair, and the number to read every Tier D decode result against). Source of M12, M13 and D9 |
+| **F41** | F27's last unchecked row re-measured: **decode −2.15% [−2.28, −2.02]** (survives), **prefill −0.43%** against F27's −1.15%. And the unpredicted part: **two runs of the same comparison gave `t` intervals 7× different in width** (0.14pp vs 0.95pp) with point estimates agreeing to 0.02pp | **D, properly measured.** Source of **M14** |
 | **F40** | **The floor is a property of the thread count.** The same null at **8** threads: decode **+0.02% [-0.21, +0.26]**, prefill **-0.01% [-0.12, +0.11]**, both gates passing, A arm *faster* at 46.91 vs 42.50 tok/s. Consistent with F10 — past four threads the measurement is largely scheduling | **A** (a fact about a null pair at two configurations). **Narrows M12, qualifies M13, and withdraws F39's claim that F36 measured nothing** |
 
 **That paragraph used to say F31's "leveller" claim was the durable, non-Tier-D
@@ -273,6 +282,7 @@ re-measurement that would have caught it.
 | **M10** | **Throughput swings between ~38.6 and ~46 tok/s, with no identified cause.** F37 killed four candidates: not thermal (more cooling gave a *lower* result; the decay curve is flat), not thread placement (pinning is worse; the best mask is no mask), not CPU frequency (Pearson **r = -0.423**, the wrong sign), not the `-p 0`/`-p 512` workload difference (-0.91%). The full range appears **inside one 4.5-minute window**, so it is run-to-run variance whose median moves, not two stable regimes. ~10x the effects being measured, and it decides whether a run passes the gate | **Open, and the largest unknown in the project.** Live candidates: page-cache/standby-list state for an 840 MB model, per-process power throttling |
 | **M11** | A claim built from *differences between* Tier D numbers inherits Tier D. F31's "level 3 is a leveller" was marked non-Tier-D and exempt from re-measurement; F36 reversed it | Recorded; the exemption was the error |
 | **M12** | **Blocks can trend rather than scatter, and a trend manufactures a resolved result.** F39's null resolved prefill at **+0.59% [+0.01, +1.16] on binaries that cannot differ**, its six-block estimates rising monotonically in both runs, with the trend absent round-to-round *inside* a block. **Narrowed by F40:** the same null at **8 threads** shows no trend at all (±0.12pp, neither run monotonic), so this is not a general property of `--blocks` — it appears where the underlying measurement is already noisy. F39 generalised from two runs in the noisiest configuration the project measures in | **Open, and configuration-specific.** The failure mode is real and its trigger is unknown. No number of blocks removes a trend common to all of them, but at 8 threads there is no trend to remove |
+| **M14** | **A three-block `t` interval's *width* is unstable by up to 7×.** F41 ran one comparison twice: block spreads 0.05pp and 0.37pp, intervals 0.14pp and 0.95pp wide, point estimates agreeing to 0.02pp. Block agreement is itself a random variable and the `t` interval is computed from it, so three blocks can be tight by luck. F34's lesson in benign form — agreement alone distinguishes a real measurement from a contaminated one in neither direction | **Open, cheap fix: two runs of three blocks, pooled to six.** F33, F39, F40, F41 do this; **F36 does not**, so its three overhead numbers' widths carry the instability even though their point estimates stand |
 | **M13** | **The prefill control cannot arbitrate anything at the ~1% level *at 16 threads*, which is where F24/F33 used it.** F39 measured it returning a resolved `+0.59%` with nothing to detect; F33 had already found it drifting. **F40 qualifies this:** at 8 threads the same control is clean to ±0.12pp and would be an excellent control — but F24's effect depends on `nth` (F23), so it cannot simply be re-measured there | **Open.** Do not cite F24/F33's prefill control in either direction. M6 needs the layout arm |
 | **M4** | F30 and F31 differ in arm order, round length **and** time simultaneously, so the rotation explanation is a story that fits, not evidence | **Open.** The same disease F30 diagnosed in F25 |
 | **M5** | Cross-session comparison of absolute throughput is worthless — the same compiled-out binary read 42.94 and 45.92 tok/s in two sessions (**+6.9%**, ~6× the effects being resolved) | Documented; a standing rule |
@@ -423,7 +433,9 @@ teaches something and an unanswerable one teaches nothing.
 - The shape of per-token time on CPU: control plane is negligible, the graph is
   everything, barrier wait is a large minority of worker time.
 - F27's barrier comparison (−54% at 28 threads) *as a result about this
-  machine*.
+  machine* — and its 8-thread decode row, **−2.15% [−2.28, −2.02]**, re-measured
+  over six blocks in F41. **Do not quote F27's −1.15% prefill row**; it is
+  superseded by F41's −0.43% [−0.65, −0.21].
 - F28, F26, F29, F5, F8, F18/F22 — all facts about code.
 - F20 as a defect report about llama.cpp naming.
 

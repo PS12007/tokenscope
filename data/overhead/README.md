@@ -20,6 +20,7 @@ diagnosed afterwards).
 | `f39a.json` | **F39** run A | `ab_throughput` A/B of the **null control**, 3 blocks × 20 rounds. Two binaries differing in one code byte, in a function this model never enters | yes |
 | `f39b.json` | **F39** run B | the same pair, same protocol, a second independent three-block run. Pooled with `f39a` to six blocks — this is the pair that gives the false-positive rate | **yes — pool both** |
 | `f40a.json` / `f40b.json` | **F40** | the **same null pair at 8 threads**, two three-block runs. Pool both. This is the floor to read F36 against, and it is half as wide as F39's 16-thread one | **yes — pool both** |
+| `f41a.json` / `f41b.json` | **F41** | F27's `GGML_OPENMP=OFF` vs default at 8 threads, two three-block runs. Also the specimen for **M14**: run A's blocks agree to 0.05pp and run B's to 0.37pp, giving `t` intervals 7× different in width for one quantity | **yes — pool both** |
 
 ## Structure
 

@@ -323,17 +323,21 @@ this machine that is not a convenience:
 ```
   GGML_OPENMP=OFF vs the default ON, decode, 20 interleaved rounds per arm
 
-  mid.gguf     8 threads    -2.06%  [-2.42, -1.56]   see note
+  mid.gguf     8 threads    -2.15%  [-2.28, -2.02]   re-measured, 6 blocks
   mid.gguf    28 threads   -54.17%  [-55.05, -53.31] resolved
   tiny.gguf    8 threads   -13.07%  [-15.35, -10.07] resolved
   tiny.gguf   28 threads   -78.64%  [-80.40, -77.60] resolved
 ```
 
-Those intervals are single-run bootstraps. The three large rows are 13x to 78x
-this machine's drift term, so their width does not matter to the conclusion.
-**The -2.06% row is not** — it sits in the band where a single run's interval
-runs about half as wide as the truth (F31, F36), and it has not been
-re-measured with `--blocks`. Read it as "a small slowdown, size uncertain".
+The three large rows are single-run bootstraps, but they are 13x to 78x this
+machine's drift term, so their width does not matter to the conclusion. **The
+8-thread row was the one that did matter**, and it has now been re-measured
+over six blocks ([F41](docs/FINDINGS.md)): **-2.06% becomes -2.15%**, nine
+times the harness's own measured false-positive floor at that thread count.
+
+The same re-measurement corrected the *prefill* row on that line from **-1.15%
+to -0.43% [-0.65, -0.21]**, with the old estimate outside the new interval — so
+the row nobody had checked was the row that was wrong.
 
 39.09 tok/s becomes 17.91. The throughput number alone would only say *something*
 got slower; the traces say **which** something. Release latency per unit work --

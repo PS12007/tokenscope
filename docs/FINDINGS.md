@@ -5865,6 +5865,124 @@ the floor comparison is void and this run says nothing about F40.
 
 ---
 
+## F41 — F27's last Tier D row survives at −2.15%, its prefill row was wrong by half, and a three-block interval's *width* is unstable by 7×
+
+**Workload:** `mid.gguf`, **8 threads**, tg64 and pp64, `--reps 3`, 20 rounds per
+arm, **`--blocks 3` run twice** (six blocks). Arms both uninstrumented and
+relinked from one tree in this session: `bench-omp.exe` (default) against
+`bench-noomp.exe` (`GGML_OPENMP=OFF`).
+[`P41`](#p41--predictions-before-re-measuring-f27s-one-tier-d-row-which-is-also-a-test-of-f40s-floor)
+holds the predictions. Raw: `data/overhead/f41a.json`, `f41b.json`.
+
+`HANDOFF.md` item A3. This was the one row of
+[`F27`](#f27--ggmls-own-barrier-is-not-a-cheaper-spin-wait-than-openmps-on-this-machine-at-28-threads-it-costs-54-of-decode)
+that had never been re-measured, and the reason the audit had the whole finding
+mis-filed as Tier B for a session.
+
+### Arms verified before measuring, and one check that silently did not run
+
+`bench-omp.exe` imports **`VCOMP140.DLL`**; `bench-noomp.exe` imports **none** —
+18 imports against 17, read out of the PE import table.
+
+The first attempt at this check used `strings`, **which does not exist in this
+environment**, and the shell guard turned the missing binary into "0 VCOMP
+mentions" for *both* arms. That reads exactly like a passing check. **A check
+that silently passes for the wrong reason is worse than no check**, and this one
+would have let a mislabelled pair of arms through. It is recorded because F27's
+own arm-verification was the thing being reproduced.
+
+### The result
+
+| | decode (tg64) | prefill (pp64) |
+|---|---|---|
+| **F27** (single-run bootstrap) | −2.06% [−2.42, −1.56] | −1.15% [−1.62, +0.12], *unresolved* |
+| run A (3 blocks) | −2.16% [−2.23, −2.10] | −0.49% [−0.67, −0.31] |
+| run B (3 blocks) | −2.14% [−2.62, −1.67] | −0.37% [−1.14, +0.40], *unresolved* |
+| **pooled, six blocks** | **−2.15% [−2.28, −2.02]** | **−0.43% [−0.65, −0.21]** |
+
+Both gates pass (worst-block IQR 0.50% and 0.72%). The OpenMP arm reads **46.78
+tok/s in both runs** against F40's 46.91/46.79, so the machine is in the same
+state and the comparison against F40's floor is legitimate.
+
+**Decode: F27's row survives, essentially unchanged.** −2.06% becomes −2.15%,
+a 0.09pp move, with F27's point estimate inside the new interval. The effect is
+**9.0× F40's measured 8-thread decode floor**. F27's last Tier D row is now
+Tier D, properly measured, and the finding no longer carries a row that has
+never been checked.
+
+**Prefill: F27's row was wrong by more than half.** −1.15% becomes **−0.43%
+[−0.65, −0.21]**, and F27's point estimate sits *outside* the new interval. The
+direction was right and the effect is real — it is 3.6× the prefill floor and
+resolves where F27's did not — but the magnitude was overstated by 2.7×. This is
+not over-precision, which is what M1 predicts; it is a **wrong point estimate**,
+and it came from the same single-run bootstrap that produced the decode row that
+reproduced fine.
+
+### The finding nobody predicted: a three-block interval's width is unstable by 7×
+
+The two runs are the same comparison, the same binaries, the same protocol,
+minutes apart. Their decode intervals:
+
+```
+  run A   -2.16%  [-2.23, -2.10]     0.14pp wide   block spread 0.05pp
+  run B   -2.14%  [-2.62, -1.67]     0.95pp wide   block spread 0.37pp
+```
+
+The point estimates agree to **0.02pp**. The interval widths differ by **7×**,
+and run A's interval sits entirely *inside* run B's.
+
+Run A's three blocks agreed to **0.05pp — the tightest agreement in this
+project's history**. Had this session run only run A, it would have published
+±0.07pp precision on a quantity whose honest six-block interval is ±0.13pp, and
+the tightness would have looked like a triumph of method.
+
+**This is [`F34`](#f34--a-void-run-870-mb-free-against-an-840-mb-model)'s lesson
+in its benign form.** F34 found blocks agreeing on a physically impossible
+result and warned that agreement reads as precision. F41 shows the same thing
+with nothing wrong at all: **block agreement is itself a random variable**, and
+three draws can happen to land on top of each other. The `t` interval is
+computed *from* that spread, so when the spread is small by luck the interval is
+tight by luck.
+
+**So `--blocks 3` from a single invocation is not enough**, and the practical
+rule the project has been following by habit should be stated: **two runs of
+three blocks, pooled to six.** F33, F39, F40 and F41 all did this; **F36 did
+not** — its three settled overhead numbers come from a single three-block run
+each, so their *widths* carry this instability even though their point estimates
+are the best available. Recorded as **M14**.
+
+The gate-first ordering is what kept run A honest. Tight blocks plus a
+physically expected result and a matching baseline median is a real measurement;
+tight blocks plus a physically impossible result is F34. **Agreement alone
+distinguishes neither.**
+
+### Scoring the predictions
+
+| | claim | outcome |
+|---|---|---|
+| **P41.1** | decode resolves and stays negative | **held.** −2.15% [−2.28, −2.02], 9.0× the floor. F40's floor is not contradicted, which was the other thing this run was for |
+| **P41.2** | point estimate within ±0.8pp of −2.06% | **held** at 0.09pp. F27's decode row was over-precise, not wrong |
+| **P41.3** | the six-block `t` is *narrower* than F27's 0.86pp bootstrap | **held.** 0.26pp, 3.3× narrower — and run A's alone was 0.14pp, six times narrower. The house reading of M1 ("`t` is about twice the bootstrap") is a property of noisy configurations, not of the estimators |
+| **P41.4** | prefill resolves, reversing F27 | **held, and it exposed something the prediction did not ask about.** It resolves at −0.43%, less than half F27's −1.15%, with F27's estimate outside the new interval |
+| **P41.5** | OpenMP arm median 45.5–47.5 tok/s | **held.** 46.78 in both runs, against F40's 46.91/46.79 |
+| **P41.6** | the corrected gate passes on both runs | **held.** 0.50% and 0.72% against a 2% budget |
+
+**Six of six is not a good sign on its own** — it mostly means the predictions
+were made after F40 had measured the floor, so they were cheap. The two things
+worth keeping came from outside the prediction set: prefill's magnitude being
+wrong rather than imprecise, and the 7× width instability.
+
+### What this does to F27
+
+F27's four throughput rows are now: three large ones untouched (−54.17%,
+−78.64%, −13.07%, all 13–78× the drift term), **decode at 8 threads confirmed at
+−2.15%**, and **prefill at 8 threads corrected from −1.15% to −0.43%**. The
+finding's conclusion — that ggml's own spin-wait barrier is not the cheap one on
+this machine — is unaffected and better supported than before. Its Tier D row is
+no longer unchecked.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:

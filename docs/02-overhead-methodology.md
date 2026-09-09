@@ -171,6 +171,13 @@ and the third was learned by getting it wrong:
    they were indistinguishable from nothing, and was refuted fifty minutes
    later. *A comparison you have labelled as forbidden does not become usable by
    labelling it.*
+4. **Two runs of three blocks, pooled to six — not one run of three.** F41 ran
+   one comparison twice and got `t` intervals **7× different in width** (0.14pp
+   and 0.95pp) while the point estimates agreed to 0.02pp. Block agreement is
+   itself a random variable and the interval is computed from it, so three
+   blocks can be tight by luck (**M14**). **The overhead numbers in this
+   document are single three-block runs**, so their point estimates stand and
+   their widths carry that instability.
 
 ### Session 1: levels 0 and 1 only
 

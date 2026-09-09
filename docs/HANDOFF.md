@@ -1,6 +1,6 @@
 # HANDOFF — state of the project, and what to do next
 
-Updated **during session 7 (2026-09-09)**, after F40. Everything here is either
+Updated **during session 7 (2026-09-09)**, after F41. Everything here is either
 a fact about the current tree or an explicit next step. Read this first when
 picking the project back up.
 
@@ -91,6 +91,24 @@ leaving implicit — F39 ran at 16 threads, F36's overheads at 8, and **all thre
 of F36's intervals overlap F39's null**, which the 8-thread null (item 1b) would
 settle.
 
+**Session 7's third act closed A3 and found the limit of `--blocks`.** **F41**
+re-measured F27's one unchecked row. Decode survives at **−2.15% [−2.28,
+−2.02]**, 9× F40's floor; **prefill did not** — F27's −1.15% becomes −0.43%
+[−0.65, −0.21] with the old estimate outside the new interval, so the row nobody
+had checked was the row that was wrong. The unpredicted part is **M14**: two
+runs of the identical comparison, minutes apart, produced `t` intervals **7×
+different in width** (0.14pp and 0.95pp) with point estimates agreeing to
+0.02pp. Run A's three blocks agreed to **0.05pp, the tightest in the project's
+history** — by luck. Block agreement is itself a random variable and the
+interval is computed from it, so `--blocks 3` from one invocation can be tight
+for no reason. F34 said agreement reads as precision when something is wrong;
+F41 says it does when nothing is. **The rule is now two runs of three blocks,
+pooled to six** — which F33, F39, F40 and F41 all did and **F36 did not**. Also
+worth carrying forward: the arm check for this run used `strings`, which **does
+not exist in this environment**, and the shell guard turned that into "0 VCOMP
+mentions" for *both* arms — a check that silently passes for the wrong reason.
+The PE import table is the reliable route.
+
 **And session 7's second half is the correction to its first.** **F40** re-ran
 the identical null at **8 threads** and the harness is a different instrument
 there: decode `+0.02% [-0.21, +0.26]`, prefill `-0.01% [-0.12, +0.11]`, both
@@ -159,8 +177,8 @@ barrier number this project has ever taken came from `#pragma omp barrier`**,
 and five documents said the opposite (**F26**). That turned into
 `-DGGML_OPENMP=OFF` builds and **F27**, the largest result of the session:
 ggml's own spin-wait barrier costs **-54% of decode at 28 threads** on this
-machine, and -2.06% at 8, with the cause measured in the traces rather than
-inferred. Then, while extending a tool for F27, found that one barrier out of
+machine, and -2.06% at 8 (**re-measured in session 7 at -2.15%**, F41), with the
+cause measured in the traces rather than inferred. Then, while extending a tool for F27, found that one barrier out of
 824 held 76-83% of all after-arrival time in every level-3 trace — and that it
 was **tokenscope's own lazy buffer allocation**, which `--barriers` had been
 blaming on ggml's thread pool since session 1 (**F28**). Fixed; the
@@ -736,19 +754,15 @@ refer to.
    the objection that the padding costs something. If it moves decode, part of
    F24's +1.62% is layout.
 
-3. **Re-measure F27's `-2.06%` row** at 8 threads with `--blocks 3`. Its other
-   three rows (−54%, −78%, −13%) are 13–78× the drift term and safe at any
-   interval width; that one is Tier D and was never re-measured. The audit had
-   F27 filed as Tier B for a whole session because of its headline.
-
-   **F40 makes this sharper and gives it a real prediction.** The row is at 8
-   threads, where the floor is now known to be **±0.24pp** on decode — so
-   −2.06% is about **8.5× the floor** and should survive comfortably. That makes
-   it a *test of the floor* as much as of F27: if a −2.06% effect fails to
-   resolve at 8 threads over six blocks, the floor is not what F40 says it is.
-   Predict before running. **Both `build-ts-noomp-*` arms must be rebuilt in one
-   session** — they date from session 5 and the stale-binary trap has caught this
-   project twice.
+3. ~~**Re-measure F27's `-2.06%` row.**~~ **DONE — F41, session 7.** Six blocks
+   over two runs: **decode confirmed at −2.15% [−2.28, −2.02]**, 9× F40's floor,
+   with F27's estimate inside the new interval. **Prefill was the one that was
+   wrong**: −1.15% becomes **−0.43% [−0.65, −0.21]**, F27's estimate *outside*
+   the new interval — wrong by 2.7×, not merely over-precise. F27's conclusion is
+   unaffected and better supported. Also produced **M14**: the two runs' `t`
+   intervals differ in width by **7×** (0.14pp against 0.95pp) while their point
+   estimates agree to 0.02pp, so **three blocks can be tight by luck** and the
+   standing rule becomes *two runs of three blocks, pooled to six*.
 
 ### B. The standing scientific gaps, unchanged by session 6
 
