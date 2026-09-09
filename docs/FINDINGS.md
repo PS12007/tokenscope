@@ -6580,14 +6580,38 @@ thermal/power policy — is also the one this project has no instrument for.
 
 Eleven refuted. The survivor is the one below the operating system.
 
+### Correction, an hour later: there are at least three levels, not two
+
+F44 called this two regimes. Probing again after F46's idle test found the
+machine sitting at **43.3-43.7 across four consecutive probes** — stable, and
+squarely between F44's fast (46.09) and slow (40.92) bands.
+
+**That level is not new.** The audit already records it: *"F36's A arms read
+45.98/45.99/46.05; F35's read 43.50/43.65/43.12."* So the three levels seen
+today at 40.9, 43.5 and 46.0 are the same ones the A-arm medians of past
+sessions have been landing on all along, and F35 has been sitting at the middle
+one since session 6 without anyone noticing it was a *level* rather than a bad
+day.
+
+**So F44's "two stable regimes" is too strong**, one hour after it corrected the
+audit's "not two stable regimes" for being too strong in the other direction.
+The defensible statement is narrower than either:
+
+> Throughput on this machine occupies **discrete levels** — at least 40.9, 43.5
+> and 46.0 — each held for minutes at a time, with unprompted transitions. It is
+> not a continuous drift and it is not a clean two-state switch.
+
+Recorded this way because the honest version of a finding that has been revised
+twice in two hours is the one that says only what four probes support.
+
 ### The protocol this forces, which is the practical output
 
 The regime cannot be arranged, only detected. So:
 
 > **Probe before measuring.** One `llama-bench` invocation costs ~8 seconds and
-> tells you which regime you are in. Start a 25-minute run only when it reads
+> tells you which level you are on. Start a 25-minute run only when it reads
 > ≥44 tok/s, and check the `timeline` afterwards to confirm the run stayed
-> there.
+> there. Enforced by `--min-baseline` since this session.
 
 That is not a workaround for a nuisance. F44 put the two regimes **12.6%** apart
 — about twenty times the effects this project measures — and F45 showed a

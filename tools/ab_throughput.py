@@ -93,6 +93,16 @@ def main() -> int:
                          "of its intervals, for one quantity on unrebuilt "
                          "binaries, that did not overlap. Use 3 or more before "
                          "quoting any number from this tool")
+    ap.add_argument("--min-baseline", type=float, default=None, metavar="TOKS",
+                    help="probe the A binary once and refuse to start if decode "
+                         "is below this. FINDINGS F44/F46: this machine sits on "
+                         "discrete throughput levels (40.9 / 43.5 / 46.0 tok/s "
+                         "here), holds one for minutes, and switches unprompted. "
+                         "They are ~12%% apart, roughly twenty times the effects "
+                         "being measured, and a run on one level is not "
+                         "comparable to a floor measured on another -- which "
+                         "voided F43 and both halves of F45. The probe costs "
+                         "~8 seconds; the run it protects costs 25 minutes")
     ap.add_argument("--json-out", default=None,
                     help="write every measurement, per block, to this file. "
                          "Without it a contaminated run cannot be diagnosed "
@@ -105,6 +115,21 @@ def main() -> int:
     if os.path.getsize(args.a) == os.path.getsize(args.b):
         print("note: the two binaries are the same size. If they are the same "
               "file, everything below is measuring noise.\n")
+
+    if args.min_baseline is not None:
+        print("probing the baseline arm for its throughput level (F46)...",
+              flush=True)
+        _got = run_once(args.a, args.model, 0, args.n_gen, args.threads, 3)
+        _tg = next((v for k, v in _got.items() if k.startswith("tg")), 0.0)
+        if _tg < args.min_baseline:
+            sys.exit("refusing to start: baseline reads %.2f tok/s, below the "
+                     "--min-baseline of %.2f.\n"
+                     "This machine holds discrete throughput levels and you are "
+                     "not on the one you asked for. Wait and probe again; it "
+                     "cannot be forced -- F46 refuted load, idling and the page "
+                     "cache." % (_tg, args.min_baseline))
+        print("  baseline %.2f tok/s, at or above %.2f -- starting\n"
+              % (_tg, args.min_baseline), flush=True)
 
     res = collections.defaultdict(lambda: collections.defaultdict(list))
     per_block = collections.defaultdict(list)      # test -> [point estimate]

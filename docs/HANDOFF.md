@@ -653,6 +653,21 @@ F34 ran at 870 MB against an 840 MB model and reported the instrumented build as
 *faster*. And a failed baseline gate now makes the tool refuse its own block
 table, instead of printing "quote this" underneath a refusal.
 
+**`--min-baseline` is new in session 7 and you should use it (F46).** This
+machine sits on **discrete throughput levels** — 40.9, 43.5 and 46.0 tok/s were
+all observed today, each held for minutes, switching unprompted and refusing to
+be forced. They are ~12% apart, about twenty times the effects being measured.
+`--min-baseline 46` probes the A binary once (~8 seconds) and **refuses to start
+a 25-minute run** if the machine is on the wrong level. It exists because F43
+and both halves of F45 were voided for exactly that, by hand, after the fact.
+
+    python tools/ab_throughput.py --a A.exe --b B.exe -m M.gguf         -t 8 --blocks 3 --min-baseline 46 --json-out run.json
+
+`--json-out` also writes a **`timeline`** now: one entry per measurement with a
+wall clock, so a finished run can be asked whether it *stayed* on one level.
+F45's layout run had an 11-measurement excursion invisible in its pooled median,
+and the timeline is what found it.
+
 **The gate changed in session 7 (D9).** It used to be computed on the arms'
 data pooled across every block, which folded in the between-block drift the `t`
 interval already carries -- so a `--blocks` run was charged twice for the same
