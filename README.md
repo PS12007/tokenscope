@@ -537,7 +537,7 @@ Built in the open. `docs/` is the engineering log, in order — and
 - [x] [A defect found in llama.cpp's graph naming](docs/FINDINGS.md), fixed and measured
 - [x] [Shared-library builds](docs/FINDINGS.md) — broken in F18, fixed in F22, now tested on three platforms
 - [x] [ggml's matmul already load-balances, until a thread count takes it away](docs/FINDINGS.md)
-- [x] [A one-line ggml change worth +1.62% [+1.10, +2.15] decode, re-measured over six blocks](docs/FINDINGS.md)
+- [x] [A one-line ggml change worth +1.62% [+1.10, +2.15] decode, re-measured over six blocks — and its code-layout confound closed by two control patches](docs/FINDINGS.md)
 - [ ] Linux/GCC
 - [ ] [Upstream issue](docs/03-upstream-issue-draft.md), then a PR
 

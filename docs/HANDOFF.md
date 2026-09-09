@@ -1,6 +1,6 @@
 # HANDOFF — state of the project, and what to do next
 
-Updated **during session 7 (2026-09-09)**, after F46. Everything here is either
+Updated **during session 7 (2026-09-09)**, after F50. Everything here is either
 a fact about the current tree or an explicit next step. Read this first when
 picking the project back up.
 
@@ -27,10 +27,12 @@ grep -o 'GGML_USE_OPENMP' ../llama.cpp/build-ts-on/build.ninja | head -1
 
 **If `git -C ../llama.cpp status --short` returns 8 entries and not 9, stop.**
 Eight files carry `patches/01-instrument.patch` and the clone is modified in
-place, so `git checkout <file>` in there silently discards tokenscope from that
-file — and nothing fails, because `GGML_TOKENSCOPE=OFF` arms never notice. F48
-did exactly this twice. Undo temporary edits with `git apply -R`, never
-checkout.
+place, so **git's baseline in there is upstream, not your pre-edit state**.
+`git checkout <file>` silently discards tokenscope from that file — and nothing
+fails, because `GGML_TOKENSCOPE=OFF` arms never notice. **`git apply -R` on a
+diff made by `git diff` does the same**, for the same reason. Session 7 hit
+both, the second while following the rule written for the first. Undo a
+temporary edit with the inverse of the script that made it, then re-check for 9.
 
 **Before any measurement, in addition:**
 
@@ -111,6 +113,23 @@ within-block); fixed. And a caveat the session put in writing rather than
 leaving implicit — F39 ran at 16 threads, F36's overheads at 8, and **all three
 of F36's intervals overlap F39's null**, which the 8-thread null (item 1b) would
 settle.
+
+**Session 7's fifth act closed M6.** Two things made it possible. **F42**: read
+the linker map, which nobody had, and F24's 1,137,994 differing bytes turn out
+to be *one uniform 16-byte shift* — `mul_mat` shrinks by 16, all 7,721 functions
+after it move down by it, nothing else changes. F38's "relocated, regenerated,
+or both" was wrong, and its byte-window probe could not have found the shift.
+That made the control F38 declared unbuildable into a fifteen-line patch. Then
+**the block-size fix**: the gate is *worst-block baseline IQR*, and a 20-round
+block spans ~8 minutes, which is this machine's drift timescale — so the design
+had been handing the gate the exact thing the gate objects to. **6 blocks of 10
+rounds** at identical total cost cut per-block IQR from 0.70–2.31% to
+0.17–0.90%, and four consecutive runs passed the gate after five that had not.
+**F49** measured a +16-byte shift at −0.08% [−0.16, +0.00]; **F50** a +48-byte
+shift — *F24's own alignment for `ggml_vec_dot_f32`* — at +0.06% [−0.11, +0.22];
+both against matched nulls of −0.08%. **F24/F33's +1.62% is the chunking
+change.** `docs/03`'s evidence pack now answers the layout objection instead of
+conceding it.
 
 **Session 7's fourth act went at M6 and ran into the machine.** **F42** is the
 one that mattered: a linker map — which nobody had made — shows F24's 1,137,994
@@ -801,35 +820,27 @@ ladder and the issue register (M1–M14) that the items below refer to.
    property of `--blocks`; and **8 threads is the configuration to measure in**
    unless the question is about thread count.
 
-2. **The layout arm for M6 — BUILT, MEASURED THREE TIMES, and owed one clean
-   run.** Best result **−0.00% [−0.18, +0.18]** (F47), against a matched null of
-   −0.11%; the other two attempts gave +0.14% and −0.34%. All three fail the
-   gate (2.65%, 9.37%, 2.21%), so none is certified — but none is anywhere near
-   F24's **+1.62%**, and F47 bounds it **nine times** below that. What is owed
-   is one run on a still machine where the gate actually passes, and then the
-   **−16** arm, since this one shifts +16 and an alignment effect need not be
-   symmetric.
+2. ~~**A real layout arm for M6.**~~ **CLOSED — F49, F50.** Two control
+   patches (`patches/05`, +16 bytes; `patches/06`, +48 bytes) shift everything
+   after `mul_mat` with `mul_mat` byte-identical, both verified against the
+   linker map before measuring. Four gate-passing runs:
 
-   **How the arm is verified** — do not re-measure it without re-checking this.
-   `patches/05-layout-arm.patch` is verified against the linker map:
-   exactly two address deltas (0 and **+16**) across all 14,419 `.text`
-   functions, `mul_mat` the same size in both arms and 98.6% byte-identical
-   after its move, `ggml_vec_dot_f32` shifted with everything else. **F42** is
-   why this was possible at all — F24's 1.1 MB of differing bytes turned out to
-   be a *uniform 16-byte shift*, not the third of a regenerated image F38
-   reported, so the perturbation is reproducible without touching behaviour.
+   | arm | `ggml_vec_dot_f32` mod 64 | decode |
+   |---|---|---|
+   | null | 0 | −0.08% [−0.20, +0.04] |
+   | +16 bytes | 16 | −0.08% [−0.16, +0.00] |
+   | null | 0 | −0.08% [−0.25, +0.09] |
+   | **+48 bytes** | **48** | **+0.06% [−0.11, +0.22]** |
+   | **F24/F33** | **48** | **+1.62% [+1.10, +2.15]** |
 
-   **What it needs is one 50-minute window on the 46 tok/s level** (F44/F46),
-   plus a matched null in the same window. Three attempts in session 7 were
-   voided: F43 on the wrong level, both halves of F45 on the gate. Run it with
-   `--min-baseline 46` and check the `timeline` afterwards. **Everything except
-   the machine is ready.**
+   The 48-byte arm sits at **F24's own alignment**. **F24's +1.62% is the
+   chunking change.** What made it measurable was two things: **F42** (read the
+   linker map — the 1.1 MB is one uniform 16-byte shift, not regeneration) and
+   the **6 blocks × 10 rounds** design, which halves the drift a block can
+   contain and cut per-block IQR from 0.70–2.31% to 0.17–0.90%.
 
-   Design caveat, stated in the patch header rather than buried: F24's arm
-   shifts **−16** and this one **+16**. Same magnitude, same hot function,
-   opposite direction, and an alignment effect need not be symmetric. If the
-   +16 arm comes back null, a −16 arm is the obvious follow-up and is a far
-   smaller job than building the first one was.
+   Untested and not worth much: other alignments (32 mod 64), and whether any of
+   this transfers off this CPU — which is G1, not M6.
 
 3. ~~**Re-measure F27's `-2.06%` row.**~~ **DONE — F41, session 7.** Six blocks
    over two runs: **decode confirmed at −2.15% [−2.28, −2.02]**, 9× F40's floor,
