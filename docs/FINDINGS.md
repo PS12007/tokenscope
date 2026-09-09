@@ -6897,6 +6897,109 @@ scored against a gate-passing run.
 
 ---
 
+## F49 — M6 answered: a verified 16-byte code shift moves decode by −0.08%, which is exactly what a null moves
+
+**Workload:** `mid.gguf`, 8 threads, `--reps 3`, **6 blocks of 10 rounds**, both
+arms uninstrumented and built from one tree, `--min-baseline 39`. Layout arm and
+matched null run back to back so the floor comes with the run.
+[`P49`](#p49--shorter-blocks-because-the-gate-measures-exactly-what-the-machine-does-wrong)
+holds the predictions. Raw: `data/overhead/f49-layout.json`, `f49-null.json`.
+
+**This is the first gate-passing measurement of the layout arm**, after four
+that were not (F43 2.65%, F45 9.37% and 5.61%, F47 2.21% and 2.31%).
+
+### The result
+
+| | decode (tg64) | prefill (pp64) | worst-block baseline IQR |
+|---|---|---|---|
+| **layout arm** (+16-byte shift) | **−0.08% [−0.16, +0.00]** | +0.02% [−0.16, +0.21] | **0.79% / 0.64% — PASS** |
+| **matched null** (one dead byte) | **−0.08% [−0.20, +0.04]** | +0.04% [−0.07, +0.15] | **0.46% / 0.90% — PASS** |
+
+**The two point estimates are identical to two decimal places.** A verified
+16-byte relocation of every function after `mul_mat` — including
+`ggml_vec_dot_f32`, the hottest function in an F32 decode — moves decode by
+exactly as much as two binaries that differ in one byte of dead code.
+
+Both runs sat on the fast level throughout: A-arm block medians 46.59–46.77 and
+46.73–46.85, and the timelines show no sustained excursion.
+
+### What this settles
+
+**M6 has been open since session 4** as "an unknown fraction of F24's +1.62% may
+be layout rather than the chunking change". The fraction is now measured:
+
+```
+  F24 / F33, the effect being explained   +1.62%  [+1.10, +2.15]
+  the layout arm, gate passing            -0.08%  [-0.16, +0.00]
+  the matched null, gate passing          -0.08%  [-0.20, +0.04]
+```
+
+**Layout does not explain F24.** The layout arm's entire interval lies more than
+a percentage point below F24's lower bound, it is indistinguishable from a null
+measured minutes earlier on the same machine, and its point estimate is
+**twenty times smaller** than the effect it was proposed to account for.
+
+F33 wrote that separating them "needs an arm that changes layout without
+changing behaviour — which is a real experiment and is not done." It is done.
+
+### Why this run worked when four did not
+
+Not patience — a design change. The gate is *worst-block baseline IQR*, and IQR
+within a block is inflated by drift **inside that block**. At 20 rounds a block
+spans about eight minutes, which is the timescale this machine actually moves on
+(F44/F46). **Halving the block to 10 rounds halves the drift it can contain**,
+at identical total cost — 120 invocations per arm either way.
+
+The gate improved by roughly a factor of three:
+
+| | per-block baseline IQR |
+|---|---|
+| F47, 3 blocks × 20 rounds | 2.06, 2.21, 0.99 and 2.31, 0.70, 1.85 |
+| **F49, 6 blocks × 10 rounds** | **0.57, 0.79, 0.42, 0.29, 0.45, 0.19** and **0.40, 0.17, 0.41, 0.23, 0.37, 0.46** |
+
+**The design had been handing the gate the exact thing the gate objects to**,
+for five sessions, because `--blocks 3` was chosen when the machine's drift
+timescale was unknown. Doubling the block count also takes `t` from 4.303 to
+2.571, which tightens the interval for free.
+
+### Scoring
+
+| | claim | outcome |
+|---|---|---|
+| **P49.1** | worst-block IQR under 2% on at least one run | **held, on both runs and both workloads**, with the worst of eight figures at 0.90% |
+| **P49.2** | per-block IQRs lower than F47's | **held.** Range 0.17–0.90% against F47's 0.70–2.31% |
+| **P49.3** | block-to-block scatter *rises*, because 10-round medians are noisier | **held, and it was the predicted cost.** 0.23pp and 0.32pp against F47's 0.12pp and 0.06pp. The trade was worth making: scatter roughly tripled, the gate improved threefold, and the interval still came out tighter because `t` fell |
+| **P49.4** | layout `t` contains zero and is within 0.5pp of the null's | **held, at 0.00pp apart** |
+| **P49.5** | \|layout\| < 1.0pp | **held at 0.08pp**, and for the first time from a run that passed its gate. Asked four times across F43/F45/F47/F49 and only now scoreable |
+
+Five of five, and unlike F41's clean sweep this one was not cheap: P49.3
+predicted the cost of its own design change and was right about the direction.
+
+### The caveat that remains, and how to close it
+
+This arm shifts **+16** and F24's shifts **−16**. In alignment terms
+`ggml_vec_dot_f32` sits at:
+
+| build | address | mod 64 |
+|---|---|---|
+| stock | `0x290fc0` | **0** |
+| F24's arm | `0x290fb0` | **48** |
+| this layout arm | `0x290fd0` | **16** |
+
+So what has been shown is that moving that function from alignment 0 to 16 costs
+nothing. **Alignment 48 — F24's actual case — has not been tested**, and an
+alignment effect need not be linear in the offset.
+
+**That is now a cheap experiment rather than a hard one.** A 48-byte pad puts
+`ggml_vec_dot_f32` at `0x290ff0`, which is 48 mod 64 — the same alignment as
+F24's arm — without any behaviour change. One constant in
+`patches/05-layout-arm.patch`, verified against the map, measured with this
+run's design. Until that is done, M6 is **answered for a 16-byte shift and open
+for F24's specific alignment**, which is a far narrower statement than it has
+been at any point since session 4.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
