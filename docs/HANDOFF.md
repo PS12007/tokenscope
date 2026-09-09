@@ -217,6 +217,15 @@ commits from sessions 2 and 3 are pushed.
 - CI for **three platforms x three configurations** (instrumentation on, off,
   and shared), including the over-attribution regression check and the F22
   two-module test.
+- **`data/overhead/`** (new, session 6) holds the raw measurement series behind
+  F30–F36, including the void run (F34) and the refused one (F35) as failure
+  specimens. Its README re-derives F36's published interval in six lines. These
+  were in a temp directory until the end of session 6, which would have taken
+  them with it.
+- **`patches/04-layout-control.patch`** (new, session 6): F24's identical edit
+  applied to `mul_mat_id`, a path dense models never enter. **Not a layout
+  control** — it perturbs 5 bytes — but a genuine **null** control, and the
+  harness's false-positive rate has never been measured.
 
 **The upstream patch is 174 changed lines across 7 files.** F9 and F10 needed
 no new instrumentation at all -- only analysis of traces the existing scopes
@@ -605,153 +614,99 @@ went undetected for a session purely because nothing here ever built a DLL.
 
 ## 5. Next steps, in the order I would do them
 
-**Session 5 closed item 3 (the picture, by another route) and half of item 7
-(F25), and added item 8 out of F27.** The Linux item (2) is smaller than it
-looked — F26 found its barrier-path premise false — and item 1 is unchanged and
-still needs a person.
+**Session 6 rewrote this list.** It closed item 7 (the shared build's overhead,
+F36) and then spent most of its length on something that was not on the list at
+all: the intervals every Tier D number in this project was quoted with were
+**within-run intervals**, roughly half as wide as the truth. That is fixed in
+the tooling and the affected numbers are re-measured, but it reordered
+everything below. **Read [`04-project-audit.md`](04-project-audit.md) first** —
+it has the trust ladder and the issue register (M1–M11) that the items below
+refer to.
 
-**Session 4 closed item 6 (F22) and item 5 (F23/F24).** The ordering below is
-unchanged otherwise, but the shape of the project has changed: it now has a
-measured, certified performance result in ggml itself, which is a different kind
-of thing to take upstream than a profiler. Items 1 and 5 are both "decide
-whether to raise this", and **neither can be done by an agent** — see the box at
-the top of [`03`](03-upstream-issue-draft.md).
+### A. Do these first — they need only a quiet machine and no judgement call
 
-The two items that need hardware this machine does not have are 2 (Linux) and
-the SMT question inside 5. The two that need only a person are 1 and 3.
+1. **Measure the null control** (`patches/04-layout-control.patch`, already
+   written and buildable). It applies F24's identical edit to `mul_mat_id`, the
+   MoE path a dense model never enters, and it perturbs **5 bytes** — so the two
+   binaries must behave identically *and* are laid out identically. Measured
+   against stock with `ab_throughput.py --blocks 3`, a non-zero result is the
+   harness reporting a difference between binaries that cannot differ. **This
+   project has never measured its own false-positive rate**, and it is now one
+   ~25-minute run away. **Predict before running.**
 
+2. **A real layout arm for M6**, which is the strongest live threat to F24 and
+   harder than it looks. F38 found that F24's two arms differ in **~31% of
+   `.text`** — 1.1 MB, contiguous, ~94% dense, with 0 of 36 code probes at the
+   same address — while the "obvious" small control perturbs 5 bytes. **Layout
+   perturbation is a property of where the edit lands, not of how small it is.**
+   A real arm must change `mul_mat`'s *size* without changing what it does
+   (padding, a retained uncalled function, forced alignment) and then survive
+   the objection that the padding costs something. If it moves decode, part of
+   F24's +1.62% is layout.
 
-Session 3 closed items 3 and 4 (concurrent sequences had already gone in F17;
-the 8B is F19/F21) and added a new one at the top that did not exist before.
+3. **Re-measure F27's `-2.06%` row** at 8 threads with `--blocks 3`. Its other
+   three rows (−54%, −78%, −13%) are 13–78× the drift term and safe at any
+   interval width; that one is Tier D and was never re-measured. The audit had
+   F27 filed as Tier B for a whole session because of its headline.
 
-1. **File the F20 naming issue.** First because it is the only piece of this
-   work that is *not* blocked on Linux, and the smallest thing a maintainer
-   could say yes to. **The evidence is assembled; the prose has to be yours** — see
-   [`03`](03-upstream-issue-draft.md), "Evidence pack for the F20 issue".
-   A first attempt at this wrote a finished issue body, which llama.cpp's
-   `AGENTS.md` forbids in terms: an agent must never write a PR description, a
-   comment, or a reviewer response, and `gh issue create` is listed among the
-   things not to run on a user's behalf. The measurements, file references and
-   diff are all there; write it short and in your own words, and note the house
-   style is ASCII-only with no em-dashes. The deeper reason is the same one
-   AGENTS.md gives: the contributor has to be able to explain the change to a
-   reviewer without AI assistance, and that is a bar for a person, not a
-   session. The draft
-   opens with three things to re-check first, because all three go stale: that
-   `build_attn` still has seven overloads and still does not name the output
-   projection at current `master` (the measurement is pinned at `4d91760`), that
-   `CONTRIBUTING.md` has not changed, and that nobody has filed it already. `patches/02-name-attn-output.patch` is applied and measured;
-   [`03`](03-upstream-issue-draft.md) has the framing. llama.cpp's `AGENTS.md`
-   asks for an issue before a PR **and** asks that the contributor own the change
-   and be able to defend it unaided — which for a change this size is a fair bar
-   and worth meeting deliberately before filing.
-2. **Linux + GCC**, unchanged from session 2 and still the blocker for the main
-   upstream conversation. The detail is in section 5 of the previous revision
-   and still accurate: `ggml_graph_compute_thread` is shared, so the scopes fire,
-   and `ggml_barrier` is `#pragma omp barrier` -- **which is also what was
-   measured here**, contrary to what this item said until session 5 (F26).
-   F9's *structural* claims should transfer; every barrier *cost* number is a
-   `vcomp` 2.0 number and may not transfer to `libgomp`, which is a narrower
-   worry than the one this item used to state -- but **F27 showed the
-   worry is not small**: swapping `vcomp` for ggml's own threadpool on this
-   machine changes release latency by 2-5x and decode throughput by up to 54%,
-   so barrier implementation is worth far more than it looked.
-3. ~~**Perfetto screenshot.**~~ **Largely done in session 5, by other means.**
-   `tools/trace_svg.py` draws one token per-thread from a committed trace and
-   the README leads with `docs/token-timeline.svg`; a second figure from the 8B
-   is at `docs/token-timeline-8b.svg`. What is left is only the part that
-   genuinely needs a browser: an actual Perfetto screenshot for post B5, where
-   the point is partly "this opens in the tool you already use". Open
-   `examples/qwen3-8b-named-attnout.trace.json` there and zoom to 2-3 tokens.
-4. **An MoE model.** The clearest remaining gap in the byte law. F21 covers three
-   architectures and a 13.7x range of `lm_head` share, but every model measured
-   is dense, and MoE is the case where bytes-streamed-per-token stops being a
-   property of the file and starts depending on the router. The law as stated
-   would predict expert phases from *stored* bytes and should be **wrong** there,
-   which makes it the most informative test available.
-5. **The mul_mat chunking threshold — which is what item 5 turned into.**
-   Item 5 used to read "proportional row assignment", on the premise that ggml
-   hands every thread an equal share of rows. **F23 found that premise is only
-   half true**: `ggml_compute_forward_mul_mat` steals work from a shared atomic
-   counter whenever `nchunk0 * nchunk1 >= nth * 4`, and a matmul in that mode has
-   roughly **a third to a half** the arrival imbalance per unit work of one that is not
-   (0.34–0.56 against 0.94–1.51, two models, **twelve runs per arm**, two of the
-   comparisons with non-overlapping ranges). Work stealing needs no
-   model of core speed, so for large matmuls ggml already solves what
-   proportional assignment was going to solve, and solves it better.
+### B. The standing scientific gaps, unchanged by session 6
 
-   What is left is sharper and much smaller. That threshold contains `nth`, so
-   **adding threads can turn the load balancer off** for a model's biggest
-   matmuls — on `mid.gguf` between 8 and 16 threads, on Qwen2.5-0.5B between 16
-   and 28 — and nothing reports it. The experiment is to lower the multiplier or
-   make `chunk_size` adapt to `nth`, and see whether the flip stops costing.
-   `tools/mulmat_chunking.py` says which matmuls flip and where, from the GGUF
-   alone.
+4. **Linux + GCC.** Still the blocker for the main upstream conversation, and
+   smaller than it looked: F26 found that the barrier path measured here *is*
+   Linux's default (OpenMP), so what is untested is `libgomp` and GCC, not a
+   different algorithm. F27 then showed the worry is not small — swapping
+   barrier implementations changes decode by up to 54% here.
 
-   **Session 4 did this (F24).** `nth * 4` -> `nth * 2` in `mul_mat` alone is
-   **+1.95% [+1.59, +2.35] on decode, certified**, with prefill as an
-   uncertified control. `patches/03-mulmat-chunk-threshold.patch` holds it and is
-   **not applied to the tree**. What is left on this item is no longer "measure
-   it" but "decide whether to raise it", and the honest framing is a question
-   about a constant backed by a measurement, not a patch claiming to know better
-   — there is no NUMA hardware here and NUMA is what the constant was tuned for
-   (PR #6915). `mul_mat_id` carries the identical threshold, is the MoE path, and
-   is untested and unchanged.
+5. **An MoE model.** The clearest hole in the byte law, and the most informative
+   test available, because the law as stated should be **wrong** there: MoE is
+   where bytes-streamed-per-token stops being a property of the file and starts
+   depending on the router. Needs a download of several GB and a RAM check.
+   **Ask before downloading** — sessions 4 and 5 both asked and were told not to.
+   It would also make `mul_mat_id` testable, which is item 2's other half.
 
-   Anything further here still needs **n≥12 per arm**, because on this evidence
-   six cannot tell a 3× effect from noise.
+6. **F27 on a second machine.** The biggest unexploited result in the repo and
+   meaningless as a general claim until someone runs the same protocol on a
+   homogeneous part with `libgomp`. The protocol is `ab_throughput.py --blocks 3`
+   plus `imbalance_repeat.py --metric release`, n≥12, on two builds differing
+   only in `GGML_OPENMP`.
 
-   Two things F23 leaves open. The ops that are *not* matmul still use the flat
-   `dr = (nr + nth - 1)/nth` that F14's 2.88× applies to, and they are where
-   proportional assignment might still have a case. And SMT is unseparated from
-   core heterogeneity: telling them apart needs two arms at one thread count,
-   one sharing physical cores and one not, with `ffn_up` static — which needs
-   ≥16 threads, and 16 threads without SMT needs more than this machine's 8
-   P-cores, so the no-SMT arm has to bring in E-cores and the arms then differ
-   in core type too. **The confound is in the hardware.** It wants a machine
-   with homogeneous cores.
-6. ~~**Fix the shared-library build (F18).**~~ **Done in session 4 (F22).** What
-   is left of it: the shared build's **overhead has never been measured** (the
-   hot path is unchanged by inspection, but that is not a measurement), and the
-   GCC/ELF behaviour still needs checking alongside item 2. Both fold into
-   items 2 and 7 rather than standing on their own.
-7. ~~**Measure the shared build's overhead.**~~ **Done in session 6 (F30).**
-   `BUILD_SHARED_LIBS=ON` at level 3, 8 threads, is **+0.87% [+0.55, +1.19]**,
-   certified — the measurement behind F22's inspection-only claim that
-   per-module `ts_tls` caching keeps a cross-DLL call off the hot path. The
-   static figure from F25 stands at **+1.16% [+0.67, +1.87]**.
+### C. Needs a person, not an agent
 
-   F25 was right that the fix was a harness change. `bench_overhead.py` takes
-   `--pair NAME=OFF_DIR,ON_DIR` repeatably and round-robins every arm of every
-   pair in one invocation, and it reports two things a single pair cannot: the
-   **difference of overheads** with its own bootstrap interval, and the
-   **compiled-out arms against each other**, which measures what DLL boundaries
-   cost llama.cpp rather than anything about tokenscope.
+7. **File the F20 naming issue**, then decide about F24. `AGENTS.md` forbids an
+   agent writing issue or PR text and requires the contributor be able to defend
+   the change unaided; [`03`](03-upstream-issue-draft.md) holds an evidence pack
+   to write *from*, not a draft to paste. **That constraint was protective**:
+   F24 was the queued submission and session 6 found its interval too narrow and
+   its control unclean. `03` now tells a maintainer both things up front.
+   Re-check before filing: that `build_attn` still has seven overloads and still
+   does not name the output projection at current `master`, that
+   `CONTRIBUTING.md` has not changed, and that nobody has filed it already.
 
-   Two things are left, and both are small. The difference of overheads is
-   **+0.36pp [-0.32, +1.17]** — bounded but not resolved away from zero, and
-   resolving it needs either a quieter machine or many more reps, and is not
-   obviously worth either. And **the two pairs still use different generators**
-   (Ninja for static, Visual Studio for shared), which P30 named in advance as
-   the confound this design cannot remove; a Ninja shared build would remove it
-   for maybe twenty minutes of configure-and-build.
+### D. The one that would change how everything else is measured
 
-   F30 also found and fixed a flaw in the harness's own protocol: arm order
-   within a round was fixed, so any transient shorter than a round landed on the
-   same arms every time. It cost the static pair its certification in F30's run.
-   Order now rotates each round. **Any overhead number taken before commit
-   `9ec7c82` was measured with a fixed order.**
+8. **Explain M10** — decode on this machine wanders between **38.6 and 46.0
+   tok/s** with no identified cause, which is ~10× every effect measured here
+   and decides whether a run passes the gate. **Four causes tested and refuted
+   in F37:** not thermal (8 minutes of cooling gave a *lower* result than 7, and
+   a 30-run post-cooldown curve was flat to −1.16%), not thread placement
+   (pinning is worse; the best mask is no mask), not CPU frequency (Pearson
+   **r = −0.423**, the wrong sign), not the `-p 0`/`-p 512` workload difference
+   (−0.91%). Untested and still live: page-cache and standby-list state for an
+   840 MB model read once per invocation, and per-process power throttling.
 
-8. **F27 is the biggest unexploited result in the repo, and it needs a second
-   machine before it means anything general.** Turning `GGML_OPENMP` off costs
-   54% of decode at 28 threads *here*. That is one hybrid x86 CPU running MSVC
-   `vcomp` against ggml's spin-wait; a homogeneous server part with `libgomp`
-   could plausibly reverse the sign. Whether it is worth raising upstream is a
-   judgement for a person, and the same `AGENTS.md` rules in [`03`](03-upstream-issue-draft.md)
-   apply: an agent must not file it or write the text. What an agent *can* do is
-   run the same protocol elsewhere — `tools/ab_throughput.py` plus
-   `tools/imbalance_repeat.py --metric release` on two builds differing only in
-   `GGML_OPENMP`, n>=12.
+   Until it is explained, the practical rule stands and needs no mechanism:
+   **the compiled-out arm's absolute median identifies which state the machine
+   was in, and two runs with different A-arm medians are not comparable.**
+
+### Closed, for the record
+
+- ~~item 3, a Perfetto screenshot~~ — sidestepped in session 5 by `trace_svg.py`.
+  What remains is only the part that genuinely needs a browser.
+- ~~item 6, the shared-library build~~ — fixed in F22, overhead measured in F36.
+- ~~item 7, the shared build's overhead~~ — **F36**: every build under 1% and
+  indistinguishable.
+- ~~sweeping "certified" from the prose~~ — done; annotated rather than erased
+  in `FINDINGS.md`, gone everywhere else.
 
 ## 6. Things I would tell myself
 
