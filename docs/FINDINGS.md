@@ -5354,6 +5354,83 @@ so, which it now does.
 
 ---
 
+## P39 — what a null control should look like, written before the run
+
+Session 7, `HANDOFF.md` section 5 item A1. The measurement below has **no
+treatment**. `bench-stock.exe` and `bench-layoutctl.exe` differ by **one byte of
+code** at `0x264830` inside `.text`, plus the PE timestamp at `0x110` and its
+echo at `0x3e2ed4` — and the byte that differs is the immediate in
+`ggml_compute_forward_mul_mat_id`, a function `mid.gguf` never enters. Zero
+`MUL_MAT_ID` node events appear in any of the nine reference traces, against
+2,704 `MUL_MAT` events in the level-3 mid trace alone, so the changed line is
+provably dead for this workload.
+
+So every percentage this run reports is a **false positive by construction**.
+The point is to find out how large one is, because this project has never
+measured that and has been quoting Tier D numbers of 0.5–2% for six sessions.
+
+**Protocol, identical to F33's** so the answer applies to the number that
+matters: `mid.gguf`, 16 threads, `tg64` with `pp64` as the second workload,
+`--reps 3`, 20 rounds per arm, `--blocks 3`, both arms uninstrumented and built
+in this session from one tree.
+
+### The predictions
+
+**P39.1 — the decode `t` interval contains zero.** This is the headline and the
+one that decides whether the harness is trustworthy at all. If a pair of
+binaries that cannot differ produces a resolved decode result, then F33's
+`+1.62% [+1.10, +2.15]` has an unknown false-positive component and the
+project's only speedup is in serious doubt. I expect it to hold.
+
+**P39.2 — the decode `t` interval is 1.5–2.5pp wide.** F33's two three-block
+runs gave 1.98pp and 2.29pp on the same protocol. Width is a property of the
+machine's drift and `t(2) = 4.303`, not of the treatment, so a null run should
+reproduce it. If it comes back much narrower, block agreement is being
+manufactured (M8) and the width in F33 was doing less work than assumed.
+
+**P39.3 — the decode block spread is 0.4–1.2pp.** F33 measured 0.77pp and
+0.82pp. Same reasoning.
+
+**P39.4 — the decode point estimate is within ±0.8pp of zero.** With a ~0.5pp
+drift term and three blocks, the mean should sit near zero. This is the number
+that literally *is* the false-positive magnitude. If it lands at ±1.5pp, then a
+one-percent effect is not measurable on this machine with this protocol at all,
+and several published numbers are inside the noise.
+
+**P39.5 — `pp64` is NOT persistently negative, and its point estimate is
+above −0.8%.** This is the prediction worth running the experiment for, and it
+is a partial test of **M6**. F33's prefill control came back negative in every
+single run: −0.81%, −0.43%, −2.18%. F38 read that as the signature of a layout
+effect, since prefill cannot see the chunking change but can see 1.1 MB of
+relocated `.text`. Here there is no layout change — one byte, same address — so
+if the negative prefill is layout, it must vanish. **If prefill comes back
+negative here too, the layout explanation loses its main piece of evidence and
+M6 weakens**, because the negativity would then be a property of the harness or
+the machine rather than of F24's binaries. Either outcome moves M6.
+
+**P39.6 — at least one of the two bootstrap intervals excludes zero while both
+`t` intervals contain zero.** M1 says the bootstrap is roughly half as wide as
+the truth; on a genuine null that should show up directly as a raised
+false-positive rate. This is close to a coin flip on two workloads and is
+recorded as a prediction rather than an expectation — but it is the sharpest
+available test of M1, because a null is the only place a false positive can be
+identified as one.
+
+**P39.7 — the A-arm `tg64` median is 36–44 tok/s and the three blocks' A-arm
+medians agree within 2 tok/s.** The gate-first rule (F34): this identifies which
+of M10's states the machine was in and whether it stayed there. F33's run sat at
+a 39.09 median at these settings. If the blocks disagree by more than that, the
+run is describing the machine's drift and not its own arms, and nothing below it
+counts.
+
+### What would make this run void rather than informative
+
+Per F34's ordering — gate first, physical plausibility second, interval third.
+Free RAM was 5,505 MB against an 840 MiB model (6.5×, well clear of the 1.5×
+floor), and nothing else will run on the machine while it is in flight.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
