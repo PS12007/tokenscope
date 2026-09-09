@@ -360,35 +360,43 @@ Design constraints, all enforced rather than intended:
 
 ### Cost
 
-Measured with interleaved arms and bootstrap CIs (`tools/bench_overhead.py`),
-24-layer model, MSVC Release. Level 3 is the expensive mode — every node event
-on every thread.
+Measured with interleaved arms, a rotating arm order, and a `t` interval over
+three independent blocks (`tools/bench_overhead.py --blocks 3`), 24-layer model,
+MSVC Release. Level 3 is the expensive mode -- every node event on every thread.
 
 ```
-  8 threads
-  arm                       median tok/s     IQR   overhead vs A
+  8 threads, level 3, 15 reps x 3 blocks per arm
+  build                       overhead vs its own compiled-out arm
   --------------------------------------------------------------------
-  A: compiled out                  43.16    2.0%                  -
-  B: in, level 0                   43.31    2.5%    -0.36%  [-2.27, +1.77]
-  C3: active level 3               43.11    1.2%    +0.12%  [-1.59, +1.43]
+  static   (ninja,  static)     +0.56%  [-0.05, +1.16]
+  nshared  (ninja,  shared)     +0.92%  [+0.38, +1.46]
+  shared   (MSBuild, shared)    +0.77%  [+0.05, +1.48]
 
-  28 threads
-  C3: active level 3               36.50    3.0%    +0.66%  [-1.85, +4.18]
+  baseline IQR 0.83% / 0.97% / 0.93%
 ```
 
-Every interval contains zero. **The harness refused to certify either
-measurement**, because this machine's baseline IQR is wider than the 2% effect
-being tested — so the honest claim is "not resolvable at ±2-4% here", not a
-number. The same machine on quieter days resolved level 3 as +0.67% [+0.12,
-+1.67] in session 1 and **+1.16% [+0.67, +1.87]** in session 5, both at 8
-threads; its noise floor moved 5x between sessions on identical binaries, which
-is itself worth knowing before trusting anyone's sub-1% profiler-overhead
-claim.
+**Under 1% in every build, and the three cannot be told apart.** The static row
+spans zero, so it is bounded rather than resolved. At 28 threads the same
+measurement gave +0.66% [-1.85, +4.18] and was refused -- that machine's
+baseline IQR was wider than the effect, so the honest claim there is "not
+resolvable at +-2-4%", not a number.
 
-I flag this because a barrier makes the graph pay the `max` of per-thread
-overhead rather than the mean, so I'd expect overhead to grow with thread count.
-I could not detect that growth up to 28 threads, which is weaker than saying it
-does not happen.
+**A warning I would want if I were reading this.** Earlier revisions of this
+document quoted +0.67%, then +1.16%, each with a bootstrap interval from a
+single run. Two such intervals for *one quantity on the same unrebuilt
+binaries*, taken two hours apart, later came out **non-overlapping** -- both
+having passed the harness's own gate. A bootstrap resamples inside one
+invocation and cannot see drift between invocations, and on this machine that
+drift is larger than a 1% effect. The block interval above contains every one of
+the five superseded estimates, so those runs never disagreed; only their
+intervals did. **Treat any sub-1% profiler-overhead claim measured from a single
+run -- including earlier versions of this one -- as narrower than the evidence
+supports.**
+
+I flag the thread-count question because a barrier makes the graph pay the `max`
+of per-thread overhead rather than the mean, so I would expect overhead to grow
+with thread count. I could not detect that growth up to 28 threads, which is
+weaker than saying it does not happen.
 
 ### Size of the change
 

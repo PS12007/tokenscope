@@ -6,7 +6,7 @@ the parts that are not yet settled.
 | Claim | Status |
 |---|---|
 | Zero overhead when compiled out | **Established**, structurally |
-| Under 2% when enabled | **Established for every level, static build, 8 threads.** Level 3, the full per-node timeline, measures **+1.16% [+0.67, +1.87]** (session 5, n=20, certified; supersedes session 1's +0.67% [+0.12, +1.67] — see FINDINGS F25). **The shared build is not covered**: its arms ran at a 2.22% noise floor and every interval spanned zero. |
+| Under 2% when enabled | **Established for all three builds at 8 threads, level 3**, with a `t` interval over three blocks: static **+0.56% [-0.05, +1.16]**, ninja-shared **+0.92% [+0.38, +1.46]**, MSBuild-shared **+0.77% [+0.05, +1.48]** (FINDINGS F36). Every pairwise difference spans zero. **Supersedes five single-run bootstrap figures** — +0.67%, +1.16%, +0.50%, +0.87%, +0.31% — whose intervals were too narrow; F36's contains them all. |
 
 ---
 
@@ -330,14 +330,23 @@ sixteen instrumentation sites behind it and no way to attribute it. With it, the
 progression 0.31% → 0.36% → 0.69% → 0.67% across arms B, C1, C2, C3 reads as a
 cost curve rather than a single opaque figure.
 
-**Session 5 re-ran the same workload at n=20 and got +1.16% [+0.67, +1.87] at
-level 3**, with level 0 at +0.23% [-0.20, +0.92] and prefill uncertified at
-every level. That is the current number; the session-1 figures above are kept
-because they are what the method section describes and because the difference
-between them — same binaries, same workload, two sessions — is itself the
-measurement of how much this machine moves. FINDINGS F25 has the full table and
-the reason the *shared* build's arms could not be compared against these ones at
-all.
+**Every figure above and in session 5 is a single-run bootstrap, and all of
+them are too narrow.** Session 6 measured one quantity twice, on the same
+unrebuilt binaries two hours apart, and got **non-overlapping** intervals
+(+0.87% [+0.55, +1.19] then +0.31% [+0.01, +0.52]) with both passing the gate.
+The cause is not exotic: the bootstrap resamples inside one invocation, and
+splitting a single run's own reps in half makes its two halves disagree by up to
+0.47pp. Arm position (0.214pp), autocorrelation (+0.14) and the unpaired
+estimator were each tested and are not it.
+
+**The current numbers come from `--blocks 3`** — a `t` interval over three
+independent passes, `t(2) = 4.303`: static **+0.56% [-0.05, +1.16]**,
+ninja-shared **+0.92% [+0.38, +1.46]**, MSBuild-shared **+0.77% [+0.05,
++1.48]** (FINDINGS F36). That interval contains every superseded estimate, so
+the runs never disagreed — only their intervals did. The session-1 figures are
+kept above because they are what the method section describes, and because the
+distance between them and the current ones measures how much this machine
+moves.
 
 ### Remaining gaps in the overhead claim
 
