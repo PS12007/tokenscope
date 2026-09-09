@@ -29,10 +29,21 @@ Measured on that model at 16 threads, i7-14700HX, Windows/MSVC:
     single run's bootstrap and was too narrow)
   - prefill throughput -1.30% [-2.67, +0.06] over the same six blocks, which
     contains zero but only just, and has been negative in every run. Prefill is
-    above the threshold in both arms and cannot see this change, so a reviewer
-    should treat the control as unclean rather than null. The arms also differ
-    by ~1.1 MB of image, so code layout is not held constant and some unknown
-    fraction of the decode gain may be layout rather than chunking
+    above the threshold in both arms and cannot see this change. **Do not read
+    that as a clean control either way** — FINDINGS F39 later found the prefill
+    workload reporting a resolved +0.59% between two binaries that cannot
+    differ, so at 16 threads it cannot arbitrate at this scale
+
+  - **the code-layout confound is closed** (FINDINGS F42, F49, F50). The two
+    arms differ by 1,137,994 bytes, but the linker map shows that is one
+    *uniform 16-byte shift*: `mul_mat` shrinks by 16 and all 7,721 functions
+    after it move down by exactly that. Reproducing that shift with no
+    behaviour change — never-called functions adding 16 and 48 bytes, the
+    latter putting `ggml_vec_dot_f32` at the same 48 mod 64 alignment this
+    patch gives it — moves decode by **-0.08% [-0.16, +0.00]** and **+0.06%
+    [-0.11, +0.22]**, against matched nulls of -0.08%. Four gate-passing runs
+    spanning 0.14pp. **The +1.62% is the scheduler change.** See
+    `patches/05-layout-arm.patch` and `patches/06-layout-arm-48.patch`
 
 `ggml_compute_forward_mul_mat_id` carries the identical threshold at the same
 file's line ~1698 and is deliberately NOT changed: it is the MoE path, no MoE
