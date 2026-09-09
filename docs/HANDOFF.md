@@ -803,8 +803,8 @@ ladder and the issue register (M1–M14) that the items below refer to.
    **−16** arm, since this one shifts +16 and an alignment effect need not be
    symmetric.
 
-   *(previous framing, kept because the work behind it stands)*
-   `patches/05-layout-arm.patch` exists and is verified against the linker map:
+   **How the arm is verified** — do not re-measure it without re-checking this.
+   `patches/05-layout-arm.patch` is verified against the linker map:
    exactly two address deltas (0 and **+16**) across all 14,419 `.text`
    functions, `mul_mat` the same size in both arms and 98.6% byte-identical
    after its move, `ggml_vec_dot_f32` shifted with everything else. **F42** is
