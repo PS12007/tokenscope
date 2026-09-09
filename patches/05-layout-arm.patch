@@ -1,0 +1,65 @@
+From: tokenscope — https://github.com/PS12007/tokenscope
+Subject: [layout control, do not merge] a 16-byte code shift with no behaviour change
+
+This is not a proposal. It is the layout arm for audit issue M6 — the question
+of how much of FINDINGS F24/F33's +1.62% decode improvement is the scheduler
+change and how much is code layout — and it exists to be measured and reverted.
+
+Why 16 bytes. F42 read the linker map for F24's two arms and found that their
+1,137,994 differing bytes are one thing: `ggml_compute_forward_mul_mat` shrinks
+by 16 bytes, and all 7,721 functions after it move down by exactly 16. Every
+other function is unmoved. There is no regeneration and no reordering — F38
+concluded otherwise from a byte-window probe that cannot detect relocation in
+code containing relocated absolute addresses.
+
+So the layout question is not "what does a third of a rewritten image do". It is
+"what does a 16-byte shift of the hot code do", and that is reproducible without
+touching behaviour.
+
+What this does. Adds a never-called function between `mul_mat` and
+`mul_mat_id`, kept alive by a volatile pointer so `/OPT:REF` cannot drop it and
+given a unique body so `/OPT:ICF` cannot fold it onto another trivial function.
+It occupies 16 bytes of address space and nothing else.
+
+Verified against the map before measuring, which is the step F38's control
+skipped:
+
+  - exactly two address deltas across all 14,419 functions in `.text`:
+    0 for 6,689 of them and **+16** for 7,730
+  - `ggml_compute_forward_mul_mat` is **the same size** in both arms (3,664
+    bytes) and 98.6% byte-identical after accounting for its move; the 51 bytes
+    that differ are relocated absolute addresses, which must change when their
+    targets move
+  - `ggml_vec_dot_f32`, the hottest function in an F32 decode, moves +16 and its
+    alignment goes from 0 to 16 mod 64 (F24's arm moves it to 48 mod 64)
+
+Known asymmetry, stated because it limits the conclusion. F24's arm shifts
+downstream code by **-16** and holds `mul_mat` fixed while changing its contents.
+This arm shifts by **+16** and holds `mul_mat`'s contents fixed while moving it.
+The perturbation is the same size and affects the same hot function; it is not
+the identical perturbation, and an alignment effect need not be symmetric. A
+null result here bounds the layout effect for a 16-byte shift on this machine.
+It does not prove layout is never worth a percent.
+
+--- a/ggml/src/ggml-cpu/ggml-cpu.c
++++ b/ggml/src/ggml-cpu/ggml-cpu.c
+@@ -1459,6 +1459,19 @@ UseGgmlGemm2:;
+     }
+ }
+ 
++// [tokenscope layout control -- DO NOT MERGE] Never called. Its only purpose is
++// to occupy address space immediately after ggml_compute_forward_mul_mat, so
++// that every function below it shifts while nothing about the computation
++// changes. FINDINGS F42 showed that F24's patch shifts exactly this region by
++// 16 bytes; this reproduces that shift without the behaviour change.
++// Kept alive by a volatile pointer so /OPT:REF cannot drop it, and given a
++// unique body so /OPT:ICF cannot fold it onto some other trivial function.
++volatile int ggml_ts_layout_sink;
++static void ggml_ts_layout_pad(void) {
++    ggml_ts_layout_sink = 0x5a17c0de;
++}
++void (* volatile ggml_ts_layout_keep)(void) = ggml_ts_layout_pad;
++
+ // ggml_compute_forward_mul_mat_id
+ 
+ #define MMID_MATRIX_ROW(row_id, i1) matrix_rows[(row_id)*ids->ne[0]*ids->ne[1] + (i1)]

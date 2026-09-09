@@ -6086,6 +6086,66 @@ the next step.
 
 ---
 
+## P43 — predictions before the layout arm, the experiment M6 has needed since session 4
+
+`HANDOFF.md` section 5 item 2, and the last open item in group A.
+[`F42`](#f42--f24s-11-mb-of-regenerated-code-is-a-uniform-16-byte-shift-and-m6-becomes-a-question-about-one-number)
+turned M6 from "a third of the image differs" into one question:
+
+> Does moving the hot code by **16 bytes** change decode throughput?
+
+**Arms:** `bench-stock.exe` against `bench-pad.exe`
+(`patches/05-layout-arm.patch`), both uninstrumented, both built from one tree
+in this session. `mid.gguf`, **8 threads** (where F40 put the floor at ±0.24pp),
+`--reps 3`, 20 rounds, `--blocks 3`, run twice.
+
+**Verified before measuring**, which is the step F38's control skipped: exactly
+two address deltas across all 14,419 `.text` functions (0 for 6,689, **+16** for
+7,730); `mul_mat` the same size in both and 98.6% byte-identical after its move,
+the 51 differing bytes being relocated addresses; `ggml_vec_dot_f32` moved +16,
+from 0 to 16 mod 64.
+
+**P43.1 — decode does not resolve: the six-block `t` interval contains zero.**
+This is the prediction I am least confident in and the whole point of running
+it. The reasoning for it: F14 established that decode on this machine is
+**bandwidth-bound**, and a bandwidth-bound streaming loop is far less sensitive
+to instruction alignment than a short compute-bound one. The reasoning against
+it: alignment effects of around a percent are a well-documented hazard in
+exactly this kind of measurement, and `ggml_vec_dot_f32`'s alignment mod 64 does
+change.
+
+**P43.2 — |point estimate| < 0.5pp.** Even if something moves, I expect it small.
+
+**P43.3 — whatever decode does, |layout| < 1.0pp**, so layout cannot account for
+all of F24's +1.62%. This is the prediction that matters for M6: F24 survives as
+a real effect if this holds, and is in serious trouble if the layout arm returns
+something like +1.5%.
+
+**P43.4 — prefill does not resolve either.** At 8 threads F40 put the prefill
+floor at ±0.12pp and prefill was the cleanest thing measured. A layout effect
+would have no obvious reason to prefer one phase.
+
+**P43.5 — the gate passes on both runs and the A-arm median is 46–47.5 tok/s**,
+matching F40's 46.91/46.79 and F41's 46.78. Without this the comparison against
+F40's floor is void, which is the mistake F39 made.
+
+### What each outcome means for M6
+
+- **Unresolved, small** → a 16-byte shift is not worth a percent here, F24's
+  +1.62% is attributable to the scheduler change, and M6 closes as far as this
+  machine can close it.
+- **Resolved and small** (say +0.3%) → layout is real but minor; F24 keeps most
+  of its effect and gains a stated uncertainty.
+- **Resolved and large** (approaching +1.6%) → F24's number may be substantially
+  layout, and the finding needs restating rather than caveating.
+
+**The asymmetry that limits all three:** F24's arm shifts by **-16** and this one
+by **+16**. Same magnitude, same hot function, opposite direction, and an
+alignment effect need not be symmetric. A null here bounds the effect for this
+perturbation; it does not prove layout never matters.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
