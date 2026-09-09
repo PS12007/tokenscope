@@ -1,6 +1,6 @@
 # HANDOFF — state of the project, and what to do next
 
-Updated **during session 7 (2026-09-09)**, after F41. Everything here is either
+Updated **during session 7 (2026-09-09)**, after F46. Everything here is either
 a fact about the current tree or an explicit next step. Read this first when
 picking the project back up.
 
@@ -35,6 +35,20 @@ systeminfo | grep -i "Available Physical"
 # and nothing else may run. A 5.17 GiB javaw process voided a 44-minute run;
 # this session also contaminated one of its own by writing docs alongside it.
 ```
+
+**Probe the machine before starting any run (F44/F46).** Throughput here sits on
+**discrete levels — 40.9, 43.5 and 46.0 tok/s were all seen in one afternoon** —
+each held for minutes, switching unprompted, ~12% apart, and **not forceable**:
+sustained load, idling and the page cache are all refuted. A run on the wrong
+level is not comparable to a floor measured on another, which voided three runs
+in session 7.
+
+```bash
+# 8 seconds, and it protects a 25-minute run
+python tools/ab_throughput.py --a A.exe --b B.exe -m ../models/mid.gguf     -t 8 --blocks 3 --min-baseline 46 --json-out run.json
+```
+
+Then check `timeline` in the JSON afterwards to confirm the run *stayed* there.
 
 **And know the floor before believing a percentage.** F39 and F40 measured what
 this harness reports between two binaries that *cannot* differ, and **it depends
@@ -90,6 +104,24 @@ within-block); fixed. And a caveat the session put in writing rather than
 leaving implicit — F39 ran at 16 threads, F36's overheads at 8, and **all three
 of F36's intervals overlap F39's null**, which the 8-thread null (item 1b) would
 settle.
+
+**Session 7's fourth act went at M6 and ran into the machine.** **F42** is the
+one that mattered: a linker map — which nobody had made — shows F24's 1,137,994
+differing bytes are *one uniform 16-byte shift*, `mul_mat` shrinking by 16 and
+all 7,721 functions after it moving down by exactly that. **F38's "relocated,
+regenerated, or both" is wrong**, and its byte-window probe could not have found
+the shift, because relocated code carries absolute addresses that move too. So
+M6 became one question — does moving the hot code 16 bytes change throughput? —
+and `patches/05` answers it with a verified +16 shift, checked against the map
+*before* measuring, which is the step F38's control skipped. **Then three
+measurement attempts were voided by the machine.** **F44** caught M10 in the
+act: four probes at 46.09, then eight at 40.92, unprompted, nothing running.
+**F46** refuted sustained load, idling, and — from data already collected — **the
+page cache**, the audit's most promising candidate since session 6; then
+corrected F44's "two regimes" to *at least three levels*, the middle one being
+where F35's A arms sat all along. Eleven M10 candidates are refuted and the
+survivor is below the OS. Net: M6 is **built and blocked** rather than stuck,
+and the tools gained `--min-baseline` and a per-measurement `timeline`.
 
 **Session 7's third act closed A3 and found the limit of `--blocks`.** **F41**
 re-measured F27's one unchecked row. Decode survives at **−2.15% [−2.28,
@@ -762,16 +794,26 @@ ladder and the issue register (M1–M14) that the items below refer to.
    property of `--blocks`; and **8 threads is the configuration to measure in**
    unless the question is about thread count.
 
-2. **A real layout arm for M6** — now the *only* route to the question, because
-   F39 discredited the prefill control it was being argued with (M13). Still the
-   strongest live threat to F24 and harder than it looks. F38 found that F24's two arms differ in **~31% of
-   `.text`** — 1.1 MB, contiguous, ~94% dense, with 0 of 36 code probes at the
-   same address — while the "obvious" small control perturbs 5 bytes. **Layout
-   perturbation is a property of where the edit lands, not of how small it is.**
-   A real arm must change `mul_mat`'s *size* without changing what it does
-   (padding, a retained uncalled function, forced alignment) and then survive
-   the objection that the padding costs something. If it moves decode, part of
-   F24's +1.62% is layout.
+2. **The layout arm for M6 — BUILT, and blocked on the machine.**
+   `patches/05-layout-arm.patch` exists and is verified against the linker map:
+   exactly two address deltas (0 and **+16**) across all 14,419 `.text`
+   functions, `mul_mat` the same size in both arms and 98.6% byte-identical
+   after its move, `ggml_vec_dot_f32` shifted with everything else. **F42** is
+   why this was possible at all — F24's 1.1 MB of differing bytes turned out to
+   be a *uniform 16-byte shift*, not the third of a regenerated image F38
+   reported, so the perturbation is reproducible without touching behaviour.
+
+   **What it needs is one 50-minute window on the 46 tok/s level** (F44/F46),
+   plus a matched null in the same window. Three attempts in session 7 were
+   voided: F43 on the wrong level, both halves of F45 on the gate. Run it with
+   `--min-baseline 46` and check the `timeline` afterwards. **Everything except
+   the machine is ready.**
+
+   Design caveat, stated in the patch header rather than buried: F24's arm
+   shifts **−16** and this one **+16**. Same magnitude, same hot function,
+   opposite direction, and an alignment effect need not be symmetric. If the
+   +16 arm comes back null, a −16 arm is the obvious follow-up and is a far
+   smaller job than building the first one was.
 
 3. ~~**Re-measure F27's `-2.06%` row.**~~ **DONE — F41, session 7.** Six blocks
    over two runs: **decode confirmed at −2.15% [−2.28, −2.02]**, 9× F40's floor,
