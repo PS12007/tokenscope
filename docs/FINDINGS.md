@@ -1035,9 +1035,14 @@ E-only run, which is clean, rather than on this one.
 
 - One machine, one OS, one hybrid layout. AMD CCD topologies and Apple's
   P/E split will differ in ways this does not predict.
-- The mask-to-core mapping is assumed from the usual Windows enumeration
-  (P-core threads first, E-cores from logical 16), and the anomaly above is a
-  reason to hold that assumption loosely.
+- ~~The mask-to-core mapping is assumed from the usual Windows enumeration~~
+  **Tested in session 6 ([F37](#f37--three-hypotheses-for-m10-all-refuted-and-a-correction-to-a-claim-made-an-hour-earlier)).**
+  Prefill at two threads gives `0x0101` (logical 0,8) **1.87x** the throughput of
+  `0x0003` (logical 0,1), so logical 0 and 1 share a physical core and the
+  numbering is interleaved: core N = logical 2N, 2N+1. **`0x5555` is one thread
+  per P-core, as assumed here.** So the first candidate above — wrong logical
+  numbering — is **eliminated**, and `--cpu-strict` bit assignment is the
+  surviving hypothesis for the anomaly.
 - Throughput and structure come from different runs; the throughput column is
   the one to quote.
 - Synthetic F32 weights. F12 showed the quantized model falls off *more*
@@ -5076,6 +5081,149 @@ that both intervals were too narrow.**
   voided by paging, refused at 3.5–4.7% IQR, then accepted at 0.83–0.97%. The
   machine's ability to resolve a 1% effect varies by more than the effect, and
   nothing in this project predicts when it will be able to.
+
+---
+
+## F37 — Three hypotheses for M10, all refuted, and a correction to a claim made an hour earlier
+
+**Workload:** `mid.gguf`, 8 threads unless stated, `build-ts-off`, decode
+(`-p 0 -n 256`) except where prefill is named. Not a finding about llama.cpp —
+a finding about **this machine**, and about how many plausible explanations it
+can eat.
+
+[`M10`](04-project-audit.md) is the observation that decode throughput on this
+machine sits sometimes near **46 tok/s** and sometimes near **40**, a ~13%
+swing that is roughly ten times any effect this project measures and that
+decides whether a run passes the harness gate. Four candidate causes were
+tested. **All four are dead**, and one of them was a claim this session had
+already published.
+
+### 1. Thermal — refuted
+
+The first test looked decisive: a hot burst at 41.75 tok/s, seven minutes idle,
+then 45.97. **+10.11%**, and it was written up in the moment as confirmed.
+
+The follow-up killed it. After **eight** minutes of cooling the machine started
+at 39.95 and stayed flat across 30 runs — total decay **-1.16%**:
+
+```
+  run  1  t=   6.9s   39.95      run 15  t= 103.0s   40.95
+  run  5  t=  35.0s   34.38      run 20  t= 137.2s   39.71
+  run 10  t=  69.4s   40.13      run 30  t= 204.5s   41.38
+```
+
+**More cooling produced a lower result, and the decay curve is flat.** Re-reading
+the first test, its post-idle burst had median 45.97 with min 41.24 and IQR
+7.13% — bimodal, not a decay. A story was fitted to one measurement.
+
+### 2. Core placement / pinning — refuted
+
+The harness's own gate advises pinning threads, and scheduler migration was
+M3's leading candidate. Pinning made it **worse**:
+
+```
+  free (no mask)         med  40.51   IQR  0.33%
+  0x00FF  logical 0-7    med  40.69   IQR  0.37%
+  0xFF00  logical 8-15    med  41.87   IQR  0.57%
+  0xAAAA  odd 1-15       med  39.52   IQR  2.41%
+  0x5555  even 0-14      med  36.09   IQR 19.92%   range 21.58-38.91
+  0x0FF0000  E-cores     med  25.20   IQR  6.14%
+```
+
+### 3. CPU frequency — refuted, and backwards
+
+The slow state runs at **118% of base (~2487 MHz)**, and 46/41 ≈ 1.12 against a
+plausible 134/118 ≈ 1.14, so frequency looked like an excellent fit. Sampling
+`\Processor Information(_Total)\% Processor Performance` alongside 40 timed
+runs:
+
+```
+  n=40   freq 110-132%   tg 38.62-45.03   Pearson r = -0.423
+```
+
+**Negative.** Higher measured frequency goes with *lower* throughput. The
+counter is `_Total` across all 28 logical processors, so it most likely tracks
+how busy the *rest* of the machine is — other cores boosting while our eight
+threads get less of the memory system. Whatever it is, it is not the cause, and
+the direction rules out the mechanism rather than merely failing to support it.
+
+That run also re-characterised M10: the range **38.62–45.03 appeared inside a
+single 4.5-minute window**. This is not two stable regimes over hours. It is
+high run-to-run variance whose *median* moves — F36 sat tightly at 46.0 with
+0.83% IQR, and an hour later the same command wanders between 38.6 and 45.0.
+
+### 4. The logical-processor numbering — refuted, and it was mine
+
+[`F14`](#f14--core-heterogeneity-is-the-mechanism-pinning-proves-it-and-does-not-fix-it)
+records an unexplained anomaly under `0x5555` — seven threads clustered, one
+12–20% slower — and lists two untested candidates, the first being
+"hyperthread sibling collision from a wrong assumption about this CPU's logical
+numbering". The `0x5555` row above (19.92% IQR, worst median) looked like exactly
+that, and **this session published the conclusion that `0x5555` is not one
+thread per P-core**, in `04-project-audit.md` and a commit message, before
+testing it.
+
+The test is clean, because the two topologies predict opposite results. On
+compute-bound prefill at two threads:
+
+```
+  0x0003 (logical 0,1)  pp512 median   91.47 tok/s
+  0x0101 (logical 0,8)  pp512 median  171.10 tok/s      ratio 0.53x
+```
+
+Logical 0 and 1 **share a physical core**; logical 0 and 8 do not. The numbering
+is interleaved, core N = logical 2N, 2N+1. **`0x5555` really is one thread per
+P-core, F14's description was right all along, and the claim published an hour
+ago was wrong.** It is corrected in the audit document.
+
+What this *does* buy: F14's first candidate explanation is now **tested and
+eliminated**, leaving its second — `--cpu-strict` assigning two threads to one
+bit — as the surviving hypothesis for the anomaly.
+
+### The observation that survives, and is odd
+
+With the topology settled, the pinning table reads strangely:
+
+| mask | distinct P-cores | threads | decode |
+|---|---|---|---|
+| `0x00FF` / `0xFF00` | **4** (both siblings each) | 8 | 40.69 / 41.87 |
+| `0x5555` / `0xAAAA` | **8** (one thread each) | 8 | 36.09 / 39.52 |
+
+**Eight threads on eight distinct cores is slower than eight threads on four
+cores.** For a compute-bound workload that would be absurd; for a
+bandwidth-bound one it is not, and F14 established decode here *is*
+bandwidth-bound. Four cores can already saturate the path to DRAM, and eight
+add contention without adding bandwidth. Recorded as an observation, not a
+mechanism — testing it means measuring memory bandwidth per configuration,
+which nothing here does.
+
+### What M10 is now
+
+Still open, better bounded, four explanations poorer:
+
+- **not** thermal (more cooling gave a lower result; the decay curve is flat)
+- **not** thread placement (pinning is worse, and the best mask is no mask)
+- **not** CPU frequency (correlation is negative)
+- **not** the logical-processor mapping (tested directly; the mapping is as documented)
+- **not** the `-p 0` vs `-p 512` workload difference (-0.91%, interleaved test)
+
+Untested and still live: page-cache and standby-list state for an 840 MB model
+read once per invocation; Windows power throttling policy per-process; and
+whatever the `_Total` frequency counter is actually tracking.
+
+**The practical rule needs no mechanism.** A run's compiled-out arm reports its
+absolute median, so **that number identifies which state the machine was in**,
+and two runs with different A-arm medians must not be compared. F36's A arms
+read 45.98/45.99/46.05; F35's read 43.50/43.65/43.12. That is visible in the
+existing output and in every `--json-out` file already written.
+
+### The pattern worth recording
+
+Three hypotheses formed and refuted in one sitting, one of them after being
+published. Each was plausible, each had a mechanism, and each died to a test
+that took under ten minutes. **The tests were cheap and the publishing was not.**
+The only reason the topology claim did not survive into the documentation
+permanently is that it happened to be cheap to check afterwards.
 
 ---
 

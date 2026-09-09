@@ -242,7 +242,7 @@ re-measurement that would have caught it.
 | **M3** | The instability is *within* one invocation (0.47pp between halves of the same run) and its cause is unidentified — not position, not autocorrelation, not the estimator | **Open.** Blocks contain it; nothing explains it |
 | **M8** | **Blocks manufacture confidence under sustained contamination.** F34's three blocks agreed to 0.55pp and excluded zero while reporting a physically impossible result | Guarded by the gate + plausibility check (F34); **the underlying limitation is permanent** |
 | **M9** | The machine is shared with whatever else the user is running. A 5.17 GiB `javaw` process voided a 44-minute run | `preflight_ram()` refuses to start; **it cannot detect load that arrives mid-run** |
-| **M10** | **Throughput swings between ~40 and ~46 tok/s on a minutes-to-hours timescale, bimodally, with no identified cause.** Not thermal (more cooling gave a lower result; a 30-run post-cooldown curve was flat), not scheduler migration (pinning made it worse). It is ~10x the effects being measured and decides whether a run passes the gate | **Open, and now the largest unknown in the project** |
+| **M10** | **Throughput swings between ~38.6 and ~46 tok/s, with no identified cause.** F37 killed four candidates: not thermal (more cooling gave a *lower* result; the decay curve is flat), not thread placement (pinning is worse; the best mask is no mask), not CPU frequency (Pearson **r = -0.423**, the wrong sign), not the `-p 0`/`-p 512` workload difference (-0.91%). The full range appears **inside one 4.5-minute window**, so it is run-to-run variance whose median moves, not two stable regimes. ~10x the effects being measured, and it decides whether a run passes the gate | **Open, and the largest unknown in the project.** Live candidates: page-cache/standby-list state for an 840 MB model, per-process power throttling |
 | **M11** | A claim built from *differences between* Tier D numbers inherits Tier D. F31's "level 3 is a leveller" was marked non-Tier-D and exempt from re-measurement; F36 reversed it | Recorded; the exemption was the error |
 | **M4** | F30 and F31 differ in arm order, round length **and** time simultaneously, so the rotation explanation is a story that fits, not evidence | **Open.** The same disease F30 diagnosed in F25 |
 | **M5** | Cross-session comparison of absolute throughput is worthless — the same compiled-out binary read 42.94 and 45.92 tok/s in two sessions (**+6.9%**, ~6× the effects being resolved) | Documented; a standing rule |
@@ -467,9 +467,15 @@ exercised by CI.
    and a 30-run curve after cooling was flat to -1.16%. Not scheduler
    migration — pinning made it worse. It is bimodal rather than smooth, it is
    ~10x the effects being measured, and it decides whether a run passes the
-   gate. **This is now the largest unknown in the project.** Note `0x5555` is
-   *not* one-thread-per-P-core on this topology (F36 sidebar), which may also
-   be F14's "unexplained anomaly".
+   gate. **This is now the largest unknown in the project.**
+
+   **Correction (F37):** an earlier revision of this document claimed `0x5555`
+   is *not* one thread per P-core. That was published before it was tested and
+   it is **wrong**. Prefill at two threads gives `0x0101` (logical 0,8) 1.87x
+   the throughput of `0x0003` (logical 0,1), so logical 0 and 1 share a core,
+   the numbering is interleaved, and `0x5555` is exactly what F14 and the
+   handoff always said. F14's first candidate for its anomaly is thereby
+   eliminated, leaving `--cpu-strict` bit assignment as the survivor.
 2. **Separate layout from chunking in F24 (M6).** Build a third arm that changes
    code layout without changing behaviour and measure it against stock. If it
    moves decode, part of F24 is layout. This is the single most valuable
