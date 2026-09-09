@@ -741,6 +741,15 @@ refer to.
    interval width; that one is Tier D and was never re-measured. The audit had
    F27 filed as Tier B for a whole session because of its headline.
 
+   **F40 makes this sharper and gives it a real prediction.** The row is at 8
+   threads, where the floor is now known to be **±0.24pp** on decode — so
+   −2.06% is about **8.5× the floor** and should survive comfortably. That makes
+   it a *test of the floor* as much as of F27: if a −2.06% effect fails to
+   resolve at 8 threads over six blocks, the floor is not what F40 says it is.
+   Predict before running. **Both `build-ts-noomp-*` arms must be rebuilt in one
+   session** — they date from session 5 and the stale-binary trap has caught this
+   project twice.
+
 ### B. The standing scientific gaps, unchanged by session 6
 
 4. **Linux + GCC.** Still the blocker for the main upstream conversation, and
