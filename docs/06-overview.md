@@ -225,7 +225,7 @@ first submission than F24. `patches/02` fixes it in 8 lines.
 
 | | |
 |---|---|
-| **No Linux, no GCC** (G1) | The single biggest gap. Every number here is MSVC on one Windows laptop. Blocks the main upstream conversation |
+| **No Linux, no GCC** (G1) | The single biggest gap. Every number here is MSVC on one Windows laptop. Blocks the main upstream conversation. **A second machine is now available** (dual-boot Arch/Windows i7-1255U) — [`07-linux-bringup.md`](07-linux-bringup.md) is the step-by-step |
 | **No MoE model** (G2) | The most informative test available, because the byte law should *fail* there — MoE is where "bytes per token" stops being a property of the file and starts depending on the router. Needs a multi-GB download |
 | **No second machine** | F27's barrier result (-54%) is the biggest unexploited finding here and means nothing as a general claim until someone reproduces it on a homogeneous CPU |
 | **M10** | Why the machine has throughput levels. Eleven candidates refuted; the survivor is firmware/EC policy, which this chassis will not report |
@@ -239,7 +239,10 @@ first submission than F24. `patches/02` fixes it in 8 lines.
    than a proposal. Good first contact with the project.
 2. **Linux + GCC.** Turns a one-machine curiosity into a result. Everything here
    is reproducible from `scripts/bootstrap.py` plus the patches; the harness is
-   platform-independent Python.
+   platform-independent Python, and **no model download is needed** —
+   `tools/make_tiny_model.py` generates the test model locally.
+   **[`07-linux-bringup.md`](07-linux-bringup.md) is a step-by-step for this**,
+   with a verification ladder and a ready-to-paste session prompt.
 3. **Decide about F24** with section 4 in hand.
 4. **An MoE model**, if you are willing to spend the download. It is the one
    experiment here whose *predicted outcome is failure* of an existing claim,

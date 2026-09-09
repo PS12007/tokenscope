@@ -1,6 +1,8 @@
 # HANDOFF — state of the project, and what to do next
 
-Updated **during session 7 (2026-09-09)**, after F50. Everything here is either
+Updated **during session 7 (2026-09-09)**, after F50. **A second machine now
+exists** — a dual-boot Arch/Windows i7-1255U — which closes G1 if anyone brings
+it up; see [`07-linux-bringup.md`](07-linux-bringup.md). Everything here is either
 a fact about the current tree or an explicit next step. Read this first when
 picking the project back up.
 
