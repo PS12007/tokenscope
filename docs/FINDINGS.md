@@ -5305,6 +5305,13 @@ No constant shift explains it (`p[base+k] == s[base]` fails for every
 `k` in ±4096 at a probe inside the block), so this is not simple relocation of
 an otherwise-identical image.
 
+> **This paragraph is wrong, and [`F42`](#f42--f24s-11-mb-of-regenerated-code-is-a-uniform-16-byte-shift-and-m6-becomes-a-question-about-one-number)
+> shows why.** The linker map says it *is* simple relocation: `mul_mat` shrinks
+> by 16 bytes and all 7,721 functions after it move down by exactly 16, with
+> every other function unmoved. A byte-window probe cannot detect that, because
+> relocated code carries absolute addresses that also change. The 22 "not
+> present" probes are the signature of relocation, not evidence against it.
+
 ### The control does not control
 
 `patches/04-layout-control.patch` applies the *identical* edit to
@@ -5980,6 +5987,102 @@ F27's four throughput rows are now: three large ones untouched (−54.17%,
 finding's conclusion — that ggml's own spin-wait barrier is not the cheap one on
 this machine — is unaffected and better supported than before. Its Tier D row is
 no longer unchecked.
+
+---
+
+## F42 — F24's 1.1 MB of "regenerated" code is a uniform 16-byte shift, and M6 becomes a question about one number
+
+**Artefacts, not a workload.** Fresh `build-ts-off` builds of stock and
+`patches/03-mulmat-chunk-threshold.patch`, plus a `/MAP` build of each. No
+throughput measured. This corrects
+[`F38`](#f38--f24s-two-arms-differ-in-31-of-their-code-section-and-the-control-built-to-test-it-does-not).
+
+### F38's number reproduces exactly
+
+Stock vs F24's patched arm: **1,137,994 bytes differ** — the same figure F38
+reported, from independently rebuilt binaries. The fact is solid. F38's
+*interpretation* of it is not.
+
+### What the linker map says
+
+A `/MAP` build was added (`build-map`) and verified image-neutral first: the
+`/MAP` binary differs from the ordinary one in **4 bytes**, the PE timestamp and
+its echo, so the map describes the binary being measured.
+
+Both arms contain **14,419 functions** in `.text`. Comparing every function's
+address between them gives **exactly two distinct deltas**:
+
+| delta | functions |
+|---|---|
+| **0** | 6,698 |
+| **−16** | 7,721 |
+
+And the pivot is the patched function itself:
+
+```
+  ggml_compute_forward_mul_mat      0x262e20 -> 0x262e20   (delta 0)
+    size, stock                       3664 bytes
+    size, patched                     3648 bytes           (-16)
+  everything at a higher address    shifted by exactly -16
+```
+
+**`mul_mat` shrinks by 16 bytes and every function after it moves down by 16.**
+That is the whole of the 1.1 MB. There is no regeneration, no reordering, and
+nothing else changed anywhere in the image.
+
+### Why F38 concluded otherwise, and why its test could not have worked
+
+F38 wrote:
+
+> No constant shift explains it (`p[base+k] == s[base]` fails for every `k` in
+> ±4096 at a probe inside the block), so this is not simple relocation of an
+> otherwise-identical image.
+
+**That inference is wrong, and the method could not have found the shift it was
+looking for.** Under a uniform relocation, code bytes move *and* every absolute
+address embedded in them changes too, because the targets moved as well. A
+256-byte window containing any relocated absolute address will not match
+byte-exactly at any offset, including the correct one. F38's own probe results
+say this in hindsight — 14 matched (windows with no embedded absolute address)
+and 22 did not (windows with one). It read 22 misses as evidence of
+regeneration when they are the expected signature of relocation.
+
+**The lesson is about tools, not about this patch.** A byte-window search cannot
+distinguish relocation from regeneration in code containing relocations. The
+linker map answers in one command what the probe method got backwards, and it
+was available the whole time.
+
+### What M6 actually is now
+
+M6 has been "an unknown fraction of F24's +1.62% may be layout, and a third of
+the image differs so nobody can reason about it." It is now a precise question:
+
+> Does moving every function after `mul_mat` down by **16 bytes** change decode
+> throughput?
+
+That is a far smaller claim to test, and it is testable, because a control that
+produces a 16-byte downstream shift with no behavioural change is
+constructible — which is what F38 concluded did not exist.
+
+**And the hot path is genuinely affected**, so this is not a question that can be
+waved away:
+
+| function | stock | patched | |
+|---|---|---|---|
+| `ggml_vec_dot_f32` | `0x290fc0` | `0x290fb0` | **−16** |
+| `ggml_graph_compute_thread` | `0x265e00` | `0x265df0` | −16 |
+| `ggml_compute_forward_mul_mat` | `0x262e20` | `0x262e20` | 0 |
+| `ggml_barrier` | `0x2620a0` | `0x2620a0` | 0 |
+
+`ggml_vec_dot_f32` is the hottest function in an F32 decode, and it goes from
+`0xc0` (**64-byte aligned**) to `0xb0` (**48 mod 64**). Loop alignment inside it
+shifts correspondingly. That is a textbook mechanism for a sub-percent
+throughput change, and it is exactly the thing F24's design cannot separate from
+the scheduler change.
+
+Recorded as a mechanism that is **plausible and untested** — naming it is not
+measuring it, which is the mistake session 6 made three times. The control is
+the next step.
 
 ---
 
