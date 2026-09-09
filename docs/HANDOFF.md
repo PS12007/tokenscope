@@ -248,7 +248,7 @@ The short version:
 | ~~No Perfetto screenshot~~ | **Sidestepped in session 5.** `tools/trace_svg.py` renders one token from a committed trace as a theme-aware SVG, and the README opens with it. That is better than a screenshot for a repo -- it is text, it diffs, and anyone who clones can regenerate it -- but it is **not** the Perfetto UI, and a post that wants to show the UI still wants a screenshot |
 | ~~No thread pinning~~ | **Done (F14).** Mechanism confirmed: homogeneous cores drop spread 13%->2% and halve barrier wait. Pinning is not the fix |
 | Upstream issue not filed | Two issues now, and [`03`](03-upstream-issue-draft.md) says which goes first. **The F20 naming defect is not blocked on Linux** and should be filed on its own; the instrumentation proposal still is. **An agent must not write or file it** — see the box at the top of `03` |
-| ~~Shared build's overhead still unmeasured~~ | **Done, and re-done properly (F36).** +0.77% [+0.05, +1.48] over three blocks; indistinguishable from static. Superseded (F30).** +0.87% [+0.55, +1.19] at level 3, certified. F25 was right that the fix was a harness change and not more reps: `bench_overhead.py` now takes N build pairs with `--pair` and round-robins every arm of every pair together. What is *still* open is the difference between the builds, which came out bounded but unresolved at +0.36pp [-0.32, +1.17] |
+| ~~Shared build's overhead still unmeasured~~ | **Done (F36).** +0.77% [+0.05, +1.48] at level 3 over three blocks, and **indistinguishable from static** (+0.56% [-0.05, +1.16]); every pairwise difference spans zero. Supersedes F25's "unmeasured" and F30's +0.87%, both single-run bootstraps |
 | F24 not raised upstream, and `mul_mat_id` untested | Now **+1.62% [+1.10, +2.15]** (F33), one machine, one thread count, one model, no NUMA — and NUMA is what the constant was tuned for. **F33 also found the prefill control drifting negative**, so some unknown fraction may be code layout rather than chunking (audit M6) |
 
 ---
@@ -565,6 +565,18 @@ python tools/bench_overhead.py -m M.gguf -n 20 -t 8 --levels 3     --pair static
                                         # the only way a cross-build comparison
                                         # is interleaved at all
 ```
+
+**`--blocks N` is the flag that matters now.** It runs the whole round-robin N
+times and reports a `t` interval over the per-block point estimates. Quote that,
+never the bootstrap: the bootstrap resamples inside one invocation, and F31
+found two of its intervals, for one quantity on unrebuilt binaries, that did not
+overlap. `ab_throughput.py` takes `--blocks` and `--json-out` too.
+
+Two guards exist because they were needed rather than foreseen.
+`preflight_ram()` refuses to start when free memory is under 1.5x the model --
+F34 ran at 870 MB against an 840 MB model and reported the instrumented build as
+*faster*. And a failed baseline gate now makes the tool refuse its own block
+table, instead of printing "quote this" underneath a refusal.
 
 `--pair` is repeatable and each pair is scored against **its own** compiled-out
 arm. With more than one pair you also get the difference of overheads with its
