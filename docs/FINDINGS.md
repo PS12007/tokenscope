@@ -6307,14 +6307,20 @@ prediction set was built on a frame that the data discards.
    tested** — it needs per-round timestamps that the harness does not currently
    record.
 
-### The cheap thing this suggests next, and does not do
+### The cheap thing this suggests, and which is now done
 
-`ab_throughput.py --json-out` records measurements in order but **no
-timestamps**. Adding a wall-clock stamp per measurement would let any past or
-future run be checked for a regime switch directly, and would test the M14
-mechanism above for free on data already collected. That is a one-line change
-and it is not made here, because this session has already published enough
-mechanisms before testing them.
+`ab_throughput.py --json-out` recorded measurements in order but **no
+timestamps**, so no past run can be checked for a regime switch. Every run from
+here on carries a `timeline` array — wall-clock offset, block, round, arm, test
+and value for every measurement — so the question "did this run span a switch"
+is answerable from the raw file.
+
+This was first written up as deliberately *not* done, on the grounds that the
+session had already published enough untested mechanisms. That was the wrong
+call and it is corrected here: **adding a clock is not publishing a mechanism,
+it is building the instrument that can test one.** The M14 hypothesis above
+stays untested either way — it needs timestamps on *past* runs, which do not
+exist — but every future run can now settle it.
 
 ---
 

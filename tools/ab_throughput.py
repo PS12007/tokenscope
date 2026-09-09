@@ -46,6 +46,7 @@ import os
 import statistics
 import subprocess
 import sys
+import time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
@@ -108,7 +109,9 @@ def main() -> int:
     res = collections.defaultdict(lambda: collections.defaultdict(list))
     per_block = collections.defaultdict(list)      # test -> [point estimate]
     block_raw = []                                 # per block, every measurement
+    timeline = []                                  # every measurement, with a clock (F44)
     arms = {"a": args.a, "b": args.b}
+    t_zero = time.time()
 
     for blk in range(args.blocks):
         cur = collections.defaultdict(lambda: collections.defaultdict(list))
@@ -118,11 +121,22 @@ def main() -> int:
             # so block 2 does not repeat block 1's lead pattern
             order = ["a", "b"] if (i + blk) % 2 == 0 else ["b", "a"]
             for name in order:
+                t_at = time.time() - t_zero
                 got = run_once(arms[name], args.model, args.n_prompt,
                                args.n_gen, args.threads, args.reps)
                 for test, ts in got.items():
                     res[test][name].append(ts)
                     cur[test][name].append(ts)
+                    # FINDINGS F44: this machine holds two throughput regimes
+                    # ~12.6% apart for minutes at a time and switches between
+                    # them unprompted. A 25-minute run can therefore span a
+                    # switch, and without a clock there is no way to tell
+                    # afterwards whether it did. Interleaving protects the A/B
+                    # either way; what a switch inflates is the baseline spread,
+                    # and hence the block estimate it lands in.
+                    timeline.append({"t": round(t_at, 1), "block": blk,
+                                     "round": i, "arm": name,
+                                     "test": test, "ts": ts})
             print("  block %d/%d  round %d/%d"
                   % (blk + 1, args.blocks, i + 1, args.rounds), flush=True)
         for test in cur:
@@ -181,7 +195,8 @@ def main() -> int:
                        "pooled": {k: dict(v) for k, v in res.items()},
                        "block_points": dict(per_block),
                        "blocks": [{k: dict(v) for k, v in b.items()}
-                                  for b in block_raw]}, f, indent=2)
+                                  for b in block_raw],
+                       "timeline": timeline}, f, indent=2)
         print("\n  raw -> %s" % args.json_out)
     return 0
 
