@@ -398,6 +398,28 @@ of per-thread overhead rather than the mean, so I would expect overhead to grow
 with thread count. I could not detect that growth up to 28 threads, which is
 weaker than saying it does not happen.
 
+### One thing a reviewer should be told about the chunking measurement
+
+The `nth * 4` -> `nth * 2` result (+1.62% [+1.10, +2.15] on decode, `t` over six
+blocks) was measured between two binaries built from one tree in one session,
+differing only in that constant. **They also differ in about 31% of their code
+section.** The 1,137,994 differing bytes form one contiguous ~1.1 MB block
+inside `.text` at ~94% density, and no code probe from that block appears at the
+same address in both binaries (FINDINGS F38).
+
+Code layout affects throughput on this kind of workload at around the size of
+the effect being claimed, so **an unknown fraction of that 1.62% may be layout
+rather than scheduling.** The reasons to still believe the mechanism: decode
+moves roughly three times further than prefill and in the opposite direction,
+which layout has no reason to arrange; and the mechanism was predicted before it
+was measured, including which matmuls change partitioning mode and at what
+thread count. The reason for caution: the prefill control, which cannot see this
+change at all, has come back negative in every run.
+
+An attempt at a layout control failed informatively — the identical edit applied
+to `mul_mat_id` perturbs **5 bytes**, so layout perturbation cannot be produced
+on demand by making a similarly small change elsewhere.
+
 ### Size of the change
 
 Currently 123 changed lines across 6 existing files (`ggml/CMakeLists.txt`,

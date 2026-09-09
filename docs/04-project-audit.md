@@ -254,11 +254,14 @@ re-measurement that would have caught it.
 | **M11** | A claim built from *differences between* Tier D numbers inherits Tier D. F31's "level 3 is a leveller" was marked non-Tier-D and exempt from re-measurement; F36 reversed it | Recorded; the exemption was the error |
 | **M4** | F30 and F31 differ in arm order, round length **and** time simultaneously, so the rotation explanation is a story that fits, not evidence | **Open.** The same disease F30 diagnosed in F25 |
 | **M5** | Cross-session comparison of absolute throughput is worthless — the same compiled-out binary read 42.94 and 45.92 tok/s in two sessions (**+6.9%**, ~6× the effects being resolved) | Documented; a standing rule |
-| **M6** | Code layout is not held constant in F24's A/B: stock and patched differ by **1,137,994 bytes** across most of the image. Layout alone can move throughput ~1% | **Open, and now supported by evidence.** F33's prefill control — a workload the patch cannot reach — has come back negative in every run (-1.30% [-2.67, +0.06] over six blocks). Separating layout from chunking needs an arm that changes layout without changing behaviour; not done |
+| **M6** | Code layout is not held constant in F24's A/B. **Quantified in F38:** the 1,137,994 differing bytes are one contiguous block inside `.text`, ~94% dense — **about 31% of the entire code section** — and **0 of 36 code probes appear at the same address** in both binaries | **Open, and the strongest live threat to F24.** F33's prefill control (a workload the patch cannot reach) is negative in every run. **The control built for it does not work** (F38): the same edit in `mul_mat_id` perturbs 5 bytes, so layout cannot be dialled in by choosing a small edit |
 | **M7** | The static pair builds under Ninja and the shared pair under MSBuild, so early cross-pair numbers confound linkage with generator | Fixed by adding a Ninja shared pair (F31); the generator turned out to matter (+0.40% [+0.14, +0.69] on decode) |
 
-**M6 deserves emphasis.** It is the strongest live threat to F24, and F33 made
-it worse rather than better. The original argument against it was that the
+**M6 deserves emphasis.** It is the strongest live threat to F24, and F33 then
+F38 each made it worse rather than better. F38 is the one to read: a third of
+the code section is relocated or regenerated between the two arms, and the
+asymmetry it found — one byte of immediate moves nothing in `mul_mat_id` and a
+third of the image in `mul_mat` — is why a cheap layout control does not exist. The original argument against it was that the
 prefill control was flat; six blocks later the control is drifting negative,
 which is exactly what a layout effect looks like on a workload that cannot see
 the scheduler change. Decode still moves ~3x further and in the opposite
@@ -484,10 +487,17 @@ exercised by CI.
    the numbering is interleaved, and `0x5555` is exactly what F14 and the
    handoff always said. F14's first candidate for its anomaly is thereby
    eliminated, leaving `--cpu-strict` bit assignment as the survivor.
-2. **Separate layout from chunking in F24 (M6).** Build a third arm that changes
-   code layout without changing behaviour and measure it against stock. If it
-   moves decode, part of F24 is layout. This is the single most valuable
-   experiment left, because F24 is the one result a maintainer might act on.
+2. **Separate layout from chunking in F24 (M6).** Harder than it looked — F38
+   showed the obvious control perturbs 5 bytes where the real patch perturbs
+   1.1 MB. A real layout arm must change `mul_mat`'s *size* without changing
+   what it does (padding, a retained uncalled function, forced alignment) and
+   then survive the objection that the padding itself costs something. **Still
+   the most valuable experiment left**, because F24 is the one result a
+   maintainer might act on.
+   **Ready to run meanwhile:** `patches/04-layout-control.patch` is built
+   (`bench-layoutctl.exe`) and is a **null** control — behaviour-identical and
+   layout-identical — so measuring it against stock gives the harness's
+   false-positive rate, which has never been measured.
 3. **Explain M3** — why one invocation's own halves disagree by 0.47pp. Blocks
    contain the symptom; nothing explains it. Candidates not yet tested: Windows
    scheduler migration, page-cache state, SMT partner activity, turbo residency.

@@ -5254,6 +5254,106 @@ permanently is that it happened to be cheap to check afterwards.
 
 ---
 
+## F38 — F24's two arms differ in 31% of their code section, and the control built to test it does not
+
+**Artefacts, not a workload:** `bench-stock.exe`, `bench-patched.exe` (F24's
+`nth*4`->`nth*2` in `mul_mat`) and `bench-layoutctl.exe` (the same edit applied
+to `mul_mat_id` instead), all built from one tree in one session, plus a second
+stock build as a null reference. No measurement — this is a fact about the
+binaries, established while the machine was too busy to measure on.
+
+Audit issue **M6** says F24's arms are not layout-controlled and that layout
+alone can move throughput by around a percent. That was written as a caveat
+nobody could exclude. It is now quantified, and it is worse than it read.
+
+### How much actually differs
+
+| comparison | bytes differing |
+|---|---|
+| stock vs a second stock build | **4** (PE timestamp `0x110`, one word at `0x3e2ed4`) |
+| stock vs **F24's patched arm** | **1,137,994** |
+| stock vs the `mul_mat_id` control | **5** |
+
+MSVC is reproducible here to 4 bytes, so the comparison is meaningful. The
+differences are not scattered: they form one contiguous block from roughly
+`0x260000` to `0x380000` at **~94% byte density**, and parsing the PE section
+table puts that block inside **`.text`** (raw `0x400`–`0x386400`). That is
+**1.1 MB of a 3.67 MB code section — about 31% of all code in the binary.**
+
+### Moved, regenerated, or both
+
+Thirty-six 256-byte code probes taken from stock's changed region and searched
+across the patched `.text`:
+
+```
+  same address :  0
+  moved        : 14
+  not present  : 22
+```
+
+**Zero at the same address** is the number that matters. Fourteen probes are
+provably the same code at a different offset. The twenty-two unmatched ones are
+*not* proof of regeneration — a 256-byte window containing a relocated absolute
+address or a relative jump will not match byte-exactly even when the function is
+otherwise identical — so the honest statement is:
+
+> Roughly a third of the code section is relocated, regenerated, or both,
+> between the two binaries whose 1.62% throughput difference F33 attributes to
+> a scheduler constant.
+
+No constant shift explains it (`p[base+k] == s[base]` fails for every
+`k` in ±4096 at a probe inside the block), so this is not simple relocation of
+an otherwise-identical image.
+
+### The control does not control
+
+`patches/04-layout-control.patch` applies the *identical* edit to
+`ggml_compute_forward_mul_mat_id` — the MoE expert path, which a dense model
+never executes — so a patched binary must behave identically on every model in
+this repo while perturbing the same file. The design intent was a layout arm.
+
+**It perturbs 5 bytes.** One of code, four of build metadata. The compiler
+emitted the same instruction with a different immediate and nothing moved.
+
+So the control is **not** a layout control, and saying otherwise would repeat
+this session's habit of publishing a mechanism before testing it. What it *is*
+is a **null control**: two binaries that must behave identically on this
+workload and are laid out identically too. Measuring it against stock therefore
+estimates the harness's false-positive rate directly, which nothing in this
+project has ever done. That is worth running and is not what M6 needs.
+
+### What M6 needs instead, and why it is hard
+
+A real layout arm has to change `mul_mat`'s *size* without changing what it
+does — padding, an uncalled-but-retained function, forced alignment — and then
+survive the objection that the padding itself costs something. The asymmetry
+here is the discouraging part: a one-byte immediate in `mul_mat_id` moves
+nothing, while a one-byte immediate in `mul_mat` moves a third of the image. The
+same edit is layout-neutral in one function and layout-catastrophic in another,
+which means **layout perturbation cannot be dialled in by choosing a small
+edit**. It is a property of where the edit lands.
+
+### What this does to F24/F33
+
+`+1.62% [+1.10, +2.15]` stands as a measurement of *those two binaries*. What it
+cannot yet claim is that the scheduler constant is why. The supporting
+arguments, in descending strength:
+
+- **Decode moves ~3x further than prefill, in the opposite direction.** Layout
+  has no reason to prefer one phase's sign over the other.
+- The mechanism is specific and predicted in advance (F23 said which matmuls
+  flip mode, before F24 measured).
+- Against it: F33's prefill control has been negative in **every** run
+  (-0.81%, -0.43%, -2.18%), which is what a layout effect on a phase that
+  cannot see the change would look like.
+
+**Nothing here is a reason to withdraw F24.** It is a reason that the phrase
+"one line, +1.62%" should be "one line, +1.62%, on binaries that also differ in
+31% of their code layout" — and a reason the upstream evidence pack should say
+so, which it now does.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:

@@ -1,0 +1,62 @@
+From: tokenscope — https://github.com/PS12007/tokenscope
+Subject: [null control, do not merge] mul_mat_id: the same one-line change, on a path a dense model never enters
+
+This is not a proposal. It is the control arm for FINDINGS F33's open question
+(audit issue M6), and it exists to be measured and then reverted.
+
+The problem it addresses. `patches/03-mulmat-chunk-threshold.patch` changes one
+constant in `ggml_compute_forward_mul_mat` and measures +1.62% [+1.10, +2.15] on
+decode. But the stock and patched binaries differ by 1,137,994 bytes spanning
+most of the image -- one constant changed and a quarter of the file moved, almost
+all of it downstream address shift. Code layout is therefore NOT held constant
+between F33's two arms, and layout alone can move throughput by around a percent
+on this kind of workload. Nothing in that design can separate the two.
+
+What this does. It applies the identical edit -- `nth * 4` -> `nth * 2` -- to
+`ggml_compute_forward_mul_mat_id` instead, at the same file's line ~1698, and
+leaves `mul_mat` at stock. `mul_mat_id` is the MoE expert path. **A dense model
+never executes it**, so for `mid.gguf`, Qwen2.5, Qwen3-8B or any other model in
+this repo the patched binary must behave identically to stock, while its
+compiler and linker inputs are perturbed in the same file, in the same function
+shape, by the same kind of edit.
+
+How to read the result, against stock, same protocol as F33
+(`ab_throughput.py --blocks 3`, both arms uninstrumented, rebuilt together):
+
+  - interval contains zero  -> layout is not worth a percent here, and F33's
+                               +1.62% is attributable to the scheduler change
+  - interval excludes zero  -> a behaviour-free edit to this file moves decode,
+                               so an unknown part of F33's number is layout and
+                               the finding needs restating, not just caveating
+
+The second outcome is the informative one and is the reason to run it.
+
+MEASURED AFTER WRITING THE ABOVE, and it changes what this patch is for
+(FINDINGS F38). This edit perturbs **5 bytes** of the binary -- one of code,
+four of build metadata. The compiler emitted the same instruction with a
+different immediate and nothing moved. Patch 03's edit, in `mul_mat`, perturbs
+**1,137,994 bytes**, a contiguous ~1.1 MB block inside `.text` at ~94% density,
+which is about 31% of the whole code section.
+
+So this is **not** a layout control and must not be described as one. The same
+one-byte immediate change is layout-neutral in one function and moves a third of
+the image in another; layout perturbation is a property of where the edit lands
+and cannot be dialled in by choosing a small edit.
+
+What this patch actually provides is a **null control**: two binaries that must
+behave identically on any dense model AND are laid out identically. Measured
+against stock with the same protocol, it estimates the harness's false-positive
+rate, which nothing in this project has ever measured. A non-zero result here
+means the harness reports differences between binaries that cannot differ.
+
+--- a/ggml/src/ggml-cpu/ggml-cpu.c
++++ b/ggml/src/ggml-cpu/ggml-cpu.c
+@@ -1695,7 +1695,7 @@
+         int64_t nchunk0 = (nr0 + chunk_size - 1) / chunk_size;
+         int64_t nchunk1 = (nr1 + chunk_size - 1) / chunk_size;
+ 
+-        if (nchunk0 * nchunk1 < nth * 4 || disable_chunking) {
++        if (nchunk0 * nchunk1 < nth * 2 || disable_chunking) {
+             nchunk0 = nr0 > nr1 ? nth : 1;
+             nchunk1 = nr0 > nr1 ? 1 : nth;
+         }
