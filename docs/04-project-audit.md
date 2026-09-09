@@ -661,6 +661,7 @@ exercised by CI.
 | [`01-design-scope-timing.md`](01-design-scope-timing.md) | Why the mechanism is shaped the way it is |
 | [`02-overhead-methodology.md`](02-overhead-methodology.md) | How overhead is measured, and the rules learned the hard way |
 | [`03-upstream-issue-draft.md`](03-upstream-issue-draft.md) | Evidence pack for F20/F24 — **read the box at the top before touching it** |
+| [`05-f24-filing-kit.md`](05-f24-filing-kit.md) | **Pre-flight checks, numbers and anticipated questions for raising F24 upstream. Contains no draft text, deliberately** — `AGENTS.md` forbids an agent writing PR or comment prose, non-overridably |
 | [`FINDINGS.md`](FINDINGS.md) | Every finding and prediction, chronological, with scoring |
 | [`HANDOFF.md`](HANDOFF.md) | Cold-start checklist and what to do next |
 | **`04-project-audit.md`** | **This document — trust ladder, issue register, everything broken** |

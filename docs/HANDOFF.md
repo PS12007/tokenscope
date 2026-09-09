@@ -875,7 +875,15 @@ ladder and the issue register (M1–M14) that the items below refer to.
 
 ### C. Needs a person, not an agent
 
-7. **File the F20 naming issue**, then decide about F24. `AGENTS.md` forbids an
+7. **File the F20 naming issue**, then decide about F24. **F24 is now in the
+   best state it has ever been in** — its layout confound is closed (F49/F50) and
+   its evidence pack answers that objection rather than conceding it.
+   [`05-f24-filing-kit.md`](05-f24-filing-kit.md) holds the pre-flight checks,
+   the numbers, the questions a maintainer will ask and the six things the
+   contributor must be able to explain unaided. **It contains no draft text and
+   must not grow any** — `AGENTS.md` marks agent-written PR/issue/comment prose
+   non-overridable, with a contributor ban as the penalty. Open an *issue*
+   first, not a PR; AGENTS.md asks for that explicitly. `AGENTS.md` forbids an
    agent writing issue or PR text and requires the contributor be able to defend
    the change unaided; [`03`](03-upstream-issue-draft.md) holds an evidence pack
    to write *from*, not a draft to paste. **That constraint was protective**:
