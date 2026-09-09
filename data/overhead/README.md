@@ -20,6 +20,9 @@ diagnosed afterwards).
 | `f39a.json` | **F39** run A | `ab_throughput` A/B of the **null control**, 3 blocks × 20 rounds. Two binaries differing in one code byte, in a function this model never enters | yes |
 | `f39b.json` | **F39** run B | the same pair, same protocol, a second independent three-block run. Pooled with `f39a` to six blocks — this is the pair that gives the false-positive rate | **yes — pool both** |
 | `f40a.json` / `f40b.json` | **F40** | the **same null pair at 8 threads**, two three-block runs. Pool both. This is the floor to read F36 against, and it is half as wide as F39's 16-thread one | **yes — pool both** |
+| `f43a-void.json` | **F43** | **VOID.** Layout arm, first attempt; A-arm 40.37 tok/s in F44's slow regime, gate 2.65% | as a failure specimen only |
+| `f44-recovery.csv` | **F44** | Thirteen identical probes 55s apart. The regime switch, caught in the act | yes |
+| `f45-layout-void.json` / `f45-null-void.json` | **F45** | **VOID.** Layout arm and matched null; gates 9.37% and 5.61%. **First files carrying `timeline`** — the layout run's 50-second fast excursion is visible in it | as failure specimens, and as the `timeline` example |
 | `f41a.json` / `f41b.json` | **F41** | F27's `GGML_OPENMP=OFF` vs default at 8 threads, two three-block runs. Also the specimen for **M14**: run A's blocks agree to 0.05pp and run B's to 0.37pp, giving `t` intervals 7× different in width for one quantity | **yes — pool both** |
 
 ## Structure
@@ -32,6 +35,18 @@ diagnosed afterwards).
 
 `results` lists measurements in the order they were taken, first rep already
 discarded. With `--blocks`, `results` is the concatenation of `blocks`.
+
+**Since F44**, `ab_throughput.py` also writes `timeline`: one entry per
+measurement with `t` (seconds from run start), `block`, `round`, `arm`, `test`
+and `ts`. It exists because this machine holds two throughput regimes 12.6%
+apart and switches between them unprompted, so a 25-minute run can span a switch
+with nothing in the pooled medians to show it. To check a run:
+
+```python
+tl = [e for e in d["timeline"] if e["test"] == "tg64"]
+fast = [e for e in tl if e["ts"] >= 44]
+print(len(fast), "of", len(tl), "in the fast regime")
+```
 
 ## Re-deriving a published interval
 

@@ -6384,6 +6384,98 @@ will show it and that run is void by the same rule that voided F43.
 
 ---
 
+## F45 — both matched runs void, and the timeline caught a regime excursion on its first use
+
+**Workload:** the design [`P45`](#p45--the-layout-arm-redesigned-so-it-does-not-depend-on-a-floor-measured-in-a-different-regime)
+specified — the layout arm and a matched null, back to back, `--blocks 3` each,
+8 threads, in whatever regime the machine was in. Raw:
+`data/overhead/f45-layout.json`, `f45-null.json`, both carrying the new
+`timeline`.
+
+### Both runs fail the gate
+
+| run | reported | worst-block baseline IQR | verdict |
+|---|---|---|---|
+| layout arm | `tg64 -0.34% [-0.57, -0.11]` *resolved* | **9.37%** (blocks 1.19, 1.09, **9.37**) | **VOID** |
+| null | `tg64 +0.04% [-1.47, +1.54]` | **5.61%** (blocks **5.61**, 2.28, 0.84) | **VOID** |
+
+Against a 2% budget. Gate first, so neither number counts — and the layout arm's
+is the one it costs, because it *resolved*, at a plausible size, with a block
+spread of 0.18pp that looks like precision.
+
+**That is the trap this ordering exists for.** A resolved `-0.34%` with tight
+blocks is exactly what a real small layout effect would look like. It is also
+what a 9.37% baseline IQR can manufacture. The gate does not care which, and
+neither should the reader.
+
+### The timeline worked, immediately
+
+`ab_throughput.py` gained a per-measurement clock an hour before this run
+([`F44`](#f44--m10-caught-in-the-act-the-machine-holds-two-regimes-for-minutes-at-a-time-and-switches-between-them-unprompted)).
+Its first use explains both gate failures:
+
+```
+  layout run:  11 of 120 decode measurements at >=44 tok/s
+               all inside block 3, in one window t=480s..530s
+               balanced across arms: a=6, b=5
+  null run:     0 of 120 measurements above 44 tok/s
+```
+
+**The layout run contained a 50-second excursion into F44's fast regime and the
+null run did not.** So the two runs were *not* in matched conditions, which was
+the entire point of running them back to back. P45.5 predicted both would stay
+in one regime; the layout run did not, and without the timeline nobody would
+ever have known — the pooled medians (40.76 and 40.96) look like the same
+regime.
+
+The excursion was balanced across arms (6 vs 5), so it probably did not bias the
+ratio — interleaving working as designed. What it did instead was inflate that
+block's baseline spread by roughly 8×, which is what the gate saw.
+
+### Scoring
+
+| | claim | outcome |
+|---|---|---|
+| **P45.1** | the null still reports nothing in the slow regime | **held** (+0.04%), though from a void run |
+| **P45.2** | the null's interval is **wider** in the slow regime than F40's ±0.24pp | **held, and decisively.** ±1.5pp against ±0.24pp — **six times wider**. This retroactively justifies voiding F43 rather than reusing F40's floor, and it justifies the redesign |
+| **P45.3** | the layout arm does not resolve, and lands within 0.5pp of the null | **failed in letter** — it resolved at −0.34%. From a run whose gate failed at 9.37%, so the failure carries no information about layout |
+| **P45.4** | \|layout\| < 1.0pp | **held** (0.34pp), from a void run |
+| **P45.5** | both runs stay in one regime | **failed, and this is the useful one.** The layout run spanned a 50-second fast excursion. **First time this project could ask that question at all**, and the answer was no |
+
+### Where M6 stands, honestly
+
+Three attempts now, and **none has produced a usable number**:
+
+| | reading | why not usable |
+|---|---|---|
+| F43 | `+0.14% [-0.31, +0.59]` | A-arm 40.37 vs F40's floor at 46.8; gate 2.65% |
+| F45 layout | `-0.34% [-0.57, -0.11]` | gate 9.37%; spanned a regime excursion |
+
+The two readings are **small and of opposite sign** (+0.14%, −0.34%), which is
+what a null looks like — but two void runs agreeing that nothing much happens is
+not evidence that nothing much happens, and this document is not going to treat
+it as such.
+
+**What M6 needs is the fast regime**, where F40 measured a ±0.24pp floor and the
+gate passes at ~1%. The machine held that regime for at least four consecutive
+25-minute runs earlier in this session and has now held the slow one for over an
+hour. It cannot be summoned. **The experiment is built, verified against the
+linker map, and blocked on the machine** — which is a better place than M6 has
+been since session 4, when the control was thought not to exist at all.
+
+### The harness change this argues for, and does not make
+
+The gate is currently all-or-nothing over a run. Given F44, a better design
+**gates each block and discards failing blocks**, so a 25-minute run containing
+one 50-second excursion yields two good blocks instead of nothing. That would
+have salvaged the layout run's blocks 1 and 2 (IQR 1.19% and 1.09%, estimates
+−0.24% and −0.36%).
+
+It is not made here, because changing the gate in the middle of the experiment
+it is judging is how a harness gets tuned until it agrees with you.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
