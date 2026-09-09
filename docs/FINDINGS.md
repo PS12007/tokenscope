@@ -7000,6 +7000,54 @@ been at any point since session 4.
 
 ---
 
+## P50 — the 48-byte arm, which tests F24's actual alignment
+
+[`F49`](#f49--m6-answered-a-verified-16-byte-code-shift-moves-decode-by-008-which-is-exactly-what-a-null-moves)
+answered M6 for a **16-byte** shift and left one caveat: alignment effects need
+not be linear in the offset, and F24's arm is not a 16-byte shift. Where the
+hottest function in an F32 decode lands:
+
+| build | `ggml_vec_dot_f32` | mod 64 |
+|---|---|---|
+| stock | `0x290fc0` | 0 |
+| **F24's arm** | `0x290fb0` | **48** |
+| F49's 16-byte arm | `0x290fd0` | 16 |
+| **this 48-byte arm** | `0x290ff0` | **48** |
+
+`patches/06-layout-arm-48.patch` — three never-called functions instead of one —
+puts that function at **exactly F24's alignment** with no behaviour change.
+Verified against the map before measuring: two address deltas only (0 for 6,689
+functions, **+48** for 7,730), and the only new symbols are the three pads.
+
+**Design:** as F49, which is the version that worked — `--blocks 6 -n 10`, 8
+threads, layout arm then matched null back to back. A fresh null is run rather
+than reusing F49's, because two builds moved the machine from 46.7 to 43.5 tok/s
+and F49's null was taken on the higher level.
+
+**P50.1 — the 48-byte arm does not resolve, and lands within 0.3pp of its
+matched null.** F49 gave −0.08% against −0.08%. If alignment mattered at 48 and
+not at 16, this is where it shows.
+
+**P50.2 — both runs pass the gate**, as F49's did at 0.46–0.90%. The machine is
+on the middle level rather than the fast one, so this also tests whether the
+6×10 design carries its gate improvement across levels — which F49 could not
+show, having run entirely on the fast one.
+
+**P50.3 — |effect| < 0.5pp**, so F24's +1.62% survives at its own alignment.
+
+**P50.4 — the answer agrees with F49's.** Two shifts, 16 and 48 bytes, two
+alignments, 16 and 48 mod 64, and if both come back null then layout is not what
+moves F24's number at any offset tested.
+
+**What would be genuinely interesting is a failure here.** A null at 16 and a
+real effect at 48 would mean alignment matters non-linearly, that F49's
+reassurance was accidental, and that F24's number is partly an artifact of where
+its code happened to land. That outcome is worth more than the one I expect, and
+it is the reason to spend another fifty minutes rather than call M6 closed on
+F49 alone.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:

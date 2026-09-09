@@ -1,0 +1,62 @@
+From: tokenscope — https://github.com/PS12007/tokenscope
+Subject: [layout control, do not merge] a 48-byte shift, reproducing F24's exact alignment
+
+This is not a proposal. It is the second layout arm for audit issue M6, and it
+closes the one caveat FINDINGS F49 left open.
+
+F49 measured a **16-byte** shift of everything after `ggml_compute_forward_mul_mat`
+and found **-0.08% [-0.16, +0.00]** on decode, identical to a matched null. But
+alignment effects need not be linear in the offset, and F24's arm is not a
+16-byte shift. In terms of where the hottest function in an F32 decode lands:
+
+  build            ggml_vec_dot_f32     mod 64
+  stock            0x290fc0             0
+  F24's arm        0x290fb0             48
+  F49's 16b arm    0x290fd0             16
+  THIS 48b arm     0x290ff0             48     <- same as F24
+
+So F49 showed that moving that function from alignment 0 to 16 costs nothing.
+This tests alignment **48**, which is F24's actual case, with no behaviour
+change at all.
+
+What this does. Three never-called functions instead of one, occupying 48 bytes
+between `mul_mat` and `mul_mat_id`. Unique bodies so `/OPT:ICF` cannot fold them
+onto each other or onto anything else; volatile pointers so `/OPT:REF` cannot
+drop them.
+
+Verified against the linker map before measuring, which is the step F38's
+control skipped and the reason it was not a control:
+
+  - exactly two address deltas across all `.text` functions: 0 for 6,689 of
+    them and **+48** for 7,730
+  - the only new symbols are the three pads themselves
+  - `ggml_vec_dot_f32` lands at 0x290ff0, which is **48 mod 64**, matching
+    F24's arm exactly
+
+Read it the same way as `patches/05`: measured against stock with a matched null
+in the same session, `--blocks 6 -n 10`, gate first. If this is null too, layout
+is not what moves F24's number at either alignment it has been tested at.
+
+--- a/ggml/src/ggml-cpu/ggml-cpu.c
++++ b/ggml/src/ggml-cpu/ggml-cpu.c
+@@ -1459,6 +1459,20 @@ UseGgmlGemm2:;
+     }
+ }
+ 
++// [tokenscope layout control -- DO NOT MERGE] Three never-called functions,
++// occupying 48 bytes so that everything after ggml_compute_forward_mul_mat
++// shifts by 48 and ggml_vec_dot_f32 lands at 48 mod 64 -- the same alignment
++// F24's patched arm gives it. FINDINGS F49 tested a 16-byte shift and found
++// nothing; this tests F24's actual alignment. Unique bodies so /OPT:ICF cannot
++// fold them, kept alive by volatile pointers so /OPT:REF cannot drop them.
++volatile int ggml_ts_layout_sink;
++static void ggml_ts_layout_pad_a(void) { ggml_ts_layout_sink = 0x5a17c0de; }
++static void ggml_ts_layout_pad_b(void) { ggml_ts_layout_sink = 0x5a17c0df; }
++static void ggml_ts_layout_pad_c(void) { ggml_ts_layout_sink = 0x5a17c0e0; }
++void (* volatile ggml_ts_layout_keep_a)(void) = ggml_ts_layout_pad_a;
++void (* volatile ggml_ts_layout_keep_b)(void) = ggml_ts_layout_pad_b;
++void (* volatile ggml_ts_layout_keep_c)(void) = ggml_ts_layout_pad_c;
++
+ // ggml_compute_forward_mul_mat_id
+ 
+ #define MMID_MATRIX_ROW(row_id, i1) matrix_rows[(row_id)*ids->ne[0]*ids->ne[1] + (i1)]
