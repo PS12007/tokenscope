@@ -17,7 +17,8 @@ diagnosed afterwards).
 | `f34.json` | **F34** | **VOID.** 870 MB free against an 840 MB model; every instrumented arm came out *faster* than its baseline | as a failure specimen only |
 | `f35.json` | **F35** | **REFUSED.** Baseline IQR 3.5–4.7%, gate failed | as a failure specimen only |
 | `f36.json` | **F36** | 6 arms, 3 pairs, 15 reps × **3 blocks**. The settled overhead numbers | **yes — this is the one to quote** |
-| `f39a.json` | **F39** | `ab_throughput` A/B of the **null control**, 3 blocks × 20 rounds. Two binaries differing in one code byte, in a function this model never enters | yes |
+| `f39a.json` | **F39** run A | `ab_throughput` A/B of the **null control**, 3 blocks × 20 rounds. Two binaries differing in one code byte, in a function this model never enters | yes |
+| `f39b.json` | **F39** run B | the same pair, same protocol, a second independent three-block run. Pooled with `f39a` to six blocks — this is the pair that gives the false-positive rate | **yes — pool both** |
 
 ## Structure
 
@@ -47,6 +48,26 @@ print(between_block_ci(pts))      # -> the +0.56% [-0.05, +1.16] in F36
 **Quote `between_block_ci`, not `bootstrap_ratio_ci`.** The bootstrap resamples
 inside one invocation and cannot see drift between them; see the banner at the
 top of `FINDINGS.md`.
+
+## Re-deriving F39's false-positive rate
+
+```python
+import json, statistics, sys
+sys.path.insert(0, "tools")
+from bench_overhead import between_block_ci
+
+A = json.load(open("data/overhead/f39a.json"))
+B = json.load(open("data/overhead/f39b.json"))
+for test in ("tg64", "pp64"):
+    pts = A["block_points"][test] + B["block_points"][test]
+    print(test, between_block_ci(pts))
+# tg64 -> -0.04% [-0.49, +0.42]   clean
+# pp64 -> +0.59% [+0.01, +1.16]   RESOLVED, and a false positive by construction
+```
+
+Note the shape difference: `ab_throughput.py` writes `pooled`/`blocks`/
+`block_points` keyed by test name, where `bench_overhead.py` writes
+`results`/`blocks` keyed by arm label.
 
 ## What is *not* here
 

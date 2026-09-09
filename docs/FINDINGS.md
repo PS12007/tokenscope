@@ -5439,6 +5439,172 @@ floor), and nothing else will run on the machine while it is in flight.
 
 ---
 
+## F39 — the harness's false-positive rate, measured for the first time: clean on decode, and a resolved false positive on prefill
+
+**Workload:** `mid.gguf`, **16 threads**, `tg64` with `pp64`, both arms
+uninstrumented and built in this session from one tree, `--reps 3`, 20 rounds
+per arm, **`--blocks 3`, run twice** (six blocks, 240 rounds per arm) —
+protocol identical to [`F33`](#f33--f24-survives-at-162-the-interval-that-can-see-drift-works-and-the-control-stopped-being-clean) so the answer applies to the number
+that matters. [`P39`](#p39--what-a-null-control-should-look-like-written-before-the-run)
+holds the predictions. Raw data: `data/overhead/f39a.json`, `f39b.json`.
+
+This is `HANDOFF.md` section 5 item A1 and it is the first time this project has
+measured **its own false-positive rate**. Every percentage below is a false
+positive by construction.
+
+### The two binaries cannot differ
+
+`bench-stock.exe` and `bench-layoutctl.exe`
+(`patches/04-layout-control.patch`) differ by **three bytes**: the PE timestamp
+at `0x110`, its echo at `0x3e2ed4`, and **one byte of code** at `0x264830`
+inside `.text` — the immediate in `ggml_compute_forward_mul_mat_id`. F38
+measured 5 bytes for this pair; this session's two builds landed 16 seconds
+apart, so less of the difference is timestamp and the code difference isolates
+to a single byte at a single address.
+
+**The changed line is provably dead for this model.** Across all nine reference
+traces there are **zero** `MUL_MAT_ID` node events, against **2,704** `MUL_MAT`
+events in the level-3 `mid.gguf` trace alone. Level 3 records every node on
+every worker thread, so this is a structural (Tier A) fact, not a sampling
+argument. A dense model never enters the patched function.
+
+Same size, same addresses, one dead immediate. Nothing measurable can differ.
+
+### The result
+
+| | tg64 (decode) | pp64 (prefill) |
+|---|---|---|
+| run A | -0.04% [-1.26, +1.18] | +0.33% [-0.35, +1.01] |
+| run B | -0.04% [-1.22, +1.14] | +0.85% [-0.86, +2.55] |
+| **pooled, six blocks** | **-0.04% [-0.49, +0.42]** | **+0.59% [+0.01, +1.16]** |
+
+Block estimates, decode: `+0.53 -0.37 -0.27 | -0.58 +0.33 +0.13`.
+Block estimates, prefill: `+0.03 +0.38 +0.57 | +0.14 +0.89 +1.51`.
+
+**On decode the harness is clean, and better than it had any right to be.** Two
+independent three-block runs returned the *same point estimate to two decimal
+places*, with intervals that overlap almost exactly. Pooled to six blocks the
+decode false-positive floor is **±0.5pp**. That is the number this project has
+needed for six sessions.
+
+**On prefill the six-block `t` interval excludes zero.** `+0.59% [+0.01, +1.16]`
+on a pair of binaries that cannot differ. The lower bound clears zero by
+0.01pp — one hair, and over the line is over the line. **The project's most
+careful interval has a demonstrated false positive**, and it is on the workload
+F24/F33 used as its control.
+
+### The prefill false positive is a between-block drift that blocks do not remove
+
+The prefill block estimates rise **monotonically in both runs** — `+0.03 +0.38
++0.57` and `+0.14 +0.89 +1.51`. Three-element monotonicity is a 1-in-6 event
+each, so both is roughly 1 in 36 if the blocks were independent draws.
+
+They are not independent, and that is the point:
+
+| where the trend could live | measured | verdict |
+|---|---|---|
+| inside a block, round to round | per-block `r`(round, b/a) averages **+0.012** (run A) and **−0.045** (run B) | **not there** |
+| between blocks, minutes apart | both runs monotonic; dropping each run's first block makes it **worse**, `+0.84% [+0.05, +1.63]` | **here** |
+
+So it is a slow drift at block timescale that moves the two arms unequally — in
+run B the A arm is flat over the run (`r = −0.016`) while the B arm rises
+(`r = +0.205`). **`--blocks` assumes the per-block point estimates are
+independent draws. Consecutive blocks minutes apart are not.** The `t` interval
+inherits that, and no number of blocks fixes a trend common to all of them.
+
+This is the same shape as [`F34`](#f34--a-void-run-870-mb-free-against-an-840-mb-model)'s lesson in a new place: F34 found that
+sustained contamination makes blocks *agree*, and agreement reads as precision.
+F39 finds that a sustained *trend* makes them march, and marching also reads as
+precision. **Blocks defend against noise between passes, not against anything
+that persists across all of them.** Recorded as **M12**.
+
+### What this does to F24/F33 — mixed, and the honest version is worse in one place
+
+**Good for F24's headline.** F33's decode result is `+1.62% [+1.10, +2.15]` over
+six blocks. The decode false-positive floor measured here, same protocol, same
+block count, is `-0.04% [-0.49, +0.42]`. F24's effect is **about 3× the whole
+width of the null's interval** and its lower bound sits 0.68pp above the null's
+upper bound. Nothing in F39 threatens the decode number.
+
+**Bad for the argument F24 was built on.** F24's original strength was
+structural: *the arm that should move moves, the arm that should not move does
+not*. F33 already reported that prefill had stopped being a clean null (−1.30%
+[−2.67, +0.06]). F39 shows something worse — **prefill is not a null on binaries
+that cannot differ either**. A control that returns a resolved `+0.59%` when
+there is nothing to detect cannot certify the comparison when there is, and
+cannot discredit it. **The prefill control should stop being cited as evidence
+in either direction at the ~1% level.**
+
+**And it does not rescue M6.** The null's prefill bias is **+0.59%**; F33's
+prefill control was **−1.30%** — 1.9pp apart and opposite in sign, so the
+harness bias measured here does not explain F33's negative control. Layout
+therefore remains a live explanation for it. But F39's A arm sits at 42.50/42.51
+tok/s against F33's 39.09, which by this project's own **M5** rule means the two
+runs were in different machine states and must not be compared directly. So the
+comparison is suggestive and barred at the same time. **M6 is untouched by this
+run and still needs the real layout arm (section 5 item A2).**
+
+### Scoring the predictions
+
+| | claim | outcome |
+|---|---|---|
+| **P39.1** | the decode `t` interval contains zero | **held**, in run A, in run B and pooled. The harness does not invent decode effects |
+| **P39.2** | decode `t` width 1.5–2.5pp | **held.** 2.44pp and 2.36pp, against F33's 1.98 and 2.29 |
+| **P39.3** | decode block spread 0.4–1.2pp | **held.** 0.89pp and 0.90pp, against F33's 0.77 and 0.82 |
+| **P39.4** | decode point estimate within ±0.8pp of zero | **held, at −0.04% in both runs.** This is the false-positive magnitude and it is small |
+| **P39.5** | prefill not persistently negative, point above −0.8% | **held in letter (+0.33%, +0.85%) and the inference it was written for is void.** It was designed to separate "layout" from "harness artifact" by seeing whether prefill drifts negative without a layout change. It does not — it drifts *positive*, far enough to resolve. So the workload cannot arbitrate the question in either direction, which is [`F25`](#f25--the-static-overhead-certifies-and-the-shared-builds-answer-is-eaten-by-its-noise-floor)'s **unanswerable design**, and worse than a wrong prediction |
+| **P39.6** | at least one bootstrap excludes zero while both `t` intervals contain zero | **failed.** None of the four bootstrap intervals excluded zero, and the interval that produced the run's one false positive was the **`t`**, not the bootstrap |
+| **P39.7** | A-arm `tg64` median 36–44 tok/s, blocks agreeing within 2 tok/s | **held.** 42.50 and 42.51; block spreads 0.96 and 0.09 tok/s |
+| **P39.8** | run B's `t` interval overlaps run A's | **held, as strongly as it can be.** Identical point estimates and near-identical intervals on decode; overlapping on prefill |
+
+**P39.6 is the one worth more than the seven that held.** M1's charge is that the
+bootstrap is roughly half as wide as the truth, so on a genuine null it should
+show a raised false-positive rate. It showed none, and the `t` interval — the
+fix built to replace it — produced the only false positive in the run. That is
+not a rehabilitation of the bootstrap: it is the second confirmation of
+[`F33`](#f33--f24-survives-at-162-the-interval-that-can-see-drift-works-and-the-control-stopped-being-clean)'s
+corollary, that **the bootstrap is not reliably narrower than the truth, it is
+reliably *wrong about* the truth**, and which direction it errs in depends on the
+run. On this clean null it erred wide.
+
+### The gate, and a defect it was hiding
+
+`ab_throughput.py` has no baseline gate, so F34's gate-first rule was applied by
+hand — which is how **D9** surfaced. `bench_overhead.py` computed its baseline
+IQR floor from data **pooled across every block**, so the gate absorbed the
+between-block drift that the `t` interval already exists to carry, and charged a
+`--blocks` run twice for the same variance. Measured on run A's 60 decode
+samples: **2.02% pooled against 1.46% with each block re-centred on its own
+median**, the difference being a 2.25% spread in the A-arm block medians. Fixed
+in `c18a580`: the gate now uses the worst single block and prints the pooled
+figure beside it. `--blocks 1` is unchanged, so no published number moves.
+
+Under the corrected gate this run still reads dirty — worst-block baseline IQR
+2.53% and 2.69% on decode, 3.17% and 5.28% on prefill, against a 2% budget.
+**That does not undermine a null result, and the reasoning is worth stating
+because it inverts.** The gate protects against believing a *positive* claim
+from a machine too noisy to resolve it. Extra baseline noise can only inflate a
+false positive; none appeared on decode. A null measured on a noisy machine is
+the conservative case, so the decode floor of ±0.5pp is if anything an
+overestimate of how badly the harness misbehaves when quiet.
+
+### An observation about first blocks, deliberately not given a mechanism
+
+The first block of a run has the worst baseline IQR in **three of the four**
+run×workload combinations (2.53/2.69% on decode, 5.28% on prefill), and run A's
+first block also has the lowest A-arm median (41.76 against 42.72 and 42.55).
+That is consistent with the page-cache and standby-list candidate **M10** names
+for an 840 MB model read once per invocation.
+
+It is **not** offered as an explanation. Session 6 formed and refuted three
+plausible mechanisms in one sitting, one after publishing it, and the cheap part
+was the test. The concrete test this suggests: run the same null with a
+deliberate cache-warming invocation discarded before block 1, and separately
+with `EmptyStandbyList` between blocks, and see whether the first-block penalty
+and the prefill trend survive. Neither is done.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
