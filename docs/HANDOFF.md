@@ -1,6 +1,6 @@
 # HANDOFF — state of the project, and what to do next
 
-Updated **during session 6 (2026-09-08)**. Everything here is either a
+Updated **during session 6 (2026-09-08)**, after F37. Everything here is either a
 fact about the current tree or an explicit next step. Read this first when
 picking the project back up.
 
@@ -25,6 +25,24 @@ grep -o 'GGML_USE_OPENMP' ../llama.cpp/build-ts-on/build.ninja | head -1
                                         # MUST print it -- see F26
 ```
 
+**Before any measurement, in addition:**
+
+```bash
+# free RAM must exceed ~1.5x the model. bench_overhead.py now enforces this
+# (preflight_ram), ab_throughput.py does not. F34 was voided at 870 MB free.
+systeminfo | grep -i "Available Physical"
+
+# and nothing else may run. A 5.17 GiB javaw process voided a 44-minute run;
+# this session also contaminated one of its own by writing docs alongside it.
+```
+
+**Then read the compiled-out arm's absolute median before believing anything.**
+Decode on this machine wanders between **38.6 and 46.0 tok/s** for reasons F37
+tested and could not find (M10), and that swing is ~10x any effect measured
+here. F36's A arms read 45.98/45.99/46.05; F35's read 43.50/43.65/43.12. **Two
+runs with different A-arm medians are not comparable**, whatever their intervals
+say.
+
 Then, before trusting any measurement, rebuild rather than assuming the binaries
 match the tree — see the A/B trap in section 3.
 
@@ -35,26 +53,45 @@ looks strange, read that line before theorising — the field exists because fou
 sessions of documents described every barrier figure here as coming from a code
 path none of them came from (**F26**).
 
-**Session 6 so far, in one paragraph.** Closed section 5 item 7, which F25 had
-called "the single cheapest unfinished thing in this list", and it was.
-`bench_overhead.py` now takes N build pairs and round-robins every arm of every
-pair in one invocation, which is what F25's post-mortem said the question
-needed and what no amount of extra reps could supply. The answer: **the shared
-build's level-3 overhead is +0.87% [+0.55, +1.19], certified** — the first
-measurement behind F22's inspection-only claim that per-module `ts_tls` caching
-keeps a cross-DLL call off the hot path. P25.1, the difference between the two
-builds, comes out **bounded but unresolved at +0.36pp [-0.32, +1.17]**, which
-is a weaker claim than a value and a much stronger one than F25's "nothing was
-resolved in either direction". Three other things fell out. F25's tentative
-"the shared build is 0.7% slower" is **wrong in sign** once interleaved
-(-0.22% [-0.79, +0.26]) — the hedge on it was justified. The harness's own
-protocol had a flaw nobody was looking for: **arm order within a round was
-fixed**, so a transient shorter than a round hit the same arms every time, and
-in F30's run one extra warm-up round cost the static pair its certification;
-order now rotates. And the compiled-out static arm read **42.94 tok/s in
-session 5 and 45.92 in session 6** — same code, same machine, +6.9%, about six
-times the effect being resolved, which is the sharpest statement this project
-has of why cross-session comparisons of absolute throughput are worthless here.
+**Session 6 in one paragraph.** It set out to close section 5 item 7 and ended
+up auditing the project's statistics. Item 7 *is* closed — `bench_overhead.py`
+takes N build pairs (`--pair`) and round-robins every arm of every pair in one
+invocation, which is what F25 said the question needed. But the answer kept
+moving. **F30** measured the shared build at +0.87% [+0.55, +1.19]; **F31**
+re-measured the same quantity on the *same unrebuilt binaries* two hours later
+and got +0.31% [+0.01, +0.52] — **non-overlapping, both passing the gate**. The
+bootstrap resamples inside one invocation and knows nothing about the next one,
+and this project had never tested it across invocations. Diagnosing that
+eliminated three tidy explanations (arm position 0.214pp, autocorrelation +0.14,
+the unpaired estimator) and found the instability *inside* a single run: split
+one run's reps in half and the halves disagree by up to 0.47pp. **The fix is
+`--blocks N`**, a `t` interval over per-block point estimates with a real
+small-sample table (`t(2) = 4.303`, unflattering on purpose). Then everything
+Tier D was re-measured: **F33** repaired F24 to **+1.62% [+1.10, +2.15]** and
+**F36** settled the overheads at **under 1% for every build**, with an interval
+that contains every one of the five superseded estimates — so those runs never
+disagreed, only their intervals did.
+
+**Session 6's other half is what went wrong.** **F34** is a void run: 870 MB
+free against an 840 MB model made every *instrumented* arm faster than its own
+baseline, and the shared pair's three blocks agreed to 0.55pp — **the tightest
+spread in the run** — with an interval excluding zero. Blocks defend against
+drift *between* passes and do nothing about contamination spanning *every* pass;
+sustained contamination makes them agree, and agreement reads as precision. So
+the order of trust is **gate first, physical plausibility second, interval
+third**, and two guards now enforce it (`preflight_ram()` refuses to start below
+1.5x the model; a failed gate makes the tool refuse its own block table). **F36
+then retracted two F31 claims**, including one this project had marked "durable,
+not Tier D" and therefore exempt from re-measurement — a comparison of spreads
+that was six numbers within half a percent of each other. **F37** tested four
+causes for the machine's 38.6–46.0 tok/s swing and refuted all of them,
+including a `0x5555` topology claim session 6 had *published* before testing.
+Three hypotheses formed and killed in one sitting; the tests cost ten minutes
+each and the publishing did not.
+
+**Read [`04-project-audit.md`](04-project-audit.md) before quoting any number.**
+It is new in session 6 and carries the trust ladder, the issue register (M1–M11)
+and what is safe to say outside the repo.
 
 **Session 5 in one paragraph.** Five findings, **F25 through F29**, and the
 theme is that four of the five are the project auditing itself. It began by
@@ -952,11 +989,15 @@ Added by session 5, in rough order of how much they would have saved:
 | Upstream patch size | 174 lines, 7 files | `patches/01-instrument.patch` |
 | F20 naming fix size | 8 added, 13 removed, 1 file | `patches/02-name-attn-output.patch` |
 | Per-scope cost | 52.8 ns (2 clock reads + 1 store) | `ts_selftest` |
-| Level 3 overhead, static, 8 threads | **+1.16% [+0.67, +1.87]**, certified, n=20 — **as of commit `7149794`**; a re-run on the post-F28 tree was refused at a 3.78% noise floor | [`FINDINGS`](FINDINGS.md) F25 |
+| Level 3 overhead, static, 8 threads | **+0.56% [-0.05, +1.16]**, `t` over 3 blocks. Spans zero, so bounded rather than resolved | [`FINDINGS`](FINDINGS.md) F36 |
 | ...same, session 1 | +0.67% [+0.12, +1.67] | [`02`](02-overhead-methodology.md) |
-| Level 3 overhead, shared build | **unmeasured** — every interval spanned zero at a 2.22% noise floor | [`FINDINGS`](FINDINGS.md) F25 |
+| Level 3 overhead, ninja-shared | **+0.92% [+0.38, +1.46]**, `t` over 3 blocks | [`FINDINGS`](FINDINGS.md) F36 |
+| Level 3 overhead, MSBuild-shared | **+0.77% [+0.05, +1.48]**, `t` over 3 blocks | [`FINDINGS`](FINDINGS.md) F36 |
+| Do the three builds differ? | **No.** Every pairwise difference spans zero; linkage -0.03% [-0.45, +0.24], generator +0.07% [-0.40, +0.55] | [`FINDINGS`](FINDINGS.md) F36 |
+| Superseded overhead figures | +0.67%, +1.16%, +0.50%, +0.87%, +0.31% — **all single-run bootstraps, all too narrow.** F36's interval contains every one | F25, F30, F31 |
 | Zero-overhead-when-off | 0 symbols, 864-byte archive | [`02`](02-overhead-methodology.md) §2 |
-| Shared-library build | links and traces correctly on MSVC; overhead unmeasured | [`FINDINGS`](FINDINGS.md) F22 |
+| Shared-library build | links and traces correctly on MSVC; **overhead measured and indistinguishable from static** | F22, F36 |
+| Machine state swing | decode wanders **38.6–46.0 tok/s** with no identified cause; ~10x the effects measured. Not thermal, not placement, not frequency, not workload | [`FINDINGS`](FINDINGS.md) F37 |
 | Matmul arrival imbalance, work-stealing vs equal-slice | **0.34-0.56x** against 0.94-1.51; two comparisons with non-overlapping ranges, n=12 per arm | [`FINDINGS`](FINDINGS.md) F23 |
 | Per-node imbalance, spread over 12 identical runs | up to **8.5x** at 8 threads, 1.3-1.5x at 16 | [`FINDINGS`](FINDINGS.md) F23 |
 | Decode speedup from `nth*4` -> `nth*2` in mul_mat | **+1.62% [+1.10, +2.15]**, t over 6 blocks in 2 runs, 240 rounds/arm. **The prefill control is no longer a clean null** | [`FINDINGS`](FINDINGS.md) F33 |
