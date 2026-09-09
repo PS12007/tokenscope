@@ -6669,6 +6669,100 @@ sub-percent layout effect, and M6 waits for a quieter one.
 
 ---
 
+## F47 — the layout arm's best run: −0.00% [−0.18, +0.18], from a run that still marginally fails the gate
+
+**Workload:** the [`P45`](#p45--the-layout-arm-redesigned-so-it-does-not-depend-on-a-floor-measured-in-a-different-regime)
+design again, in the stiller window [`P47`](#p47--the-matched-design-again-on-a-level-that-is-actually-holding-still)
+identified — layout arm then matched null, `--blocks 3` each, 8 threads, both
+guarded with `--min-baseline 42.5`. Raw: `data/overhead/f47-layout.json`,
+`f47-null.json`.
+
+### The result
+
+| | decode | worst-block IQR | gate |
+|---|---|---|---|
+| **layout arm** (+16-byte shift) | **−0.00% [−0.18, +0.18]** | 2.21% | **fail, marginal** |
+| **matched null** (one dead byte) | **−0.11% [−0.19, −0.02]** *resolved* | 2.31% | **fail, marginal** |
+
+**Both still fail the gate**, so under gate-first neither is quotable. But the
+failures are 2.2–2.3% against a 2.0% budget, not F45's 9.37%, and the runs are
+otherwise the cleanest of the three attempts: block spreads of 0.12pp and
+0.06pp, and the null's timeline shows **no measurement outside 42.65–45.25**.
+
+### What the three attempts say together
+
+| attempt | layout effect | A-arm | why it is not clean |
+|---|---|---|---|
+| F43 | +0.14% [−0.31, +0.59] | 40.37 | wrong level, gate 2.65% |
+| F45 | −0.34% [−0.57, −0.11] | 40.76 | gate 9.37%, spanned an excursion |
+| **F47** | **−0.00% [−0.18, +0.18]** | 44.81 | gate 2.21%, marginal |
+| | | | |
+| **F33, for scale** | **+1.62% [+1.10, +2.15]** | — | the effect being explained |
+
+**Three independent attempts, three different baseline levels, and not one of
+them puts the layout effect anywhere near F24's +1.62%.** The tightest bounds it
+at **±0.18pp** — nine times smaller than the effect it was proposed to explain,
+and the two looser ones straddle zero in opposite directions.
+
+**The sharpest single observation is the comparison within F47 itself.** The
+layout arm — the thing that *could* show an effect — came back at −0.00%. The
+matched null — the thing that *cannot* — came back at −0.11% and **resolved**.
+The arm with a real perturbation is closer to zero than the arm with none. That
+is not what a layout effect looks like at any magnitude.
+
+### So what M6 gets
+
+**Not a certified number.** Gate-first is not negotiable, and this document is
+not going to quote `−0.00% [−0.18, +0.18]` as though the gate had passed, having
+spent the session insisting F43's agreeable-looking result did not count either.
+
+**But a defensible bound, stated with its caveat:**
+
+> Across three attempts on three baseline levels, a verified 16-byte shift of
+> everything after `mul_mat` produced no decode effect above ±0.2pp. F24/F33's
+> +1.62% is roughly nine times that. **Layout is very unlikely to be the
+> explanation**, and a clean run is still owed.
+
+That is a real change to M6's status. It has been "an unknown fraction of F24
+may be layout" since session 4. The unknown fraction now has a bound, from an
+experiment that F38 concluded could not be built.
+
+**The remaining honest gap**, unchanged: this arm shifts **+16** and F24's
+shifts **−16**. If the effect were asymmetric in sign, this would not catch it.
+That follow-up is now cheap — the patch is one constant away.
+
+### Scoring
+
+| | claim | outcome |
+|---|---|---|
+| **P47.1** | both runs pass the gate | **failed**, at 2.21% and 2.31% against 2.0%. Much closer than F45, and still a failure |
+| **P47.2** | neither timeline shows an excursion | **failed for the layout run** (one measurement ≥46, three <42), **held for the null** (42.65–45.25 throughout). The timeline is now doing routine work rather than heroic work, which is the point of it |
+| **P47.3** | the null does not resolve, with a floor between F40's ±0.24pp and F45's ±1.5pp | **failed on the first clause** — it resolved at −0.11% — and **held on the second**: ±0.09pp, tighter than either bracket. A resolved −0.11% *is* the false positive, and it is small |
+| **P47.4** | the layout arm does not resolve, within 0.5pp of the null | **held**, at −0.00% against the null's −0.11%, a 0.11pp gap |
+| **P47.5** | \|layout\| < 1.0pp | **held**, by a factor of five, and this is the third time it was predicted and the first time there was anything worth scoring it against |
+
+### A correction to F46, one run later
+
+F46 said the machine occupies "at least three levels — 40.9, 43.5 and 46.0".
+F47's runs sat at **44.8–44.9**, which is a fourth value, and F43/F45 sat at
+40.4–40.8 rather than exactly 40.9.
+
+**"Discrete levels" is now doing more work than the data supports.** Four
+distinct values, none repeated exactly, is equally consistent with a baseline
+that drifts slowly and is sampled at intervals. What the data does support, and
+what the guard actually needs, is weaker and still useful:
+
+> The baseline moves between roughly **39 and 46 tok/s** on a timescale of
+> minutes to tens of minutes, holds a given value stably enough that a 25-minute
+> run usually stays within 1–2% of it, and cannot be steered.
+
+That is the third revision of this claim in one session — audit → F44 → F46 →
+here — and each revision has narrowed it. The pattern is worth noticing: every
+time this machine's behaviour was described more confidently than the probes
+warranted, the next set of probes took the confidence back.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:

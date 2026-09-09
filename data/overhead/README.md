@@ -22,6 +22,7 @@ diagnosed afterwards).
 | `f40a.json` / `f40b.json` | **F40** | the **same null pair at 8 threads**, two three-block runs. Pool both. This is the floor to read F36 against, and it is half as wide as F39's 16-thread one | **yes — pool both** |
 | `f43a-void.json` | **F43** | **VOID.** Layout arm, first attempt; A-arm 40.37 tok/s in F44's slow regime, gate 2.65% | as a failure specimen only |
 | `f44-recovery.csv` | **F44** | Thirteen identical probes 55s apart. The regime switch, caught in the act | yes |
+| `f47-layout.json` / `f47-null.json` | **F47** | The layout arm's best pair: **-0.00% [-0.18, +0.18]** against a matched null of -0.11%. Gate marginal (2.21% / 2.31%), so not certified — but it bounds the layout effect nine times below F24's +1.62% | **the ones to read for M6** |
 | `f45-layout-void.json` / `f45-null-void.json` | **F45** | **VOID.** Layout arm and matched null; gates 9.37% and 5.61%. **First files carrying `timeline`** — the layout run's 50-second fast excursion is visible in it | as failure specimens, and as the `timeline` example |
 | `f41a.json` / `f41b.json` | **F41** | F27's `GGML_OPENMP=OFF` vs default at 8 threads, two three-block runs. Also the specimen for **M14**: run A's blocks agree to 0.05pp and run B's to 0.37pp, giving `t` intervals 7× different in width for one quantity | **yes — pool both** |
 
