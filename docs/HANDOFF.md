@@ -854,7 +854,10 @@ ladder and the issue register (M1–M14) that the items below refer to.
 
 ### B. The standing scientific gaps, unchanged by session 6
 
-4. **Linux + GCC.** Still the blocker for the main upstream conversation, and
+4. **Linux + GCC.** **[`07-linux-bringup.md`](07-linux-bringup.md) is now a
+   step-by-step for this**, with a verification ladder, the priority order for
+   measurements, and the Linux-only instrumentation that could crack M10.
+   Still the blocker for the main upstream conversation, and
    smaller than it looked: F26 found that the barrier path measured here *is*
    Linux's default (OpenMP), so what is untested is `libgomp` and GCC, not a
    different algorithm. F27 then showed the worry is not small — swapping

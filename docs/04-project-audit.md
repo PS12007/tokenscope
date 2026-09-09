@@ -657,6 +657,7 @@ exercised by CI.
 | Document | What it is for |
 |---|---|
 | [`README.md`](../README.md) | The pitch, the figure, the claims table |
+| [`07-linux-bringup.md`](07-linux-bringup.md) | **How to stand this up on a second machine (Linux/GCC)** — the verification ladder, what to measure in priority order, and what Linux can instrument that Windows could not. Closes G1 |
 | [`06-overview.md`](06-overview.md) | **The whole project in plain terms** — what it is, what it found, the one change that could go upstream, what is still open, and what to do next. Start here if you are arriving cold |
 | [`00-architecture-map.md`](00-architecture-map.md) | Where the scopes live in llama.cpp |
 | [`01-design-scope-timing.md`](01-design-scope-timing.md) | Why the mechanism is shaped the way it is |
