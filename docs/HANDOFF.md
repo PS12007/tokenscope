@@ -711,14 +711,18 @@ went undetected for a session purely because nothing here ever built a DLL.
 
 ## 5. Next steps, in the order I would do them
 
-**Session 6 rewrote this list.** It closed item 7 (the shared build's overhead,
-F36) and then spent most of its length on something that was not on the list at
-all: the intervals every Tier D number in this project was quoted with were
-**within-run intervals**, roughly half as wide as the truth. That is fixed in
-the tooling and the affected numbers are re-measured, but it reordered
-everything below. **Read [`04-project-audit.md`](04-project-audit.md) first** —
-it has the trust ladder and the issue register (M1–M11) that the items below
-refer to.
+**Session 7 closed all of group A except item 2.** The null control was
+measured (F39), repeated at 8 threads where it corrected F39 (F40), and F27's
+last unchecked row was re-measured (F41). What is left in group A is **item 2,
+the layout arm** — and it is now the *only* route to M6, because F39 discredited
+the prefill control the question used to be argued with.
+
+**Session 6 rewrote this list** before that. It closed item 7 (the shared
+build's overhead, F36) and then spent most of its length on something that was
+not on the list at all: the intervals every Tier D number in this project was
+quoted with were **within-run intervals**, roughly half as wide as the truth.
+**Read [`04-project-audit.md`](04-project-audit.md) first** — it has the trust
+ladder and the issue register (M1–M14) that the items below refer to.
 
 ### A. Do these first — they need only a quiet machine and no judgement call
 
