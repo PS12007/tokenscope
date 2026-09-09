@@ -7048,6 +7048,87 @@ F49 alone.
 
 ---
 
+## F50 — M6 closed: layout is null at F24's own alignment too, and F24's +1.62% is the scheduler change
+
+**Workload:** as [`F49`](#f49--m6-answered-a-verified-16-byte-code-shift-moves-decode-by-008-which-is-exactly-what-a-null-moves) —
+`mid.gguf`, 8 threads, `--reps 3`, **6 blocks of 10 rounds**, `--min-baseline 39`,
+48-byte arm (`patches/06-layout-arm-48.patch`) and a fresh matched null run back
+to back. [`P50`](#p50--the-48-byte-arm-which-tests-f24s-actual-alignment) holds
+the predictions. Raw: `data/overhead/f50-layout48.json`, `f50-null.json`.
+
+### The result, with every gate-passing layout measurement together
+
+| arm | `ggml_vec_dot_f32` mod 64 | decode | gate |
+|---|---|---|---|
+| F49 null (no shift) | 0 | −0.08% [−0.20, +0.04] | PASS |
+| F49 layout, +16 bytes | 16 | −0.08% [−0.16, +0.00] | PASS |
+| F50 null (no shift) | 0 | −0.08% [−0.25, +0.09] | PASS |
+| **F50 layout, +48 bytes** | **48** | **+0.06% [−0.11, +0.22]** | **PASS** |
+| **F24 / F33 — the effect being explained** | **48** | **+1.62% [+1.10, +2.15]** | — |
+
+**Four gate-passing measurements spanning 0.14pp, every one of them containing
+zero, against an effect of +1.62%.** The 48-byte arm puts the hottest function
+in an F32 decode at `0x290ff0` — **48 mod 64, exactly where F24's patched arm
+puts it** — and moves decode by +0.06%, which is 27× smaller than F24's number
+and indistinguishable from a null measured minutes later on the same machine.
+
+### M6 is closed
+
+The issue has been open since session 4 as *"an unknown fraction of F24's
++1.62% may be layout rather than the chunking change"*, and it survived three
+rounds of getting worse: F33 found the prefill control drifting, F38 found 31%
+of `.text` differing and declared the control unbuildable, F39 discredited the
+prefill control entirely.
+
+What broke it open was **F42** — reading the linker map, which nobody had done —
+showing the 1.1 MB was one uniform 16-byte shift. That made a real control
+constructible, and F49/F50 measured it at two shift sizes and, critically, at
+**F24's own alignment**.
+
+> **F24/F33's +1.62% [+1.10, +2.15] on decode is attributable to the chunking
+> threshold change.** Code layout, tested by relocating every function after
+> `mul_mat` by 16 and by 48 bytes with no behaviour change, contributes nothing
+> measurable: four gate-passing runs spanning −0.08% to +0.06%.
+
+This is the strongest F24 has ever been, and the first time its central claim
+rests on a control rather than on an argument about why a confound probably does
+not matter.
+
+### Scoring
+
+| | claim | outcome |
+|---|---|---|
+| **P50.1** | the 48-byte arm does not resolve, within 0.3pp of its matched null | **held.** +0.06% against −0.08%, 0.14pp apart, both containing zero |
+| **P50.2** | both runs pass the gate | **held** (0.88% and 0.62% worst-block). **Its secondary purpose was not served**: the prediction reasoned that the machine was on the middle level so this would test whether the 6×10 design carries its gate improvement across levels. It went back up to 46.5–47.0 on its own, so that question is still open |
+| **P50.3** | \|effect\| < 0.5pp | **held** at 0.06pp |
+| **P50.4** | the answer agrees with F49's | **held.** −0.08% and +0.06%, 0.14pp apart across two shift sizes |
+
+Four of four, and P50.2 is the honest half-failure: the prediction held on its
+stated terms while the reasoning behind it turned out not to apply.
+
+**P50 said in advance that a failure here would be worth more than the expected
+pass** — a null at 16 with a real effect at 48 would have meant alignment
+matters non-linearly and F49's reassurance was luck. That did not happen, and
+recording that it was the outcome hoped for is the difference between a control
+and a formality.
+
+### One residual, and it is the familiar one
+
+The null's **prefill** came back `+0.12% [+0.00, +0.24]`, with its lower bound
+on the boundary — a marginal false positive on a workload that cannot differ.
+Prefill has now done this in F39 (+0.59%, resolved at 16 threads) and here.
+**Prefill remains the flakier of the two workloads** and M13's advice stands:
+do not lean on it as a control at the ~0.5% level.
+
+### What is left of M6
+
+Nothing that this machine can answer. Both tested alignments are null, including
+F24's. What is untested is every *other* alignment (32 mod 64 was not tried) and
+whether any of this transfers off this CPU — which is **G1**, the Linux/GCC gap,
+not M6.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:

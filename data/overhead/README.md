@@ -22,6 +22,7 @@ diagnosed afterwards).
 | `f40a.json` / `f40b.json` | **F40** | the **same null pair at 8 threads**, two three-block runs. Pool both. This is the floor to read F36 against, and it is half as wide as F39's 16-thread one | **yes — pool both** |
 | `f43a-void.json` | **F43** | **VOID.** Layout arm, first attempt; A-arm 40.37 tok/s in F44's slow regime, gate 2.65% | as a failure specimen only |
 | `f44-recovery.csv` | **F44** | Thirteen identical probes 55s apart. The regime switch, caught in the act | yes |
+| `f50-layout48.json` / `f50-null.json` | **F50** | **M6 closed.** The 48-byte arm, at F24's own alignment: **+0.06% [-0.11, +0.22]** against a null of -0.08%. Both pass the gate | **yes — with f49, these close M6** |
 | `f49-layout.json` / `f49-null.json` | **F49** | **The M6 answer.** Layout arm **-0.08% [-0.16, +0.00]** and matched null **-0.08% [-0.20, +0.04]**, both **passing the gate** at 6 blocks x 10 rounds. Identical to two decimals | **yes — these are the ones to quote for M6** |
 | `f47-layout.json` / `f47-null.json` | **F47** | The layout arm's best pair: **-0.00% [-0.18, +0.18]** against a matched null of -0.11%. Gate marginal (2.21% / 2.31%), so not certified — but it bounds the layout effect nine times below F24's +1.62% | **the ones to read for M6** |
 | `f45-layout-void.json` / `f45-null-void.json` | **F45** | **VOID.** Layout arm and matched null; gates 9.37% and 5.61%. **First files carrying `timeline`** — the layout run's 50-second fast excursion is visible in it | as failure specimens, and as the `timeline` example |
