@@ -6476,6 +6476,45 @@ it is judging is how a harness gets tuned until it agrees with you.
 
 ---
 
+## P46 — does idling restore the fast regime?
+
+Cheap, one experiment, written before running it. The machine has now held
+F44's slow regime (~40.4 tok/s) for **over an hour**, across F43, F45's two runs
+and six probe batches.
+
+**The pattern worth testing.** F44's fast window (t=61-240) came after the
+machine had been left alone following the rebuild burst, and F45's 50-second
+excursion came mid-run. The slow state began immediately after **six rebuilds**,
+including a 258-target one. So the candidate is: *sustained work pushes the
+machine into the slow state, and quiet lets it back out.*
+
+**The evidence against it, which is why this is worth testing rather than
+asserting.** F40 and F41 ran **four consecutive 25-minute measurement runs** and
+sat at 46.78-46.91 for all of them. That is sustained work not degrading
+anything, and it is the single strongest argument that "load causes slow" is
+wrong. Whatever the rebuilds did, ordinary measurement load did not do it.
+
+**Design:** ten minutes with **nothing running at all** — no probes, no edits,
+no builds — then five probes 30 seconds apart.
+
+**P46.1 — the first probe after ten idle minutes reads ≥44 tok/s.** If load is
+what holds it down, ten minutes of none should release it.
+
+**P46.2 — if it does come back fast, it stays fast across all five probes**
+(2.5 minutes of light duty). F44's fast window survived four probes at 55s
+spacing before dropping, so this should hold if the mechanism is the same.
+
+**P46.3 — if the first probe is still ~40**, then idling is not the lever, the
+machine is in a state it holds regardless of load, and the remaining candidate
+worth money is the page-cache/standby-list one the audit names — because the
+rebuilds wrote hundreds of megabytes and would have evicted the 840 MB model.
+
+Either answer is worth ten minutes, because it decides whether the fast regime
+can be *arranged* or only *waited for* — and M6 is currently blocked on exactly
+that.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
