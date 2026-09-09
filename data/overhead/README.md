@@ -19,6 +19,7 @@ diagnosed afterwards).
 | `f36.json` | **F36** | 6 arms, 3 pairs, 15 reps × **3 blocks**. The settled overhead numbers | **yes — this is the one to quote** |
 | `f39a.json` | **F39** run A | `ab_throughput` A/B of the **null control**, 3 blocks × 20 rounds. Two binaries differing in one code byte, in a function this model never enters | yes |
 | `f39b.json` | **F39** run B | the same pair, same protocol, a second independent three-block run. Pooled with `f39a` to six blocks — this is the pair that gives the false-positive rate | **yes — pool both** |
+| `f40a.json` / `f40b.json` | **F40** | the **same null pair at 8 threads**, two three-block runs. Pool both. This is the floor to read F36 against, and it is half as wide as F39's 16-thread one | **yes — pool both** |
 
 ## Structure
 
@@ -64,6 +65,17 @@ for test in ("tg64", "pp64"):
 # tg64 -> -0.04% [-0.49, +0.42]   clean
 # pp64 -> +0.59% [+0.01, +1.16]   RESOLVED, and a false positive by construction
 ```
+
+Swap in `f40a`/`f40b` for the **8-thread** floor, which is the one to use for
+anything measured at 8 threads (F36's overheads, all of them):
+
+```
+# tg64 -> +0.02% [-0.21, +0.26]
+# pp64 -> -0.01% [-0.12, +0.11]
+```
+
+**Use the floor at your own thread count.** F39 compared F36's 8-thread numbers
+against the 16-thread floor and drew a conclusion F40 refuted.
 
 Note the shape difference: `ab_throughput.py` writes `pooled`/`blocks`/
 `block_points` keyed by test name, where `bench_overhead.py` writes

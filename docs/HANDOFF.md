@@ -1,6 +1,6 @@
 # HANDOFF — state of the project, and what to do next
 
-Updated **during session 7 (2026-09-09)**, after F39. Everything here is either
+Updated **during session 7 (2026-09-09)**, after F40. Everything here is either
 a fact about the current tree or an explicit next step. Read this first when
 picking the project back up.
 
@@ -36,12 +36,18 @@ systeminfo | grep -i "Available Physical"
 # this session also contaminated one of its own by writing docs alongside it.
 ```
 
-**And know the floor before believing a percentage.** F39 measured what this
-harness reports between two binaries that *cannot* differ: **decode `-0.04%
-[-0.49, +0.42]`**, **prefill `+0.59% [+0.01, +1.16]` — resolved**. So a decode
-effect under ~0.5pp is not distinguishable from nothing here, a prefill effect
-at that scale should not be quoted at all, and **an interval excluding zero is
-not by itself a result** (M12). The floor is measured at 16 threads only.
+**And know the floor before believing a percentage.** F39 and F40 measured what
+this harness reports between two binaries that *cannot* differ, and **it depends
+on the thread count**:
+
+| threads | decode | prefill |
+|---|---|---|
+| **8** | **+0.02% [-0.21, +0.26]** | **-0.01% [-0.12, +0.11]** |
+| **16** | -0.04% [-0.49, +0.42] | **+0.59% [+0.01, +1.16]** — resolved |
+
+So **an interval excluding zero is not by itself a result**, **measure at 8
+threads** unless the question is about thread count, and **compare a number
+against the floor at its own thread count** — F39 did not, and F40 refuted it.
 
 **Then read the compiled-out arm's absolute median before believing anything.**
 Decode on this machine wanders between **38.6 and 46.0 tok/s** for reasons F37
@@ -84,6 +90,25 @@ within-block); fixed. And a caveat the session put in writing rather than
 leaving implicit — F39 ran at 16 threads, F36's overheads at 8, and **all three
 of F36's intervals overlap F39's null**, which the 8-thread null (item 1b) would
 settle.
+
+**And session 7's second half is the correction to its first.** **F40** re-ran
+the identical null at **8 threads** and the harness is a different instrument
+there: decode `+0.02% [-0.21, +0.26]`, prefill `-0.01% [-0.12, +0.11]`, both
+gates passing at worst-block IQR ~1%, and the A arm *faster* at 46.91 tok/s
+against 42.50 — fewer threads, more throughput, less variance, which is what
+F10 has said since session 2. Three consequences, and two of them undo F39.
+**The floor is a property of the thread count**, so compare a number against the
+floor at its own. **F36's overheads are measurements after all**: against the
+matched 8-thread null, ninja-shared `+0.92% [+0.38, +1.46]` does not overlap it
+at all and the other two sit 2.3–3.8× the null's half-width outside it — F39 had
+compared them against the *16-thread* floor, in a paragraph that explicitly
+named the M5 violation it was committing, and that claim is withdrawn. **M12 is
+narrowed** from "blocks are not independent draws" to a configuration-specific
+effect: at 8 threads prefill's blocks show no trend at all. P40.4 was written to
+be the prediction most likely to embarrass F39 and it was, which is the method
+working rather than failing. The standing lesson: *a comparison you have
+labelled as forbidden does not become usable by labelling it*, and the run that
+settles it was fifty minutes away the whole time.
 
 **Session 6 in one paragraph.** It set out to close section 5 item 7 and ended
 up auditing the project's statistics. Item 7 *is* closed — `bench_overhead.py`
@@ -689,13 +714,16 @@ refer to.
    consecutive blocks are not independent draws (**M12**). Also produced **D9**,
    a gate computed on pooled data, fixed in `c18a580`.
 
-1b. **Repeat that null at 8 threads.** ~50 minutes, no judgement call, and the
-   highest-value cheap item on this list. F39 ran at 16 threads to match F33.
-   Every overhead number in F36 — the settled ones — was taken at **8**, and all
-   three of their intervals **overlap F39's null interval**. If the floor holds
-   at 8 threads, F36's numbers are at or below what this harness can distinguish
-   from nothing, and the audit's section 6 already says so provisionally. Same
-   protocol, `-t 8`, two runs of `--blocks 3`. **Predict before running.**
+1b. ~~**Repeat that null at 8 threads.**~~ **DONE — F40, session 7**, and it
+   corrected F39. **The floor depends on the thread count**: decode `+0.02%
+   [-0.21, +0.26]` and prefill `-0.01% [-0.12, +0.11]` at 8 threads, against
+   `[-0.49, +0.42]` and a *resolved* `+0.59%` at 16. Both gates pass; the A arm
+   is *faster* (46.91 vs 42.50 tok/s), consistent with F10. Consequences:
+   **F36's overheads are measurements** after all — F39's contrary claim
+   compared them against the wrong thread count's floor and is withdrawn; **M12
+   is narrowed** to a configuration-specific effect rather than a general
+   property of `--blocks`; and **8 threads is the configuration to measure in**
+   unless the question is about thread count.
 
 2. **A real layout arm for M6** — now the *only* route to the question, because
    F39 discredited the prefill control it was being argued with (M13). Still the

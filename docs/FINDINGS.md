@@ -5599,9 +5599,13 @@ and worth stating because the comparison is unflattering: F36's three intervals
 `[-0.49, +0.42]`**. If that survives at 8 threads, F36's numbers are at or below
 what the harness can distinguish from nothing.
 
-**The 8-thread null is not measured and should be the next thing run.** It is
-the same 50 minutes and it decides whether three published overhead numbers are
-measurements or noise.
+**Measured immediately afterwards, and it went the other way — see
+[`F40`](#f40--the-false-positive-floor-is-a-property-of-the-thread-count-and-at-8-threads-this-harness-is-very-good).**
+At 8 threads the null's decode interval is `[-0.21, +0.26]`, less than half as
+wide, and **every one of F36's point estimates lands outside it**. The overlap
+above is an artifact of comparing against the 16-thread floor, which is exactly
+the M5 violation this paragraph names. **F36's overheads are measurements.** The
+paragraph is left standing because the error is the instructive part.
 
 ### An observation about first blocks, deliberately not given a mechanism
 
@@ -5674,6 +5678,122 @@ passes the gate and returns a null is the cleanest possible statement of the
 floor. If both runs fail the gate again, the floor is being measured on a
 machine that never clears its own bar, which is worth knowing and is an argument
 about the bar rather than the floor.
+
+---
+
+## F40 — the false-positive floor is a property of the thread count, and at 8 threads this harness is very good
+
+**Workload:** the same null pair as [`F39`](#f39--the-harnesss-false-positive-rate-measured-for-the-first-time-clean-on-decode-and-a-resolved-false-positive-on-prefill) — `bench-stock.exe` vs
+`bench-layoutctl.exe`, three bytes apart, one of them code, in a function
+`mid.gguf` never enters — at **8 threads** instead of 16. Two independent
+three-block runs, `--reps 3`, 20 rounds per arm. Everything else identical.
+[`P40`](#p40--predictions-before-the-8-thread-null-which-decides-whether-f36-measured-anything)
+holds the predictions. Raw: `data/overhead/f40a.json`, `f40b.json`.
+
+### The result, against F39's
+
+| threads | decode | prefill | A-arm tok/s | worst-block gate |
+|---|---|---|---|---|
+| **16** (F39) | −0.04% [−0.49, +0.42] | **+0.59% [+0.01, +1.16]** ← resolved | 42.50 | 5.28% **FAIL** |
+| **8** (F40) | **+0.02% [−0.21, +0.26]** | **−0.01% [−0.12, +0.11]** | 46.91 | 1.06% **PASS** |
+
+Six blocks each, same binaries, same model, same protocol, ninety minutes apart.
+
+**At 8 threads this harness is much better than anyone here had established.**
+The decode floor is **±0.24pp** and the prefill floor **±0.12pp** — half and a
+fifth of their 16-thread values. Both gates pass comfortably. Nothing resolves,
+which is correct, because there is nothing to detect.
+
+**So F39's floor was not the harness's floor. It was 16 threads' floor.**
+
+### The mechanism is F10, and it was already in the repo
+
+[`F10`](#f10--nothing-beats-22-and-every-thread-past-four-turns-into-barrier-wait)
+found that nothing on this machine beats 2.2× and that every thread past four
+turns into barrier wait. A measurement at 16 threads is therefore substantially
+a measurement of *scheduling*, and scheduling is the variable part. The A-arm
+medians say the same thing directly: **46.91 tok/s at 8 threads against 42.50 at
+16** — fewer threads, more throughput, less variance, exactly as F10 predicts.
+
+This is stated as a *consistency* with F10, not as a tested mechanism. What is
+established is the floor at two thread counts; that F10 explains it is a reading.
+
+### What this does to F39's conclusions — one stands, one is narrowed, one is withdrawn
+
+**Stands: the decode floor, and F24 clearing it.** F24/F33's `+1.62% [+1.10,
++2.15]` was measured at 16 threads, where the floor is ±0.45pp. It clears it by
+3.6×. At 8 threads the floor is tighter still. Nothing about F24's decode number
+is threatened by either run.
+
+**Narrowed: M12.** F39 found prefill's block estimates rising monotonically in
+both its runs and concluded that block estimates are not independent draws, so
+the `t` interval has a general failure mode. **At 8 threads there is no trend at
+all** — `+0.19 −0.04 +0.05` and `−0.03 −0.13 −0.07`, a 0.22pp and 0.11pp spread,
+neither monotonic. The false positive at 16 threads is a real event and the
+mechanism it implies is real, but **the generalisation was too broad**: what is
+demonstrated is that blocks *can* trend and manufacture a resolved result, in a
+configuration where the underlying measurement is already noisy — not that they
+generally do. M12 is rewritten accordingly.
+
+**Withdrawn: the claim that F36 measured nothing.** This is the important one and
+it was mine, published an hour before this run.
+
+F39's audit entry said all three of F36's overhead intervals overlap the null's,
+so none was distinguishable from measuring nothing. That comparison used the
+**16-thread** null against F36's **8-thread** numbers — a cross-configuration
+comparison that the same paragraph explicitly labelled as forbidden by **M5**.
+It was flagged as provisional and it was still wrong to lean on. At the matched
+thread count:
+
+| F36 number | interval | vs the 8-thread null `[−0.21, +0.26]` |
+|---|---|---|
+| ninja-shared | +0.92% [+0.38, +1.46] | **does not overlap the null at all** — a real measurement |
+| MSBuild-shared | +0.77% [+0.05, +1.48] | point far outside; intervals touch |
+| static | +0.56% [−0.05, +1.16] | point far outside; intervals touch |
+
+All three point estimates sit **outside** the null's whole interval, at 2.3× to
+3.8× its half-width. The two marginal rows are marginal because *F36's own*
+intervals are wide at three blocks, not because the effect is indistinguishable
+from nothing. **F36's overheads are measurements.** The provisional wording in
+section 6 of the audit is withdrawn and replaced.
+
+The lesson is the one this project keeps relearning, and it caught the session
+that had just written it down: **a comparison you have labelled as forbidden
+does not become usable by labelling it.** F39 named the M5 violation, called it
+provisional, and drew a conclusion from it anyway. The fifty-minute run that
+settles it was available the whole time.
+
+### Scoring the predictions
+
+| | claim | outcome |
+|---|---|---|
+| **P40.1** | decode `t` contains zero at six blocks | **held.** +0.02% [−0.21, +0.26] |
+| **P40.2** | 8-thread decode interval narrower than 16-thread's, half-width under 0.46pp | **held, decisively.** 0.24pp against 0.45pp, and prefill 0.12pp against 0.57pp |
+| **P40.3** | F36's static still overlaps the null | **held in letter, and the letter was the wrong question.** The intervals do touch, but every F36 point estimate lands outside the null's whole interval and ninja-shared's interval misses it entirely. The prediction was framed to confirm F39's reading and the data refutes it |
+| **P40.4** | prefill resolves again, blocks rise monotonically in at least one run | **failed, and this is the one that earns its keep.** Prefill at 8 threads is the cleanest measurement in either session: ±0.12pp, no monotonicity in either run. Written as the prediction most likely to embarrass F39, and it did |
+| **P40.5** | A-arm median 43–47 tok/s, faster than 16 threads | **held.** 46.91 and 46.79 against 42.50, and inside F36's 45.98–46.05 band, so this run and F36 are in comparable machine states — which is what makes the correction above legitimate |
+| **P40.6** | the corrected gate passes on at least one run | **held, on both, on both workloads.** Worst-block IQR 0.94/1.06% on decode and 0.79/0.65% on prefill, against a 2% budget. F39's runs failed at 2.53–5.28% |
+
+**P40.4 and P40.3 together are worth more than the four that held**, and they
+point the same way: F39 over-read two runs in the noisiest configuration this
+project measures in. Both were caught by a fifty-minute control that needed no
+judgement call.
+
+### What this changes for how measurements should be taken here
+
+**Measure at 8 threads unless the question is specifically about thread count.**
+The floor is half as wide on decode, a fifth as wide on prefill, the gate passes,
+and the machine is *faster*. There is no cost to it. Every Tier D number in this
+repo was taken at 8 threads except F24/F33, which used 16 because
+[`F23`](#f23--ggml-already-solves-core-heterogeneity-for-big-matmuls-and-a-thread-count-can-turn-it-off)
+predicted the chunking threshold flips there.
+
+That last point is a genuine constraint, not an oversight: F24's patch changes
+`nth * 4` to `nth * 2`, so **the effect itself depends on `nth`** and cannot
+simply be re-measured at 8 threads as if it were the same quantity.
+`tools/mulmat_chunking.py -t 8,16` says which matmuls flip mode at each count
+and should be consulted before assuming the 8-thread number is even comparable.
+Recorded as a next step, not done.
 
 ---
 
