@@ -306,3 +306,79 @@ You do not need all of it. In descending value:
    mechanism, or breaks it.
 4. **A stable baseline under a pinned governor** - would give this project the
    quiet machine it has never had, and make every future measurement cheaper.
+
+---
+
+## 8. Starting a Claude Code session on that machine
+
+**A fresh session knows nothing about this project.** It has no memory of the
+Windows sessions - the repository *is* the handoff. Clone it, then paste the
+block below.
+
+```bash
+git clone https://github.com/PS12007/tokenscope
+cd tokenscope
+claude
+```
+
+### The prompt - copy from here
+
+I want to bring up the tokenscope project on this machine. It is a
+deterministic scope-timing profiler compiled into llama.cpp, plus seven sessions
+of measurements about where CPU inference time goes. **Everything measured so far
+is MSVC on one Windows laptop**, and this machine is the second one.
+
+**Read `docs/07-linux-bringup.md` first — it is written for exactly this task**,
+including a machine profile for this CPU in section 2b. Then read
+`docs/06-overview.md` for what the project is and what it found, and
+`docs/04-project-audit.md` before quoting any number.
+
+This machine is a **Dell Inspiron, dual-booting Arch and Windows, i7-1255U**:
+2 P-cores (4 threads, SMT) + 8 E-cores = 12 logical, 15 GB RAM. It is hybrid,
+like the Windows machine, so it does **not** settle gap G6. What it does serve is
+**G1** (no Linux, no GCC anywhere in this project — the blocker for the upstream
+conversation) and **F27 on a second machine**.
+
+**Work through section 3's verification ladder in order.** Each step is
+checkable and a failure at step N means do not start step N+1. Two things to
+report before going further:
+
+- the **full** `lscpu -e=CPU,CORE,MAXMHZ` listing, so P-core and E-core logical
+  IDs are known before any pinning work
+- the `threading=` field on `trace_analyze.py`'s summary line. It should say
+  `openmp`. **If it says `ggml-threadpool`, stop and say so** — that would mean
+  GCC builds take a different barrier path by default than MSVC ones, which is a
+  finding on its own. F26 exists because five documents got this wrong for four
+  sessions.
+
+**Then measure in section 4's priority order.** Use **6 blocks of 10 rounds**,
+not 3 of 20 — the gate measures within-block baseline spread and a shorter block
+contains less drift (F49). Thread counts that make sense here are 1, 2, 4, 8,
+12; not 28.
+
+**Measurement discipline, all of it learned the hard way:**
+
+- **probe before measuring** and use `--min-baseline`; a run on one throughput
+  level is not comparable to a floor measured on another
+- **pin the governor first**: `sudo cpupower frequency-set -g performance`
+- gate first, physical plausibility second, interval third
+- close background work, and do not run anything while a measurement is in
+  flight
+- **write predictions down and commit them before the run that tests them**,
+  then score them honestly including the failures. This is the project's method
+  and its most valuable results have come from predictions that failed
+
+**Expect this machine to throttle.** It is a 15 W U-series part in a thin
+chassis. Linux can *see* the throttling where Windows could not — `sensors`,
+`cpupower`, `/proc/cpuinfo` — so record it rather than fighting it.
+
+Commit regularly with real commit messages, and push. Update `docs/FINDINGS.md`,
+`docs/HANDOFF.md` and `docs/04-project-audit.md` as you go rather than at the
+end.
+
+Ask me before downloading anything large. **Do not write any upstream issue, PR
+or comment text** — llama.cpp's `AGENTS.md` marks that non-overridable and the
+penalty is a contributor ban; `docs/05-f24-filing-kit.md` explains what is
+allowed instead.
+
+### Copy to here
