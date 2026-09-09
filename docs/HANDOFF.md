@@ -1,7 +1,7 @@
 # HANDOFF — state of the project, and what to do next
 
-Updated **during session 6 (2026-09-08)**, after F37. Everything here is either a
-fact about the current tree or an explicit next step. Read this first when
+Updated **during session 7 (2026-09-09)**, after F39. Everything here is either
+a fact about the current tree or an explicit next step. Read this first when
 picking the project back up.
 
 **Read [`04-project-audit.md`](04-project-audit.md) first if you want the whole
@@ -36,6 +36,13 @@ systeminfo | grep -i "Available Physical"
 # this session also contaminated one of its own by writing docs alongside it.
 ```
 
+**And know the floor before believing a percentage.** F39 measured what this
+harness reports between two binaries that *cannot* differ: **decode `-0.04%
+[-0.49, +0.42]`**, **prefill `+0.59% [+0.01, +1.16]` — resolved**. So a decode
+effect under ~0.5pp is not distinguishable from nothing here, a prefill effect
+at that scale should not be quoted at all, and **an interval excluding zero is
+not by itself a result** (M12). The floor is measured at 16 threads only.
+
 **Then read the compiled-out arm's absolute median before believing anything.**
 Decode on this machine wanders between **38.6 and 46.0 tok/s** for reasons F37
 tested and could not find (M10), and that swing is ~10x any effect measured
@@ -52,6 +59,31 @@ provenance record now carries `threading` and `compute_linkage`, and
 looks strange, read that line before theorising — the field exists because four
 sessions of documents described every barrier figure here as coming from a code
 path none of them came from (**F26**).
+
+**Session 7 in one paragraph.** It ran group A item 1 and got a two-sided
+answer. **F39** measured the harness's false-positive rate for the first time,
+against a null control whose two binaries differ by **one byte of dead code** —
+`mul_mat_id`'s immediate, in a function that never executes here (zero
+`MUL_MAT_ID` events across all nine reference traces against 2,704 `MUL_MAT`
+events in the level-3 mid trace). Two independent three-block runs. **Decode is
+clean**: `-0.04% [-0.49, +0.42]`, and the two runs returned the same point
+estimate to two decimal places — so F24's `+1.62%` clears the floor by 3× and
+that is the strongest thing anyone has been able to say for it. **Prefill is
+not**: `+0.59% [+0.01, +1.16]`, resolved, on binaries that cannot differ. The
+cause is a between-block *trend* — the block estimates rise monotonically in
+both runs, the effect is absent round-to-round inside a block, and dropping each
+run's first block makes it worse. So `--blocks`, session 6's fix for M1, has its
+own failure mode (**M12**): F34 found sustained contamination makes blocks
+agree, and a sustained trend makes them march, and both read as precision. The
+casualty is F24's *argument* rather than its number — a prefill control that
+resolves at +0.59% with nothing to detect cannot certify or discredit anything
+at this scale (**M13**), so M6 now has only the layout arm left. Along the way,
+**D9**: the baseline gate was computed on data pooled across blocks and so
+charged a `--blocks` run twice for the same variance (2.02% pooled against 1.46%
+within-block); fixed. And a caveat the session put in writing rather than
+leaving implicit — F39 ran at 16 threads, F36's overheads at 8, and **all three
+of F36's intervals overlap F39's null**, which the 8-thread null (item 1b) would
+settle.
 
 **Session 6 in one paragraph.** It set out to close section 5 item 7 and ended
 up auditing the project's statistics. Item 7 *is* closed — `bench_overhead.py`
@@ -578,6 +610,16 @@ F34 ran at 870 MB against an 840 MB model and reported the instrumented build as
 *faster*. And a failed baseline gate now makes the tool refuse its own block
 table, instead of printing "quote this" underneath a refusal.
 
+**The gate changed in session 7 (D9).** It used to be computed on the arms'
+data pooled across every block, which folded in the between-block drift the `t`
+interval already carries -- so a `--blocks` run was charged twice for the same
+variance and could be told "this machine cannot resolve a 2% effect" about a run
+whose interval was already saying so. It now gates on the **worst single
+block** and prints the pooled figure beside it. `--blocks 1` is unchanged and no
+published number moves. **`ab_throughput.py` still has no gate at all** -- F39
+applied it by hand, which is how D9 was found, and which is worth doing every
+time until the tool grows one.
+
 `--pair` is repeatable and each pair is scored against **its own** compiled-out
 arm. With more than one pair you also get the difference of overheads with its
 own bootstrap CI, and the compiled-out arms against each other -- which measures
@@ -637,17 +679,27 @@ refer to.
 
 ### A. Do these first — they need only a quiet machine and no judgement call
 
-1. **Measure the null control** (`patches/04-layout-control.patch`, already
-   written and buildable). It applies F24's identical edit to `mul_mat_id`, the
-   MoE path a dense model never enters, and it perturbs **5 bytes** — so the two
-   binaries must behave identically *and* are laid out identically. Measured
-   against stock with `ab_throughput.py --blocks 3`, a non-zero result is the
-   harness reporting a difference between binaries that cannot differ. **This
-   project has never measured its own false-positive rate**, and it is now one
-   ~25-minute run away. **Predict before running.**
+1. ~~**Measure the null control.**~~ **DONE — F39, session 7.** Two runs of
+   three blocks each, protocol identical to F33. **Decode `-0.04% [-0.49,
+   +0.42]`** — clean, and the two runs agreed to two decimal places. **Prefill
+   `+0.59% [+0.01, +1.16]` — resolved, and false by construction.** Three
+   consequences, all live: F24's +1.62% clears the decode floor by 3× (the
+   strongest thing ever said for it); the prefill control is discredited in both
+   directions (**M13**); and `--blocks` has its own failure mode because
+   consecutive blocks are not independent draws (**M12**). Also produced **D9**,
+   a gate computed on pooled data, fixed in `c18a580`.
 
-2. **A real layout arm for M6**, which is the strongest live threat to F24 and
-   harder than it looks. F38 found that F24's two arms differ in **~31% of
+1b. **Repeat that null at 8 threads.** ~50 minutes, no judgement call, and the
+   highest-value cheap item on this list. F39 ran at 16 threads to match F33.
+   Every overhead number in F36 — the settled ones — was taken at **8**, and all
+   three of their intervals **overlap F39's null interval**. If the floor holds
+   at 8 threads, F36's numbers are at or below what this harness can distinguish
+   from nothing, and the audit's section 6 already says so provisionally. Same
+   protocol, `-t 8`, two runs of `--blocks 3`. **Predict before running.**
+
+2. **A real layout arm for M6** — now the *only* route to the question, because
+   F39 discredited the prefill control it was being argued with (M13). Still the
+   strongest live threat to F24 and harder than it looks. F38 found that F24's two arms differ in **~31% of
    `.text`** — 1.1 MB, contiguous, ~94% dense, with 0 of 36 code probes at the
    same address — while the "obvious" small control perturbs 5 bytes. **Layout
    perturbation is a property of where the edit lands, not of how small it is.**

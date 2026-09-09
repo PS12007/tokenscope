@@ -15,6 +15,14 @@ two sections, read those.
 > **Updated after F33 landed.** F24 has been re-measured: the effect is real at
 > **+1.62% [+1.10, +2.15]** over six blocks, and its prefill control is no
 > longer a clean null, which promotes M6 from caveat to live suspicion.
+>
+> **Updated again after F39 (session 7).** The harness's own false-positive rate
+> is measured for the first time, on two binaries that differ by one byte of
+> dead code: **decode −0.04% [−0.49, +0.42]** over six blocks, **prefill +0.59%
+> [+0.01, +1.16] — resolved, and false by construction.** So decode results
+> above ~0.5pp are trustworthy and F24 clears that comfortably; the prefill
+> control is not a control (M13); and `--blocks`, session 6's fix, has its own
+> failure mode because consecutive blocks are not independent draws (M12).
 
 ---
 
@@ -76,7 +84,7 @@ is a ladder rather than a badge.
 | **A — structural** | Not statistical at all. True by construction, code reading, symbol table or a CI assertion that fails the build | No interval quoted, because none is needed | zero-overhead-when-off; node/barrier alternation; F22's two-module buffer identity; F8/F20 naming coverage |
 | **B — large effect** | Effect is ≫10× the machine's drift term (~0.5pp) | Interval width is irrelevant to the conclusion | F27's −54% / −78% / −13% rows (**but not its −2.06% row**), F28 (76–83% of release latency), F10 (2.2× ceiling), F14 (2.88× P/E), F7/F19/F21 byte law ratios |
 | **C — medium, structured** | Effect is several × drift, and supported by a *structure* (control arms, non-overlapping ranges, n≥12) rather than by one interval | Quote with its n and its control | F9 imbalance/release split, F23 chunking-mode ratios (n=12, two non-overlapping comparisons) |
-| **D — near the floor** | Effect is **1–3×** the drift term. This is where every overhead and throughput percentage lives | **Needs a between-block `t` interval. A bootstrap interval here is roughly half as wide as the truth** | F24 (now +1.62%), F25 (+1.16%), F30, F31's three overheads |
+| **D — near the floor** | Effect is **1–3×** the drift term. This is where every overhead and throughput percentage lives | **Needs a between-block `t` interval**, and must clear **F39's measured false-positive floor: ±0.5pp on decode at six blocks.** A bootstrap interval here is roughly half as wide as the truth — but see M12, the `t` interval is not safe either | F24 (now +1.62%), F25 (+1.16%), F30, F31's three overheads |
 
 **Everything in Tier D published before session 6 was measured with a
 within-run bootstrap and is over-precise.** Not necessarily wrong in sign — just
@@ -145,7 +153,10 @@ contamination spanning **every** pass. So the order is:
    below it is worth reading, whatever its interval says.
 2. **Physical plausibility.** Negative overhead, or a control that moves as much
    as the treatment, voids the run regardless of statistics.
-3. **The `t` interval**, meaningful only once 1 and 2 pass.
+3. **The `t` interval**, meaningful only once 1 and 2 pass — and only above
+   **F39's false-positive floor**, which is ±0.5pp on decode over six blocks and
+   is *not established at all on prefill*, where the same null resolved at
+   +0.59%. An interval that excludes zero is not by itself a result (M12).
 
 Two further guards now enforce this: `preflight_ram()` refuses to start below
 1.5x the model size, and a failed gate makes the tool refuse its own block table
@@ -218,12 +229,13 @@ is known to be wrong even though its direction may stand.
 
 | | Finding | Trust |
 |---|---|---|
-| **F24** / **F33** | One line (`nth*4`→`nth*2`), **+1.62% [+1.10, +2.15]** decode over six blocks — the only speedup this project claims. F24's `+1.95% [+1.59, +2.35]` is superseded | **D, re-measured.** Effect real; **the prefill control is no longer a clean null** (-1.30% [-2.67, +0.06]), so part of it may be layout (M6) |
+| **F24** / **F33** | One line (`nth*4`→`nth*2`), **+1.62% [+1.10, +2.15]** decode over six blocks — the only speedup this project claims. F24's `+1.95% [+1.59, +2.35]` is superseded | **D, re-measured.** Effect real and **~3× the whole width of F39's decode null** (`-0.04% [-0.49, +0.42]`), which is the strongest thing that has ever been said for it. But **its prefill control is now worthless in both directions** (F39/M13), so the structural argument is gone and only the layout question (M6) can settle what the +1.62% is made of |
 | **F25** | Static overhead +1.16% [+0.67, +1.87]; shared build's answer eaten by its noise floor | ⚠ D |
 | **F30** | Shared overhead +0.87% [+0.55, +1.19] | ⚠ **D, corrected by F31** |
 | **F31** | Two bootstrap intervals for one quantity that do not overlap | **A for that** (it is a fact about two runs). **Its "level 3 is a leveller" claim and its generator effect are both RETRACTED by F36** |
 | **F34** | A void run: 870 MB free against an 840 MB model produced *negative* overhead in all three pairs, and the tightest block agreement in the run | A (a fact about a failure). Source of M8 and the gate-first ordering |
 | **F36** | The overhead numbers settled: static **+0.56% [-0.05, +1.16]**, ninja-shared **+0.92% [+0.38, +1.46]**, MSBuild-shared **+0.77% [+0.05, +1.48]**, three blocks each. Linkage null, generator null | **D, properly measured.** The interval contains every earlier estimate of the same quantity |
+| **F39** | **The false-positive rate, measured for the first time.** Two binaries differing in one dead code byte: decode **-0.04% [-0.49, +0.42]** over six blocks (clean, and the same point estimate in two independent runs), prefill **+0.59% [+0.01, +1.16]** (**resolved — a false positive**) | **A for the decode floor** (it is a fact about a null pair, and the number to read every Tier D decode result against). Source of M12, M13 and D9 |
 
 **That paragraph used to say F31's "leveller" claim was the durable, non-Tier-D
 part. F36 retracted it, and the mistake is the most instructive one in this
@@ -252,13 +264,20 @@ re-measurement that would have caught it.
 | **M9** | The machine is shared with whatever else the user is running. A 5.17 GiB `javaw` process voided a 44-minute run | `preflight_ram()` refuses to start; **it cannot detect load that arrives mid-run** |
 | **M10** | **Throughput swings between ~38.6 and ~46 tok/s, with no identified cause.** F37 killed four candidates: not thermal (more cooling gave a *lower* result; the decay curve is flat), not thread placement (pinning is worse; the best mask is no mask), not CPU frequency (Pearson **r = -0.423**, the wrong sign), not the `-p 0`/`-p 512` workload difference (-0.91%). The full range appears **inside one 4.5-minute window**, so it is run-to-run variance whose median moves, not two stable regimes. ~10x the effects being measured, and it decides whether a run passes the gate | **Open, and the largest unknown in the project.** Live candidates: page-cache/standby-list state for an 840 MB model, per-process power throttling |
 | **M11** | A claim built from *differences between* Tier D numbers inherits Tier D. F31's "level 3 is a leveller" was marked non-Tier-D and exempt from re-measurement; F36 reversed it | Recorded; the exemption was the error |
+| **M12** | **Blocks are not independent draws, so the `t` interval has its own failure mode.** F39's null control resolved prefill at **+0.59% [+0.01, +1.16] on binaries that cannot differ** — the six-block estimates rise monotonically in both runs, the trend is absent round-to-round *inside* a block (`r` = +0.012, −0.045), and dropping each run's first block makes it worse. F34 found sustained contamination makes blocks agree; M12 is the same shape — a sustained trend makes them march, and marching also reads as precision | **Open.** `--blocks` was session 6's fix for M1 and this is its limit. No number of blocks removes a trend common to all of them |
+| **M13** | **The prefill control cannot arbitrate anything at the ~1% level.** F39 measured it returning a resolved `+0.59%` with nothing to detect. F24's structural argument (the arm that should move moves, the arm that should not does not) rests on it, and F33 had already found it drifting | **Open.** Stop citing the prefill control as evidence in either direction; M6 needs the layout arm instead |
 | **M4** | F30 and F31 differ in arm order, round length **and** time simultaneously, so the rotation explanation is a story that fits, not evidence | **Open.** The same disease F30 diagnosed in F25 |
 | **M5** | Cross-session comparison of absolute throughput is worthless — the same compiled-out binary read 42.94 and 45.92 tok/s in two sessions (**+6.9%**, ~6× the effects being resolved) | Documented; a standing rule |
 | **M6** | Code layout is not held constant in F24's A/B. **Quantified in F38:** the 1,137,994 differing bytes are one contiguous block inside `.text`, ~94% dense — **about 31% of the entire code section** — and **0 of 36 code probes appear at the same address** in both binaries | **Open, and the strongest live threat to F24.** F33's prefill control (a workload the patch cannot reach) is negative in every run. **The control built for it does not work** (F38): the same edit in `mul_mat_id` perturbs 5 bytes, so layout cannot be dialled in by choosing a small edit |
 | **M7** | The static pair builds under Ninja and the shared pair under MSBuild, so early cross-pair numbers confound linkage with generator | Fixed by adding a Ninja shared pair (F31); the generator turned out to matter (+0.40% [+0.14, +0.69] on decode) |
 
-**M6 deserves emphasis.** It is the strongest live threat to F24, and F33 then
-F38 each made it worse rather than better. F38 is the one to read: a third of
+**M6 deserves emphasis.** It is the strongest live threat to F24, and F33, F38
+then F39 each made it worse rather than better. **F39 removed the instrument the
+question was being argued with**: the prefill control returns a resolved +0.59%
+between binaries that cannot differ, so neither its flatness nor its drift means
+anything at this scale. What survives is that F39's decode null is clean at
+±0.5pp while F24 measures +1.62%, so *something* real moves decode — but nothing
+short of the layout arm can say how much of it is the scheduler constant. F38 is the one to read: a third of
 the code section is relocated or regenerated between the two arms, and the
 asymmetry it found — one byte of immediate moves nothing in `mul_mat_id` and a
 third of the image in `mul_mat` — is why a cheap layout control does not exist. The original argument against it was that the
@@ -294,6 +313,7 @@ unknown fraction of it unattributed.
 | **D6** | **Lazy buffer allocation charged to ggml's barrier**, at 76–83% of all release latency, blamed on "thread-pool spin-up" by a sentence nobody had tested | F28 |
 | **D7** | Five documents stated the barrier path was ggml's own when every measurement was OpenMP | F26 |
 | **D8** | Fixed arm order in the overhead harness, biasing whichever arms ran first | F30 → fixed `9ec7c82` |
+| **D9** | **The baseline gate was computed on data pooled across blocks**, so it absorbed the between-block drift the `t` interval already carries and charged a `--blocks` run twice for the same variance. 2.02% pooled against 1.46% within-block on the same 60 samples | F39 → fixed `c18a580`; gates on the worst single block, prints the pooled figure beside it, `--blocks 1` unchanged |
 
 **D6 and D7 are the instructive pair.** Both are the profiler being wrong *about
 itself* in a way that looked like a finding about llama.cpp. D6 in particular
@@ -399,13 +419,38 @@ teaches something and an unanswerable one teaches nothing.
 - F28, F26, F29, F5, F8, F18/F22 — all facts about code.
 - F20 as a defect report about llama.cpp naming.
 
-**Safe only with a `t` interval attached.** Both outstanding items are now
-done: **F24** (F33: +1.62% [+1.10, +2.15], with M6 attached) and **the
-overheads** (F36: every build under 1%, three blocks). F25's, F30's and F31's
-own percentages are superseded by F36 and should not be quoted — cite F36.
+**Safe only with a `t` interval attached, and only above F39's floor.** Both
+outstanding items are done: **F24** (F33: +1.62% [+1.10, +2.15], with M6
+attached) and **the overheads** (F36: every build under 1%, three blocks).
+F25's, F30's and F31's own percentages are superseded by F36 and should not be
+quoted — cite F36.
+
+**F39 adds a floor test that comes before the interval.** On this machine and
+protocol, a pair of binaries that *cannot* differ produced `-0.04% [-0.49,
++0.42]` on decode and `+0.59% [+0.01, +1.16]` on prefill. So:
+
+- a **decode** effect must clear roughly **±0.5pp** before its interval means
+  anything. **F24's +1.62% clears it by 3×**, and its lower bound (+1.10) sits
+  0.68pp above the null's upper bound (+0.42). That is the strongest statement
+  ever made for F24 and it did not exist before F39.
+- **F36's three overhead intervals all overlap F39's null interval.** Static
+  `[-0.05, +1.16]`, ninja-shared `[+0.38, +1.46]` and MSBuild-shared `[+0.05,
+  +1.48]` against the null's `[-0.49, +0.42]`. So none of them is currently
+  distinguishable from measuring nothing. The honest reading of F36 becomes
+  **"every build's overhead is at or below what this harness can tell apart from
+  zero"** — weaker as a number, and better as a claim about the profiler.
+  **Caveat, and it is not small:** F39 ran at **16 threads** and F36 at **8**
+  (G5), so this is a cross-configuration comparison of exactly the kind M5
+  forbids for absolute throughput. The floor at 8 threads is **not measured**.
+  Repeating the null at 8 threads is cheap and is now the obvious next control.
+- a **prefill** effect at this scale should not be quoted at all. The null
+  resolved there.
 
 **Not safe because it has been retracted:** F31's generator effect (+0.40%) and
 its "level 3 is a leveller" structural claim. Both are gone (F36).
+
+**Not safe because the instrument is discredited:** F24/F33's prefill *control*,
+in either direction, and any argument built on it (M13).
 
 **Not safe to generalise at all:**
 
@@ -487,20 +532,33 @@ exercised by CI.
    the numbering is interleaved, and `0x5555` is exactly what F14 and the
    handoff always said. F14's first candidate for its anomaly is thereby
    eliminated, leaving `--cpu-strict` bit assignment as the survivor.
-2. **Separate layout from chunking in F24 (M6).** Harder than it looked — F38
+2. **Separate layout from chunking in F24 (M6), and it is now the only route
+   left.** F39 discredited the prefill control that the question was being
+   argued with (M13), so neither its flatness nor its drift is evidence any
+   more. Harder than it looked — F38
    showed the obvious control perturbs 5 bytes where the real patch perturbs
    1.1 MB. A real layout arm must change `mul_mat`'s *size* without changing
    what it does (padding, a retained uncalled function, forced alignment) and
    then survive the objection that the padding itself costs something. **Still
    the most valuable experiment left**, because F24 is the one result a
    maintainer might act on.
-   **Ready to run meanwhile:** `patches/04-layout-control.patch` is built
-   (`bench-layoutctl.exe`) and is a **null** control — behaviour-identical and
-   layout-identical — so measuring it against stock gives the harness's
-   false-positive rate, which has never been measured.
+   **Done (F39).** `patches/04-layout-control.patch` was measured against stock
+   over six blocks: decode **−0.04% [−0.49, +0.42]** (clean), prefill **+0.59%
+   [+0.01, +1.16]** (**resolved, and a false positive by construction**). The
+   decode floor is what F24 should be read against; the prefill result is M12
+   and M13. Note the binaries are **not** kept — `bench-layoutctl.exe` lives in
+   a session temp directory and an earlier revision of this document wrongly
+   said it "is built". Rebuild both arms in one session, always.
 3. **Explain M3** — why one invocation's own halves disagree by 0.47pp. Blocks
    contain the symptom; nothing explains it. Candidates not yet tested: Windows
    scheduler migration, page-cache state, SMT partner activity, turbo residency.
+   **F39 adds a sibling, M12:** the blocks themselves march rather than scatter,
+   monotonically and in both runs, on prefill only. Same suspects, and now two
+   symptoms to explain with one mechanism.
+3b. **Repeat F39's null at 8 threads.** The floor is measured at 16 only, and
+   F36's three overhead numbers — the settled ones — were taken at 8. Their
+   intervals all overlap the 16-thread null's. Fifty minutes decides whether
+   those numbers are measurements or noise, and it needs no judgement call.
 4. ~~**Sweep "certified" out of the prose**~~ **Done (M2).** Gone from the tools,
    README, `02` and `03`; annotated rather than erased in `FINDINGS.md`.
 5. **Linux + GCC** (G1) — the blocker for the upstream conversation, and smaller

@@ -5588,6 +5588,21 @@ false positive; none appeared on decode. A null measured on a noisy machine is
 the conservative case, so the decode floor of ±0.5pp is if anything an
 overestimate of how badly the harness misbehaves when quiet.
 
+### The floor applies at 16 threads, and only there
+
+F39 ran at **16 threads**, matching F33 so the answer would apply to F24. Every
+overhead number in [`F36`](#f36--the-overhead-numbers-settle-and-two-f31-claims-are-retracted)
+was taken at **8** (gap **G5**). Reading F39's floor against F36's overheads is
+therefore a cross-configuration comparison, which is the kind **M5** forbids —
+and worth stating because the comparison is unflattering: F36's three intervals
+(`[-0.05, +1.16]`, `[+0.38, +1.46]`, `[+0.05, +1.48]`) **all overlap F39's null
+`[-0.49, +0.42]`**. If that survives at 8 threads, F36's numbers are at or below
+what the harness can distinguish from nothing.
+
+**The 8-thread null is not measured and should be the next thing run.** It is
+the same 50 minutes and it decides whether three published overhead numbers are
+measurements or noise.
+
 ### An observation about first blocks, deliberately not given a mechanism
 
 The first block of a run has the worst baseline IQR in **three of the four**
