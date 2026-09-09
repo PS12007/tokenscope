@@ -5797,6 +5797,74 @@ Recorded as a next step, not done.
 
 ---
 
+## P41 — predictions before re-measuring F27's one Tier D row, which is also a test of F40's floor
+
+`HANDOFF.md` section 5 item A3. [`F27`](#f27--ggmls-own-barrier-is-not-a-cheaper-spin-wait-than-openmps-on-this-machine-at-28-threads-it-costs-54-of-decode)
+reported four throughput rows. Three (−54.17%, −78.64%, −13.07%) are 13–78× the
+drift term and safe at any interval width. The fourth, **−2.06% [−2.42, −1.56]
+on `mid.gguf` at 8 threads**, is Tier D, was a single-run bootstrap, and has
+never been re-measured — the audit filed the whole finding as Tier B for a
+session because of its headline.
+
+**Arms**, both uninstrumented, both relinked from one tree in this session:
+`bench-omp.exe` (default, imports `VCOMP140.DLL`) against `bench-noomp.exe`
+(`GGML_OPENMP=OFF`, imports none — checked via the PE import table, since
+`strings` does not exist in this environment and silently reported zero for
+both). `mid.gguf`, 8 threads, `--reps 3`, 20 rounds, `--blocks 3`, run twice.
+
+**This run tests two things at once**, which is why it is worth more than a
+tidy-up. `-2.06%` is about **8.5× F40's measured 8-thread decode floor of
+±0.24pp**. So it should resolve easily — and if it does not, the floor is not
+what F40 says it is, and F40's headline claim ("at 8 threads this harness is
+very good") is wrong.
+
+**P41.1 — decode resolves: the six-block `t` interval excludes zero, and stays
+negative.** The effect is 8.5× the floor. This is the prediction that would
+falsify F40 if it failed.
+
+**P41.2 — the point estimate lands within ±0.8pp of −2.06%**, i.e. inside
+[−2.86, −1.26]. The precedent is F24 → F33, where re-measuring with blocks moved
++1.95% to +1.62%, a 0.33pp move. A larger move than 0.8pp would mean the
+original number was wrong rather than merely over-precise.
+
+**P41.3 — the six-block `t` interval is *narrower* than F27's bootstrap width of
+0.86pp.** This is the interesting one and it runs against the project's
+house reading of M1. The naive expectation from F31/F33 is that a `t` interval is
+about twice the bootstrap. But F40 measured the 8-thread machine as quiet — the
+null's whole six-block interval was 0.47pp wide, and block spreads were 0.53 and
+0.44pp — while F27's bootstrap came from a *single* 20-round run and inherited
+its outliers. F33's P32.5 already found the bootstrap coming out *wider* than
+the `t` on a dirty run. If this fails, M1's factor-of-two holds even on a quiet
+configuration and I have over-read F40's floor.
+
+**P41.4 — prefill resolves this time, reversing F27.** F27 reported prefill at
+**−1.15% [−1.62, +0.12]**, which did not clear zero. F40 put the 8-thread
+prefill floor at **±0.12pp**, so −1.15% is roughly **10× the floor** and should
+resolve comfortably. A barrier change has every reason to move prefill — F27
+measured −45% there at 28 threads. If prefill comes back *unresolved* again, the
+prefill floor from F40 is too optimistic.
+
+**P41.5 — the OpenMP arm's median is 45.5–47.5 tok/s**, comparable to F40's
+46.91 and 46.79. This is the M5 check that makes comparing against F40's floor
+legitimate at all, and it is the mistake F39 made. If it comes back at 42 or 39,
+the floor comparison is void and this run says nothing about F40.
+
+**P41.6 — the corrected gate passes on both runs**, as it did on both of F40's
+(worst-block IQR 0.65–1.06% against a 2% budget).
+
+### What each failure would mean
+
+- P41.1 fails → F40's floor is wrong, and the 8-thread configuration is not the
+  quiet one it appeared to be.
+- P41.3 fails → the bootstrap-vs-`t` relationship is stable after all, and F40's
+  "quiet machine" reading was over-read from a null.
+- P41.4 fails → the prefill floor specifically is too optimistic, which matters
+  because M13 currently says prefill is a good control at 8 threads.
+- P41.5 fails → nothing else in this run is interpretable, and it should be
+  re-run rather than reported.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
