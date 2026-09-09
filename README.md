@@ -364,7 +364,7 @@ where your time goes.
 | Constraint | How it is enforced | Status |
 |---|---|---|
 | **Zero overhead when disabled** | Everything behind `TOKENSCOPE_ENABLED`. Off ⇒ macros expand to nothing; no symbol, no branch, no storage. | ✅ verified against the symbol table |
-| **Under 2% when enabled** | Measured with interleaved arms and bootstrap CIs, not assumed. | ✅ 8 threads, level 3, **static and shared both between +0.3% and +1.2%** — static +1.16% [+0.86, +1.37] and shared +0.31% [+0.01, +0.52] in one invocation ([F31](docs/FINDINGS.md)), static +1.16% [+0.67, +1.87] in session 5 ([F25](docs/FINDINGS.md)). **Quote the range, not one interval:** F31 re-measured F30's shared figure on unrebuilt binaries two hours later and got a *non-overlapping* interval, so the bootstrap CI is a within-run interval and understates the real spread. At 28 threads: +0.66% [-1.85, +4.18], uncertified — see [F10](docs/FINDINGS.md) |
+| **Under 2% when enabled** | Measured with interleaved arms, rotating order, and a between-block `t` interval — not assumed. | ✅ 8 threads, level 3, **every build under 1%**: static **+0.56% [-0.05, +1.16]**, ninja-shared **+0.92% [+0.38, +1.46]**, MSBuild-shared **+0.77% [+0.05, +1.48]** ([F36](docs/FINDINGS.md)), three blocks each, and the three builds cannot be told apart. Prefill is the control and is unresolvable everywhere. **Earlier single-run bootstrap figures (+1.16%, +0.87%) were too narrow** — F36's intervals contain them all |
 | **No new dependencies** | C++17 standard library on the engine side. Python stdlib for analysis. | ✅ |
 | **No locks in the hot path** | Thread-local buffers, merged at flush. | ✅ |
 | **Deterministic, not sampled** | Explicitly placed scopes, so the trace is *interpretable* rather than statistical. | ✅ |
@@ -407,28 +407,29 @@ every build pair in one invocation, because session 5 tried to compare two
 builds across two invocations thirteen minutes apart and the noise floor moved
 more than the effect in between.
 
-The best statement of the answer is not a ratio. Across three builds — static,
-Ninja-shared and MSBuild-shared — measured together at level 3:
+Across three builds measured together at level 3, three blocks each, with an
+interval that can see drift between blocks:
 
 ```
-decode, median tok/s      static   nshared    shared    spread
-  A: compiled out          46.19     46.11     45.93     0.58%
-  C3: active level 3       45.66     45.73     45.78     0.27%
+decode, level-3 overhead     t interval, 3 blocks
+  static  (ninja,  static)    +0.56%  [-0.05, +1.16]
+  nshared (ninja,  shared)    +0.92%  [+0.38, +1.46]
+  shared  (MSBuild, shared)   +0.77%  [+0.05, +1.48]
 ```
 
-**The instrumented builds all run at the same speed; the differences live in
-the baselines.** Level 3 costs enough to dominate whatever linkage does, so
-"what does it cost me to profile" comes out the same in all three, to a quarter
-of a percent. Overhead-as-a-ratio has a denominator that varies more than its
-numerator, which is why the shared build posts the *lowest* overhead — its
-baseline is slower, not its instrumentation cheaper.
+**Every build is under 1%, and they cannot be told apart** — every pairwise
+difference spans zero, as does the pure-linkage contrast (-0.03% [-0.45, +0.24])
+and the pure-generator contrast (+0.07% [-0.40, +0.55]). Prefill is the control
+and is unresolvable everywhere.
 
-And a warning worth more than the number. F31 re-measured F30's shared figure
-on the **same unrebuilt binaries** two hours later and got a **non-overlapping
-interval** — +0.87% [+0.55, +1.19] against +0.31% [+0.01, +0.52], both
-"certified". The bootstrap resamples within one invocation and knows nothing
-about the next one. Treat any single interval here as a lower bound on the
-uncertainty.
+And a warning worth more than the number. Session 5 and 6 measured the *same*
+quantity on the *same unrebuilt binaries* and got **non-overlapping** intervals
+— +0.87% [+0.55, +1.19] and +0.31% [+0.01, +0.52], both passing the harness's
+gate. A bootstrap resamples within one invocation and knows nothing about the
+next one. The block interval above contains both, so those runs never
+disagreed; only their intervals did. **Quote the `--blocks` interval, never a
+single run's bootstrap** — and read
+[`docs/04-project-audit.md`](docs/04-project-audit.md) before quoting either.
 
 And the number is not an artifact of a full buffer, which would make recording
 look cheap by doing less of it:

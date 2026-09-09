@@ -158,9 +158,12 @@ commits from sessions 2 and 3 are pushed.
 - Thread-count sweep, 1 to 28, throughput from the uninstrumented build
   (FINDINGS F10).
 - Python analysis: summary, per-token, outliers-with-cause, per-layer, diff.
-- Overhead: level 3 is **+1.16% [+0.67, +1.87]** at 8 threads, **static** build,
-  certified in session 5 (F25), n=20; and **+0.87% [+0.55, +1.19]** for the
-  **shared** build, certified in session 6 (F30). It was +0.67% [+0.12,
+- Overhead: **settled in session 6 (F36)** at 8 threads, level 3, three blocks
+  each — static **+0.56% [-0.05, +1.16]**, ninja-shared **+0.92% [+0.38,
+  +1.46]**, MSBuild-shared **+0.77% [+0.05, +1.48]**. Every build under 1% and
+  the three cannot be told apart; linkage and generator contrasts both span
+  zero. Supersedes F25's +1.16% and F30's +0.87%, whose single-run bootstraps
+  were too narrow — F36's intervals contain them. It was +0.67% [+0.12,
   +1.67] in session 1; session 2 tried at 8 and 28 threads and the harness
   **refused to certify either**, because the machine's noise floor had moved
   (baseline IQR 2-4%, wider than the effect). Quote a number with its thread
@@ -199,7 +202,7 @@ The short version:
 | ~~No Perfetto screenshot~~ | **Sidestepped in session 5.** `tools/trace_svg.py` renders one token from a committed trace as a theme-aware SVG, and the README opens with it. That is better than a screenshot for a repo -- it is text, it diffs, and anyone who clones can regenerate it -- but it is **not** the Perfetto UI, and a post that wants to show the UI still wants a screenshot |
 | ~~No thread pinning~~ | **Done (F14).** Mechanism confirmed: homogeneous cores drop spread 13%->2% and halve barrier wait. Pinning is not the fix |
 | Upstream issue not filed | Two issues now, and [`03`](03-upstream-issue-draft.md) says which goes first. **The F20 naming defect is not blocked on Linux** and should be filed on its own; the instrumentation proposal still is. **An agent must not write or file it** — see the box at the top of `03` |
-| ~~Shared build's overhead still unmeasured~~ | **Done (F30).** +0.87% [+0.55, +1.19] at level 3, certified. F25 was right that the fix was a harness change and not more reps: `bench_overhead.py` now takes N build pairs with `--pair` and round-robins every arm of every pair together. What is *still* open is the difference between the builds, which came out bounded but unresolved at +0.36pp [-0.32, +1.17] |
+| ~~Shared build's overhead still unmeasured~~ | **Done, and re-done properly (F36).** +0.77% [+0.05, +1.48] over three blocks; indistinguishable from static. Superseded (F30).** +0.87% [+0.55, +1.19] at level 3, certified. F25 was right that the fix was a harness change and not more reps: `bench_overhead.py` now takes N build pairs with `--pair` and round-robins every arm of every pair together. What is *still* open is the difference between the builds, which came out bounded but unresolved at +0.36pp [-0.32, +1.17] |
 | F24 not raised upstream, and `mul_mat_id` untested | Now **+1.62% [+1.10, +2.15]** (F33), one machine, one thread count, one model, no NUMA — and NUMA is what the constant was tuned for. **F33 also found the prefill control drifting negative**, so some unknown fraction may be code layout rather than chunking (audit M6) |
 
 ---

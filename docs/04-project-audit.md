@@ -214,15 +214,20 @@ is known to be wrong even though its direction may stand.
 | **F24** / **F33** | One line (`nth*4`→`nth*2`), **+1.62% [+1.10, +2.15]** decode over six blocks — the only speedup this project claims. F24's `+1.95% [+1.59, +2.35]` is superseded | **D, re-measured.** Effect real; **the prefill control is no longer a clean null** (-1.30% [-2.67, +0.06]), so part of it may be layout (M6) |
 | **F25** | Static overhead +1.16% [+0.67, +1.87]; shared build's answer eaten by its noise floor | ⚠ D |
 | **F30** | Shared overhead +0.87% [+0.55, +1.19] | ⚠ **D, corrected by F31** |
-| **F31** | Two certified intervals for one quantity that do not overlap; **level 3 is a leveller** | C for the structural claim, ⚠ D for the percentages |
+| **F31** | Two certified intervals for one quantity that do not overlap | **A for that** (it is a fact about two runs). **Its "level 3 is a leveller" claim and its generator effect are both RETRACTED by F36** |
+| **F36** | The overhead numbers settled: static **+0.56% [-0.05, +1.16]**, ninja-shared **+0.92% [+0.38, +1.46]**, MSBuild-shared **+0.77% [+0.05, +1.48]**, three blocks each. Linkage null, generator null | **D, properly measured.** The interval contains every earlier estimate of the same quantity |
 
-**F31's structural claim is the durable part and is not Tier D:** across static,
-Ninja-shared and MSBuild-shared, the *instrumented* arms sit within 0.27% of
-each other (0.06% on prefill) while the *compiled-out* arms spread twice as far.
-Level-3 instrumentation dominates whatever linkage does. So overhead-as-a-ratio
-has a denominator that varies more than its numerator, and the shared build
-posts the lowest overhead because its baseline is slower — not because
-instrumenting it is cheaper.
+**That paragraph used to say F31's "leveller" claim was the durable, non-Tier-D
+part. F36 retracted it, and the mistake is the most instructive one in this
+document.** The claim compared how far the instrumented arms spread against how
+far the compiled-out arms spread — six numbers within half a percent of each
+other. In F36 the ordering *reverses* on decode (A 0.16% vs C3 0.32%, against
+F31's 0.58% vs 0.27%). It was noise given a mechanism.
+
+**Rule: a claim built from differences between Tier D numbers inherits Tier D,
+however structural it sounds.** Being a comparison of spreads rather than a
+percentage is what disguised it, and what let it be marked exempt from the
+re-measurement that would have caught it.
 
 ---
 
@@ -237,6 +242,8 @@ instrumenting it is cheaper.
 | **M3** | The instability is *within* one invocation (0.47pp between halves of the same run) and its cause is unidentified — not position, not autocorrelation, not the estimator | **Open.** Blocks contain it; nothing explains it |
 | **M8** | **Blocks manufacture confidence under sustained contamination.** F34's three blocks agreed to 0.55pp and excluded zero while reporting a physically impossible result | Guarded by the gate + plausibility check (F34); **the underlying limitation is permanent** |
 | **M9** | The machine is shared with whatever else the user is running. A 5.17 GiB `javaw` process voided a 44-minute run | `preflight_ram()` refuses to start; **it cannot detect load that arrives mid-run** |
+| **M10** | **Throughput swings between ~40 and ~46 tok/s on a minutes-to-hours timescale, bimodally, with no identified cause.** Not thermal (more cooling gave a lower result; a 30-run post-cooldown curve was flat), not scheduler migration (pinning made it worse). It is ~10x the effects being measured and decides whether a run passes the gate | **Open, and now the largest unknown in the project** |
+| **M11** | A claim built from *differences between* Tier D numbers inherits Tier D. F31's "level 3 is a leveller" was marked non-Tier-D and exempt from re-measurement; F36 reversed it | Recorded; the exemption was the error |
 | **M4** | F30 and F31 differ in arm order, round length **and** time simultaneously, so the rotation explanation is a story that fits, not evidence | **Open.** The same disease F30 diagnosed in F25 |
 | **M5** | Cross-session comparison of absolute throughput is worthless — the same compiled-out binary read 42.94 and 45.92 tok/s in two sessions (**+6.9%**, ~6× the effects being resolved) | Documented; a standing rule |
 | **M6** | Code layout is not held constant in F24's A/B: stock and patched differ by **1,137,994 bytes** across most of the image. Layout alone can move throughput ~1% | **Open, and now supported by evidence.** F33's prefill control — a workload the patch cannot reach — has come back negative in every run (-1.30% [-2.67, +0.06] over six blocks). Separating layout from chunking needs an arm that changes layout without changing behaviour; not done |
@@ -381,11 +388,13 @@ teaches something and an unanswerable one teaches nothing.
 - F28, F26, F29, F5, F8, F18/F22 — all facts about code.
 - F20 as a defect report about llama.cpp naming.
 
-**Safe only with a `t` interval attached** — nothing in Tier D should be quoted
-until re-measured with `--blocks ≥ 3` **on a machine that passes the gate**.
-**F24 has been** (F33: +1.62% [+1.10, +2.15], with M6 attached). Still
-outstanding: **F25, F30 and F31's percentages** — the run that would have closed
-them was voided by F34 and has to happen again.
+**Safe only with a `t` interval attached.** Both outstanding items are now
+done: **F24** (F33: +1.62% [+1.10, +2.15], with M6 attached) and **the
+overheads** (F36: every build under 1%, three blocks). F25's, F30's and F31's
+own percentages are superseded by F36 and should not be quoted — cite F36.
+
+**Not safe because it has been retracted:** F31's generator effect (+0.40%) and
+its "level 3 is a leveller" structural claim. Both are gone (F36).
 
 **Not safe to generalise at all:**
 
@@ -453,11 +462,14 @@ exercised by CI.
 
 ## 8. Open questions, ranked
 
-1. **Re-measure the remaining Tier D numbers with `--blocks ≥ 3`.** F24 is
-   done (F33). **F25, F30 and F31's overhead percentages are not**, and until
-   they are, the only quotable percentage in this project is F24's.
-   `bench_overhead.py --blocks 3` with the static and shared pairs is one
-   ~45-minute run and closes all three.
+1. **Explain what varies between ~40 and ~46 tok/s on this machine.** Not
+   thermal — an 8-minute cooldown produced a *lower* result than a 7-minute one,
+   and a 30-run curve after cooling was flat to -1.16%. Not scheduler
+   migration — pinning made it worse. It is bimodal rather than smooth, it is
+   ~10x the effects being measured, and it decides whether a run passes the
+   gate. **This is now the largest unknown in the project.** Note `0x5555` is
+   *not* one-thread-per-P-core on this topology (F36 sidebar), which may also
+   be F14's "unexplained anomaly".
 2. **Separate layout from chunking in F24 (M6).** Build a third arm that changes
    code layout without changing behaviour and measure it against stock. If it
    moves decode, part of F24 is layout. This is the single most valuable
