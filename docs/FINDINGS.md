@@ -6343,6 +6343,47 @@ exist — but every future run can now settle it.
 
 ---
 
+## P45 — the layout arm, redesigned so it does not depend on a floor measured in a different regime
+
+[`F43`](#f43--void-the-layout-arms-first-run) was voided because the machine was
+in F44's **slow regime** (A-arm 40.37) while F40's floor was measured in the
+**fast** one (46.78-46.91). The machine has now been slow for twenty-five
+minutes and there is no way to summon the fast regime on demand.
+
+**So the floor comes with the run instead of from history.** Two `--blocks 3`
+runs, back to back, same session, same regime:
+
+1. **the null** — `bench-stock.exe` vs `bench-layoutctl.exe`, one byte of dead
+   code apart, which F39/F40 established reports nothing
+2. **the layout arm** — `bench-stock.exe` vs `bench-pad.exe`, a verified +16-byte
+   shift of everything after `mul_mat`
+
+Both now record a `timeline`, so each run can be checked afterwards for whether
+it spanned a regime switch — the first runs in this project that can be.
+
+**P45.1 — the null still reports nothing in the slow regime.** Its `t` interval
+contains zero. If it does not, the slow regime is not merely slower but
+*untrustworthy*, and no measurement taken in it counts.
+
+**P45.2 — the null's interval is WIDER in the slow regime than F40's ±0.24pp
+fast-regime floor.** The slow regime showed a 2.65% baseline IQR against ~1%
+fast, so its floor should be correspondingly worse. This is the prediction that
+justifies re-measuring the floor rather than reusing F40's.
+
+**P45.3 — the layout arm does not resolve either**, and its point estimate is
+within 0.5pp of the null's. This is P43.1/P43.2 restated for the matched design.
+
+**P45.4 — |layout| < 1.0pp**, so a 16-byte shift cannot account for F24's
++1.62%. Unchanged from P43.3, and still the prediction that matters for M6.
+
+**P45.5 — both runs stay in one regime**, i.e. neither timeline shows a step of
+the size F44 recorded. The runs are ~25 minutes and F44 saw the fast regime last
+only three; but the slow regime has now held for twenty-five, so persistence is
+plainly not symmetric between them. If a run does span a switch, the timeline
+will show it and that run is void by the same rule that voided F43.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
