@@ -6288,6 +6288,25 @@ minute — but that recovery finished long before the interesting thing happened
 This is the most useful prediction failure of the session, because the whole
 prediction set was built on a frame that the data discards.
 
+### Four more candidates checked while it was in the slow state
+
+Checked during a confirmed slow period (three probes: 40.07, 40.20, 40.45), so
+these are observations of the machine *while* throttled, not of it in general:
+
+| candidate | measured | verdict |
+|---|---|---|
+| battery vs AC | `PowerOnline: True`, 87%, not charging | **not it** — on AC throughout |
+| Windows power-plan cap | `PROCTHROTTLEMAX` = **100%** on both AC and DC (Balanced scheme) | **not it** — the OS is not capping |
+| memory pressure | 6.2 GB free against an 840 MB model | **not it** |
+| other processes | CPU load **1%**, nothing above idle | **not it** |
+
+So whatever holds the machine at 40.9 is below the OS: firmware, EC or vendor
+thermal policy on a Lenovo chassis, none of which this project can read. Listed
+so the next session does not spend the same twenty minutes. **F37 refuted four
+candidates and these are four more**; what remains untested is the page-cache
+and standby-list state the audit names, which needs a deliberate cache-eviction
+experiment rather than an observation.
+
 ### What it means for every measurement here
 
 **A 25-minute run can span a regime switch**, and the two regimes differ by 12.6%
