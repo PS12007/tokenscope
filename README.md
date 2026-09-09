@@ -323,11 +323,17 @@ this machine that is not a convenience:
 ```
   GGML_OPENMP=OFF vs the default ON, decode, 20 interleaved rounds per arm
 
-  mid.gguf     8 threads    -2.06%  [-2.42, -1.56]   certified
-  mid.gguf    28 threads   -54.17%  [-55.05, -53.31] certified
-  tiny.gguf    8 threads   -13.07%  [-15.35, -10.07] certified
-  tiny.gguf   28 threads   -78.64%  [-80.40, -77.60] certified
+  mid.gguf     8 threads    -2.06%  [-2.42, -1.56]   see note
+  mid.gguf    28 threads   -54.17%  [-55.05, -53.31] resolved
+  tiny.gguf    8 threads   -13.07%  [-15.35, -10.07] resolved
+  tiny.gguf   28 threads   -78.64%  [-80.40, -77.60] resolved
 ```
+
+Those intervals are single-run bootstraps. The three large rows are 13x to 78x
+this machine's drift term, so their width does not matter to the conclusion.
+**The -2.06% row is not** — it sits in the band where a single run's interval
+runs about half as wide as the truth (F31, F36), and it has not been
+re-measured with `--blocks`. Read it as "a small slowdown, size uncertain".
 
 39.09 tok/s becomes 17.91. The throughput number alone would only say *something*
 got slower; the traces say **which** something. Release latency per unit work --
@@ -373,63 +379,43 @@ where your time goes.
 
 ### Measured cost
 
-24-layer / 768-embd / 220 M-param model, 8 threads, MSVC Release, 20 interleaved
-repetitions per arm. Full method and caveats in
-[`docs/02-overhead-methodology.md`](docs/02-overhead-methodology.md).
+24-layer / 768-embd / 220 M-param model, 8 threads, MSVC Release. Arms are
+interleaved with a rotating order, and the interval is a `t` interval over
+three independent blocks -- not a single run's bootstrap. Full method and
+caveats in [`docs/02-overhead-methodology.md`](docs/02-overhead-methodology.md),
+and the trust ladder in [`docs/04-project-audit.md`](docs/04-project-audit.md).
 
 ```
-decode (tg256, 8 threads, 20 interleaved reps per arm)
-  arm                       median tok/s     IQR   overhead vs A
+decode (tg256, 8 threads, 15 reps x 3 blocks per arm)
+  build                       overhead vs its own compiled-out arm
   --------------------------------------------------------------------
-  A: compiled out                  42.94    1.1%                  -
-  B: in, level 0                   42.84    0.8%    +0.23%  [-0.20, +0.92]
-  C1: active level 1               42.58    1.0%    +0.86%  [+0.34, +1.58]
-  C2: active level 2               42.70    1.2%    +0.56%  [+0.08, +1.54]
-  C3: active level 3               42.45    0.7%    +1.16%  [+0.67, +1.87]
+  static   (ninja,  static)     +0.56%  [-0.05, +1.16]
+  nshared  (ninja,  shared)     +0.92%  [+0.38, +1.46]
+  shared   (MSBuild, shared)    +0.77%  [+0.05, +1.48]
+
+  baseline IQR 0.83% / 0.97% / 0.93%   block spread 0.46 / 0.43 / 0.57 pp
 ```
 
-Level 0 has an interval containing zero, so the honest reading there is "not
-distinguishable from zero" — which is what "compiled in but switched off"
-should cost. **Level 3 — every graph node event on every worker thread, ~2.9
-million records over the run — is +1.16%, CI [+0.67, +1.87].** Both ends of
-that interval are inside the 2% budget, which is the part that matters; the
-claim survives the pessimistic end of the measurement, not just the point
-estimate. Prefill is the control and stays uncertified at every level.
+**Level 3 -- every graph node event on every worker thread, ~2.9 million
+records over the run -- costs under 1% on decode, in every build.** Every
+pairwise difference spans zero, as do the pure-linkage contrast (-0.03%
+[-0.45, +0.24]) and the pure-generator contrast (+0.07% [-0.40, +0.55]).
+Prefill is the control and is unresolvable everywhere, which is what makes the
+decode column believable ([F36](docs/FINDINGS.md)).
 
-This supersedes session 1's +0.67% [+0.12, +1.67], which session 2 then failed
-to reproduce twice on a noisier machine. Same workload, same thread count, same
-binary pair, rebuilt and re-run in session 5 ([F25](docs/FINDINGS.md)).
+The static row spans zero, so strictly it is bounded under +1.16% rather than
+resolved away from zero. Three blocks is three numbers, `t(2) = 4.303`, and the
+interval is wide on purpose.
 
-**The shared build costs the same, and finding that out cost two harness
-changes and one retracted number** ([F30](docs/FINDINGS.md),
-[F31](docs/FINDINGS.md)). `bench_overhead.py` now round-robins every arm of
-every build pair in one invocation, because session 5 tried to compare two
-builds across two invocations thirteen minutes apart and the noise floor moved
-more than the effect in between.
-
-Across three builds measured together at level 3, three blocks each, with an
-interval that can see drift between blocks:
-
-```
-decode, level-3 overhead     t interval, 3 blocks
-  static  (ninja,  static)    +0.56%  [-0.05, +1.16]
-  nshared (ninja,  shared)    +0.92%  [+0.38, +1.46]
-  shared  (MSBuild, shared)   +0.77%  [+0.05, +1.48]
-```
-
-**Every build is under 1%, and they cannot be told apart** — every pairwise
-difference spans zero, as does the pure-linkage contrast (-0.03% [-0.45, +0.24])
-and the pure-generator contrast (+0.07% [-0.40, +0.55]). Prefill is the control
-and is unresolvable everywhere.
-
-And a warning worth more than the number. Session 5 and 6 measured the *same*
-quantity on the *same unrebuilt binaries* and got **non-overlapping** intervals
-— +0.87% [+0.55, +1.19] and +0.31% [+0.01, +0.52], both passing the harness's
-gate. A bootstrap resamples within one invocation and knows nothing about the
-next one. The block interval above contains both, so those runs never
-disagreed; only their intervals did. **Quote the `--blocks` interval, never a
-single run's bootstrap** — and read
-[`docs/04-project-audit.md`](docs/04-project-audit.md) before quoting either.
+**Getting here took six measurements across three sessions, and the earlier
+five were all too confident.** Session 1 said +0.67% [+0.12, +1.67]; session 2
+could not reproduce it twice; session 5 said +1.16% [+0.67, +1.87]; session 6
+said +0.50%, then +0.87% [+0.55, +1.19], then +0.31% [+0.01, +0.52] -- the last
+two for the *same quantity on the same unrebuilt binaries*, with
+**non-overlapping** intervals, both passing the harness's gate. The block
+interval above contains every one of those point estimates. **Those runs never
+disagreed; only their intervals did**, because a bootstrap resamples inside one
+invocation and knows nothing about the next one.
 
 And the number is not an artifact of a full buffer, which would make recording
 look cheap by doing less of it:
