@@ -6849,6 +6849,54 @@ patch file, which is why it was removed by the wrong tool.
 
 ---
 
+## P49 — shorter blocks, because the gate measures exactly what the machine does wrong
+
+Four attempts at M6 have now failed the gate: 2.65%, 9.37%, 2.21%, 2.31%
+(F43, F45, F47). Waiting for a still machine has not worked — probing right now
+gives **42.24, 41.20, 41.48, 41.74**, a 2.4% spread across four probes, on the
+low level.
+
+**The gate is `worst-block baseline IQR ≤ 2%`, and IQR over a block is inflated
+by drift *within* that block.** At 20 rounds per arm a block spans about eight
+minutes, which is exactly the timescale on which this machine moves (F44/F46).
+So the design has been handing the gate the thing the gate objects to.
+
+**The change: 6 blocks of 10 rounds instead of 3 blocks of 20.** Identical total
+work — 120 invocations per arm, ~25 minutes — but each block spans ~4 minutes
+instead of ~8, so it can contain half as much drift. It also doubles the block
+count, which takes `t` from 4.303 to **2.571** and tightens the interval for
+free.
+
+The cost, stated because it is real: a block median is now taken over 10 rounds
+rather than 20, so each block estimate is individually noisier and the
+block-to-block scatter may rise. This trades within-block spread (which the gate
+judges) against between-block spread (which the interval absorbs), and it is not
+obvious a priori which wins.
+
+Same matched design as P45/P47: layout arm then null, back to back, so the floor
+comes with the run.
+
+**P49.1 — the worst-block baseline IQR drops below 2% on at least one of the two
+runs.** This is the whole point. If halving block duration does not improve the
+gate, then the spread is not drift-driven and four failed gates need a different
+explanation.
+
+**P49.2 — the per-block IQRs are lower than F47's** (which were 2.06/2.21/0.99
+and 2.31/0.70/1.85), even if some still exceed 2%.
+
+**P49.3 — the block-to-block scatter rises** relative to F47's 0.12pp and
+0.06pp, because 10-round medians are noisier than 20-round ones. If it does not
+rise, 20 rounds was more than the estimate needed.
+
+**P49.4 — the six-block `t` interval on the layout arm still contains zero and
+is within 0.5pp of the null's.** The substance is unchanged from P43.1, P45.3
+and P47.4; only the design around it has moved.
+
+**P49.5 — |layout| < 1.0pp.** Fourth time of asking, and it has still never been
+scored against a gate-passing run.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
