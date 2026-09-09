@@ -17,6 +17,10 @@
 
 ---
 
+> **New reader?** [`docs/06-overview.md`](docs/06-overview.md) is the whole
+> project in plain terms: what it is, what it found, what each result is worth,
+> and what to do next.
+
 ## The problem
 
 Your llama.cpp run is producing 18 tok/s. You expected 30. Why?
