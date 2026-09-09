@@ -5620,6 +5620,63 @@ and the prefill trend survive. Neither is done.
 
 ---
 
+## P40 — predictions before the 8-thread null, which decides whether F36 measured anything
+
+`HANDOFF.md` section 5 item 1b, opened by F39 rather than planned. F39 measured
+the false-positive floor at **16 threads**, to match F33 and so answer the
+question about F24. Every overhead number in **F36** — the settled ones, the
+ones section 6 of the audit says are safe to quote — was taken at **8**, and all
+three of their intervals overlap F39's null interval. Comparing across thread
+counts is what **M5** forbids, so the overlap is currently a suspicion rather
+than a finding. This run removes the confound: same null pair, same protocol,
+`-t 8`, two independent three-block runs.
+
+**P40.1 — the decode `t` interval contains zero at six blocks.** The 16-thread
+null did, twice, and there is still nothing to detect. If this fails, the
+harness invents decode effects at 8 threads and F36 is in far more trouble than
+an overlap.
+
+**P40.2 — the 8-thread decode interval is *narrower* than the 16-thread one**
+(half-width under 0.46pp). F10 established that on this machine nothing beats
+2.2× and every thread past four turns into barrier wait; more threads means more
+of the measurement is scheduling. Eight threads should be the quieter
+configuration. If it comes back *wider*, the floor is worse exactly where F36
+lives, and F36's numbers are in more doubt rather than less.
+
+**P40.3 — F36's static overhead, `+0.56% [-0.05, +1.16]`, still overlaps this
+null's decode interval.** This is the prediction the run exists for. F36's own
+interval already contains zero, so the interesting outcome is not whether it
+overlaps but by how much: if the null's interval is `[-0.3, +0.3]`-ish then
+`+0.56%` sits just outside and F36's static number survives as a marginal
+measurement. If the null is as wide as 16 threads', all three of F36's numbers
+are indistinguishable from nothing and section 6's provisional wording becomes
+the settled one.
+
+**P40.4 — prefill resolves again, and its block estimates rise monotonically
+within at least one of the two runs.** This is the test of **M12**, and it is
+the one I am least sure of. F39 saw the trend in both runs at 16 threads and
+inferred a property of the harness. If prefill comes back clean at 8 threads,
+that inference was too fast: the trend would be a property of *16-thread
+prefill* and M12 would be overstated in the form it was just written into the
+audit. I would rather find that out now than have it found later, so this
+prediction is deliberately the one most likely to embarrass the previous
+finding.
+
+**P40.5 — the A-arm `tg64` median is 43–47 tok/s, i.e. *faster* than F39's
+16-thread 42.50.** A consistency check on F10 rather than on this run: if 8
+threads is not faster than 16 on decode, something is wrong with the setup, not
+with the statistics. F36's A arms read 45.98/45.99/46.05.
+
+**P40.6 — the corrected gate (D9) passes on at least one of the two runs.**
+F39's runs failed it on worst-block IQR (2.53%, 2.69% decode) despite being
+clean nulls. Eight threads should be quieter per P40.2, and a run that both
+passes the gate and returns a null is the cleanest possible statement of the
+floor. If both runs fail the gate again, the floor is being measured on a
+machine that never clears its own bar, which is worth knowing and is an argument
+about the bar rather than the floor.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
