@@ -74,13 +74,19 @@ is a ladder rather than a badge.
 | Tier | What it means | How to tell | Examples |
 |---|---|---|---|
 | **A — structural** | Not statistical at all. True by construction, code reading, symbol table or a CI assertion that fails the build | No interval quoted, because none is needed | zero-overhead-when-off; node/barrier alternation; F22's two-module buffer identity; F8/F20 naming coverage |
-| **B — large effect** | Effect is ≫10× the machine's drift term (~0.5pp) | Interval width is irrelevant to the conclusion | F27 (−54% decode), F28 (76–83% of release latency), F10 (2.2× ceiling), F14 (2.88× P/E), F7/F19/F21 byte law ratios |
+| **B — large effect** | Effect is ≫10× the machine's drift term (~0.5pp) | Interval width is irrelevant to the conclusion | F27's −54% / −78% / −13% rows (**but not its −2.06% row**), F28 (76–83% of release latency), F10 (2.2× ceiling), F14 (2.88× P/E), F7/F19/F21 byte law ratios |
 | **C — medium, structured** | Effect is several × drift, and supported by a *structure* (control arms, non-overlapping ranges, n≥12) rather than by one interval | Quote with its n and its control | F9 imbalance/release split, F23 chunking-mode ratios (n=12, two non-overlapping comparisons) |
 | **D — near the floor** | Effect is **1–3×** the drift term. This is where every overhead and throughput percentage lives | **Needs a between-block `t` interval. A bootstrap interval here is roughly half as wide as the truth** | F24 (now +1.62%), F25 (+1.16%), F30, F31's three overheads |
 
 **Everything in Tier D published before session 6 was measured with a
 within-run bootstrap and is over-precise.** Not necessarily wrong in sign — just
 narrower than the evidence supports.
+
+**Tier is a property of a number, not of a finding.** F27 is the trap: its
+headline is −54% (Tier B, safe at any interval width) but the same table's
+8-thread row is −2.06% (Tier D, never re-measured). A finding can carry rows
+from two different tiers, and this document filed F27 under B for a session
+before anyone noticed.
 
 ### Why Tier D is broken, precisely
 
@@ -183,7 +189,8 @@ is known to be wrong even though its direction may stand.
 | **F15** | Fusion removes 10.6% of barriers and buys nothing — **F9's recommendation was wrong** | B |
 | **F23** | ggml already solves core heterogeneity for big matmuls via work stealing, and a thread count can turn it off | C (n=12) |
 | **F26** | **Every measurement in the project was on the OpenMP path, and five documents said the opposite** | A |
-| **F27** | ggml's own barrier is not the cheap one: −54% of decode at 28 threads | B |
+| **F27** | ggml's own barrier is not the cheap one: −54% of decode at 28 threads | **B for the large rows, D for one.** −54.17%, −78.64% and −13.07% are 13–78× the drift term and safe. **−2.06% at 8 threads is Tier D**, was a single-run bootstrap, and has never been re-measured with `--blocks` |
+| **F37** | Four candidate causes for M10 tested and all refuted — thermal, thread placement, CPU frequency, workload. Confirms the logical-processor numbering is interleaved, so `0x5555` **is** one thread per P-core | A (they are facts about tests that were run). **Corrects a claim this document published**, and eliminates F14's first candidate |
 | **F28** | The barrier this profiler blamed on ggml was **its own allocator**, 76–83% of all release latency | B |
 
 ### Models and scaling
@@ -214,7 +221,8 @@ is known to be wrong even though its direction may stand.
 | **F24** / **F33** | One line (`nth*4`→`nth*2`), **+1.62% [+1.10, +2.15]** decode over six blocks — the only speedup this project claims. F24's `+1.95% [+1.59, +2.35]` is superseded | **D, re-measured.** Effect real; **the prefill control is no longer a clean null** (-1.30% [-2.67, +0.06]), so part of it may be layout (M6) |
 | **F25** | Static overhead +1.16% [+0.67, +1.87]; shared build's answer eaten by its noise floor | ⚠ D |
 | **F30** | Shared overhead +0.87% [+0.55, +1.19] | ⚠ **D, corrected by F31** |
-| **F31** | Two certified intervals for one quantity that do not overlap | **A for that** (it is a fact about two runs). **Its "level 3 is a leveller" claim and its generator effect are both RETRACTED by F36** |
+| **F31** | Two bootstrap intervals for one quantity that do not overlap | **A for that** (it is a fact about two runs). **Its "level 3 is a leveller" claim and its generator effect are both RETRACTED by F36** |
+| **F34** | A void run: 870 MB free against an 840 MB model produced *negative* overhead in all three pairs, and the tightest block agreement in the run | A (a fact about a failure). Source of M8 and the gate-first ordering |
 | **F36** | The overhead numbers settled: static **+0.56% [-0.05, +1.16]**, ninja-shared **+0.92% [+0.38, +1.46]**, MSBuild-shared **+0.77% [+0.05, +1.48]**, three blocks each. Linkage null, generator null | **D, properly measured.** The interval contains every earlier estimate of the same quantity |
 
 **That paragraph used to say F31's "leveller" claim was the durable, non-Tier-D
