@@ -264,6 +264,7 @@ is known to be wrong even though its direction may stand.
 | **F43** | **VOID.** The layout arm's first run — A-arm 40.37 tok/s against F40's floor at 46.8, gate 2.65% | A (a fact about a failure) |
 | **F44** | **M10 caught switching.** Thirteen identical probes: four at **46.09**, then eight at **40.92**, a **12.6% gap**, unprompted transition, nothing else running | **A.** Contradicts this document's own "not two stable regimes" |
 | **F45** | **VOID, both halves.** Layout arm and matched null, gates 9.37% and 5.61%. The layout arm *resolved* at −0.34% with a 0.18pp block spread, from a run whose timeline shows a 50-second excursion onto another level | A (a fact about a failure). **The `timeline` field's first use, and it worked** |
+| **F48** | An incident: `git checkout` on `ggml-cpu.c` silently reverted patch 01 twice; the cold-start checklist caught it. **Verified not to have invalidated F42/F47** — the maps show the only symbol difference between the arms is the pad and every other function moved 0 or +16. Incidentally the **strongest check of zero-overhead-when-off the project has**: instrumentation source present vs physically absent gives identical code for all 14,419 functions | **A.** A fact about builds, and a new trap |
 | **F47** | The layout arm's best pair: **−0.00% [−0.18, +0.18]** against a matched null of −0.11%. Gate marginal both sides, so uncertified — but three attempts on three levels all land far below F24's +1.62%, and the arm with a real perturbation came back closer to zero than the arm with none. **Corrects F46: a fourth baseline value (44.8) means "discrete levels" overstates the data** | **D, uncertified but bounding.** Moves M6 from "unknown fraction" to a bounded one |
 | **F46** | The slow level is **not load, not idle-reversible, and not the page cache** — the last refuted from existing data, so no `EmptyStandbyList` download is needed. Temperature is unreadable on this chassis. **Correction to F44: at least three levels (40.9 / 43.5 / 46.0), not two** | **A.** Eleven M10 candidates now refuted; the survivor is below the OS |
 | **F41** | F27's last unchecked row re-measured: **decode −2.15% [−2.28, −2.02]** (survives), **prefill −0.43%** against F27's −1.15%. And the unpredicted part: **two runs of the same comparison gave `t` intervals 7× different in width** (0.14pp vs 0.95pp) with point estimates agreeing to 0.02pp | **D, properly measured.** Source of **M14** |
@@ -390,6 +391,13 @@ Each of these cost real time at least once.
 - **Do not run anything on the machine during a measurement.** Session 6
   contaminated one run by executing a smoke test alongside it, and then
   discarded that run.
+- **Never `git checkout <file>` inside `../llama.cpp`.** Eight files carry
+  `patches/01-instrument.patch` and the clone is modified in place, so a
+  checkout silently discards tokenscope from that file — and everything still
+  builds, because `GGML_TOKENSCOPE=OFF` arms do not notice. F48 did this twice
+  to `ggml-cpu.c`; the cold-start checklist caught it by returning **8 status
+  entries where it says 9**. Undo temporary edits with `git apply -R`, not
+  checkout.
 - **Three trees, one source of truth.** `tokenscope/src/tokenscope.*` is
   authoritative; `llama.cpp/ggml/src/tokenscope/` are copies. `diff` them before
   believing a build.

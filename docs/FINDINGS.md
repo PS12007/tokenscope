@@ -6763,6 +6763,92 @@ warranted, the next set of probes took the confidence back.
 
 ---
 
+## F48 — an incident: `git checkout` on one file silently removed patch 01, and the cold-start checklist caught it
+
+**Not a measurement.** Recorded because it is the kind of thing this project
+exists to catch, and because it was caught by the checklist rather than by care.
+
+### What happened
+
+Building the M6 layout arm needed the pad function inserted into
+`ggml/src/ggml-cpu/ggml-cpu.c` and then removed again. It was removed with
+`git checkout ggml/src/ggml-cpu/ggml-cpu.c` — twice. **That file is one of the
+eight `patches/01-instrument.patch` modifies**, so each checkout also reverted
+tokenscope's instrumentation out of it: the `#include`, `TS_THREAD_PREPARE`,
+`TS_NODE_LOOP_DECL`, `TS_NODE_WORK_END` and `TS_NODE_WAIT_END`.
+
+Nothing failed. The tree still built, the throughput arms still ran, and every
+measurement in F45 and F47 was taken from a tree missing its instrumentation —
+because those arms are `GGML_TOKENSCOPE=OFF` builds, where the macros expand to
+nothing anyway.
+
+**It was found by the cold-start checklist**, run as an end-of-session
+verification: `git -C ../llama.cpp status --short` returned **8 entries where
+the checklist says 9**. That line has now caught something in two consecutive
+sessions.
+
+### Whether it invalidated anything — checked, not assumed
+
+The arms compared in F42 and F47 were built at different points relative to the
+mistake, so `bench-stock.exe` had the compiled-out instrumentation and
+`bench-pad.exe` did not. If that difference had any code footprint, both
+findings would be measuring it as well as the pad.
+
+The linker maps settle it:
+
+```
+  map-stock (instrumentation present, compiled out) : 14,419 functions
+  map-pad   (instrumentation absent, pad added)     : 14,420 functions
+
+  symbols in stock only : 0
+  symbols in pad only   : 1   -- ggml_ts_layout_pad
+  address deltas        : {0: 6689 functions, +16: 7730 functions}
+```
+
+**The only symbol difference is the pad itself, and every other function moved
+by 0 or exactly +16.** So the two arms differed by the pad and nothing else, and
+F42's and F47's conclusions stand.
+
+### The accidental result
+
+This is a **stronger verification of the zero-overhead-when-off claim than the
+project had**. That claim (Tier A) has always been checked against the *symbol
+table*: with `GGML_TOKENSCOPE=OFF` no tokenscope symbol exists. This is a
+stricter statement — two builds of the same tree, one with the instrumentation
+source present and one with it physically absent, produce **identical code for
+all 14,419 functions**. Not "no symbols of ours"; *no difference at all*.
+
+It is recorded as what it is: a by-product of a mistake, not an experiment
+anyone designed.
+
+### The repair, verified
+
+The five additions were restored by hand from `patches/01-instrument.patch` and
+the result checked the only way worth checking — rebuild and compare:
+
+```
+  bench-restored.exe vs bench-stock.exe (built before the mistake)
+      4 bytes differ: 0x110 and 0x3e2ed4, the PE timestamp and its echo
+```
+
+Byte-identical apart from the timestamp. `build-ts-on` then rebuilt clean and
+produced a level-1 trace with `dropped=0`, so the instrumentation works, not
+merely compiles.
+
+### The trap, stated for next time
+
+> **Never use `git checkout <file>` inside `../llama.cpp`.** Eight files carry
+> `patches/01-instrument.patch` and the clone is modified in place, so checkout
+> means *discard tokenscope from that file*, silently, with everything still
+> building. To undo a temporary edit, apply the reverse patch
+> (`git apply -R patches/NN.patch`) or edit it back out by hand.
+
+The reverse-patch route was used correctly for `patches/03` and `patches/04`
+earlier in the same session. `patches/05` was inserted by script instead of as a
+patch file, which is why it was removed by the wrong tool.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:

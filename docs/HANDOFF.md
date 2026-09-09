@@ -25,6 +25,13 @@ grep -o 'GGML_USE_OPENMP' ../llama.cpp/build-ts-on/build.ninja | head -1
                                         # MUST print it -- see F26
 ```
 
+**If `git -C ../llama.cpp status --short` returns 8 entries and not 9, stop.**
+Eight files carry `patches/01-instrument.patch` and the clone is modified in
+place, so `git checkout <file>` in there silently discards tokenscope from that
+file — and nothing fails, because `GGML_TOKENSCOPE=OFF` arms never notice. F48
+did exactly this twice. Undo temporary edits with `git apply -R`, never
+checkout.
+
 **Before any measurement, in addition:**
 
 ```bash
