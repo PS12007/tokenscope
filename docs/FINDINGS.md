@@ -4450,6 +4450,24 @@ standing limitation on everything in this repo.
 
 ## F31 — Two certified intervals for one quantity that do not overlap, and level 3 turns out to be a leveller
 
+> **Two claims here are retracted by [`F36`](#f36--the-overhead-numbers-settled-every-build-under-1-linkage-and-generator-both-null-and-two-f31-claims-retracted).**
+>
+> **The generator effect is gone.** "+0.40% [+0.14, +0.69] slower under MSBuild
+> than Ninja, same linkage" re-measures at **+0.07% [-0.40, +0.55]**. No effect.
+>
+> **"Level 3 is a leveller" does not reproduce, and it was the worse error.**
+> The A/C3 spread ordering *reverses* on decode in F36 (A 0.16% vs C3 0.32%,
+> against F31's A 0.58% vs C3 0.27%). Six numbers within half a percent of each
+> other were read as structure. This document called that the durable,
+> non-Tier-D part; it was Tier D all along, disguised by being a comparison of
+> spreads rather than a percentage.
+>
+> What **stands** is the finding this document is named for: two bootstrap
+> intervals for one quantity did not overlap, and that was real. F36's
+> block-based interval for that quantity, `+0.77% [+0.05, +1.48]`, **contains
+> both** of them — so the runs never disagreed, only their intervals did.
+
+
 **Workload:** `mid.gguf` (24L, F32, 220 M), 8 threads, pp512 / tg256, MSVC
 19.44 Release, `-n 20`, **nine arms across three build pairs in one
 invocation**, rotating order, 1339 s, `tools/bench_overhead.py`.
@@ -4945,6 +4963,119 @@ is the user's call, not an agent's.
 
 F24/F33 is unaffected: it was measured before `javaw` started, at 16 threads,
 and its control behaved (badly, but in a documented way).
+
+---
+
+## F36 — The overhead numbers, settled: every build under 1%, linkage and generator both null, and two F31 claims retracted
+
+**Workload:** `mid.gguf`, 8 threads, pp512 / tg256, three build pairs
+(`static` ninja/static, `nshared` ninja/shared, `shared` MSBuild/shared),
+`--no-level0`, **`--blocks 3`**, n=15, 2020 s, 7.32 GiB free at launch.
+Baseline IQRs **0.83% / 0.97% / 0.93%** on decode — the gate passed for the
+first time since the blocks machinery existed.
+[`P34`](#p34--the-overhead-numbers-with-an-interval-that-can-see-drift) holds
+the predictions, and this is its third attempt: F34 was voided by paging and a
+second attempt was refused by the gate at 3.5–4.7% IQR.
+
+### The result
+
+| build | level-3 overhead, decode | block spread | prefill (control) |
+|---|---|---|---|
+| `static` (ninja, static) | **+0.56% [-0.05, +1.16]** | 0.46pp | +0.13% [-0.13, +0.40] |
+| `nshared` (ninja, shared) | **+0.92% [+0.38, +1.46]** | 0.43pp | -0.01% [-0.37, +0.34] |
+| `shared` (MSBuild, shared) | **+0.77% [+0.05, +1.48]** | 0.57pp | +0.10% [-0.42, +0.62] |
+
+All three agree with each other. Every difference spans zero:
+
+```
+  C3: nshared - static     +0.36pp  [-0.18, +0.82]
+  C3: shared  - static     +0.27pp  [-0.38, +0.71]
+  A:  nshared vs static    -0.03%   [-0.45, +0.24]     pure linkage
+  A:  shared  vs nshared   +0.07%   [-0.40, +0.55]     pure generator
+```
+
+**The honest headline for the README is one number for all builds: level 3
+costs under 1% on decode, and the three builds cannot be told apart.** Prefill
+is the control and is unresolvable everywhere, which is what makes the decode
+column believable.
+
+### This resolves the non-overlapping pair that started everything
+
+[`F31`](#f31--two-certified-intervals-for-one-quantity-that-do-not-overlap-and-level-3-turns-out-to-be-a-leveller)
+found the shared build's overhead at `+0.87% [+0.55, +1.19]` and then
+`+0.31% [+0.01, +0.52]` — two bootstrap intervals for one quantity that did not
+meet. F36's interval for that same quantity is **`+0.77% [+0.05, +1.48]`, and it
+contains both of them.**
+
+The static arm does the same. Four measurements across three sessions:
+
+| | F25 | F30 | F31 | **F36** |
+|---|---|---|---|---|
+| static level-3 | +1.16% | +0.50% | +1.16% | **+0.56% [-0.05, +1.16]** |
+
+F36's interval contains all three earlier point estimates. **There was never a
+contradiction between those runs — there was a contradiction between their
+intervals**, and the intervals were the thing that was wrong. That is exactly
+what F31 diagnosed and what `--blocks` was built to fix, now shown working on
+the quantity that motivated it.
+
+### Two F31 claims do not survive
+
+**The generator effect is retracted.** F31 reported the MSBuild shared build
+`+0.40% [+0.14, +0.69]` slower than the Ninja shared build on decode, with
+identical linkage and flags, and called it the prediction it would least like to
+be wrong about — because it would footnote every cross-generator number in the
+repo. Measured with an interval that can see drift: **+0.07% [-0.40, +0.55]**.
+No effect. The footnote is withdrawn.
+
+**"Level 3 is a leveller" does not reproduce, and it was the worse error.**
+F31 observed that the instrumented arms converged (0.27% apart on decode) while
+the compiled-out arms spread (0.58%), and concluded that overhead-as-a-ratio has
+a denominator varying more than its numerator. F36:
+
+| | A arms spread | C3 arms spread | |
+|---|---|---|---|
+| F31 decode | 0.58% | 0.27% | C3 tighter |
+| **F36 decode** | **0.16%** | **0.32%** | **reversed** |
+| F31 prefill | 0.41% | 0.06% | C3 tighter |
+| **F36 prefill** | **0.17%** | **0.14%** | marginal |
+
+The ordering flips on decode and all but vanishes on prefill. **Six numbers
+within half a percent of each other were read as structure.** That claim was
+promoted in `04-project-audit.md` as F31's "durable part", explicitly marked as
+*not* Tier D and therefore exempt from re-measurement. It was Tier D all along;
+being a comparison of spreads rather than a percentage disguised it.
+
+The lesson is narrower than "be careful": **a claim built from differences
+between Tier D numbers inherits Tier D, however structural it sounds.**
+
+### Scoring the predictions
+
+| | claim | outcome |
+|---|---|---|
+| **P34.1** | every `t` interval wider than its bootstrap, and at least one quantity loses a resolution it had | **held on both.** Widths 1.21 vs 0.84, 1.08 vs 0.56, 1.43 vs 0.67 — and static's `t` interval spans zero where its bootstrap did not |
+| **P34.2** | shared and static become indistinguishable; both means in +0.4%..+1.3%; difference spans zero | **held on all three specifics.** +0.56% and +0.77%, difference +0.27pp [-0.38, +0.71] |
+| **P34.3** | F31's generator effect does not survive | **held.** +0.07% [-0.40, +0.55] |
+| **P34.4** | block spread 0.4pp to 1.0pp | **held.** 0.46, 0.43, 0.57 |
+| **P34.5** | static mean in +0.8%..+1.4%, near F25/F31's +1.16% rather than F30's +0.50% | **failed.** +0.56%, which is F30's number, not F25's. The reasoning was that F30's fixed arm order gave it a named mechanism for being wrong — the mechanism is real (F30) but it was not what made F30 differ from F31 |
+
+Four held, one failed. P34.5's failure closes the rotation question the other
+way: F30's fixed order was a genuine defect and worth fixing, but it was never
+the explanation for the F30/F31 disagreement. **The explanation was always just
+that both intervals were too narrow.**
+
+### Caveats
+
+- Three blocks is three numbers per arm; `t(2) = 4.303` and the intervals are
+  correspondingly wide. Static's spans zero, so **the static build's level-3
+  overhead is still not resolved away from zero** — it is bounded under +1.16%.
+- One machine, one model, 8 threads, one workload.
+- The `shared` and `nshared` pairs use different generators, which F36 now shows
+  does not matter here; that is one measurement, not a general result.
+- Getting a run the gate accepted took **three attempts across one evening** —
+  voided by paging, refused at 3.5–4.7% IQR, then accepted at 0.83–0.97%. The
+  machine's ability to resolve a 1% effect varies by more than the effect, and
+  nothing in this project predicts when it will be able to.
 
 ---
 
