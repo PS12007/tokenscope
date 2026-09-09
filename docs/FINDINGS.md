@@ -6146,6 +6146,44 @@ perturbation; it does not prove layout never matters.
 
 ---
 
+## P44 — a prediction about the machine, written while it is visibly slow
+
+Unplanned, and written before the probe loop that tests it. F43's run A came
+back with an A-arm median of **40.37 tok/s** where F40 and F41 had **46.78-46.91
+four times in a row**, and with a failing gate (worst-block IQR 2.65%). By the
+rule P43.5 stated in advance, that run is not comparable to F40's floor and is
+void. Nothing else was running: CPU load 1%, 6.2 GB free.
+
+**What is different from every previous slow reading:** this session has just put
+the machine through **six full or near-full rebuilds** of llama.cpp, including a
+258-target configure-and-build for the `/MAP` configuration. [`F37`](#f37--four-hypotheses-for-m10-all-refuted-including-one-this-session-published)
+refuted "thermal" using a 7-8 minute cooldown after *measurement* load and a
+30-run curve that was flat to -1.16%. Sustained compilation load is a different
+and much heavier thing, and F37 did not test recovery from it.
+
+A single probe taken immediately after the void run read **42.76 tok/s** —
+already up from 40.37, which is why this is worth a curve rather than a guess.
+
+**P44.1 — throughput recovers toward ~46.8 tok/s over the next ten minutes**,
+and the curve is monotonic-ish rather than flat. If it holds, M10 gains its
+first confirmed component: *recovery from sustained compilation load, on a
+timescale of minutes*, which is a mechanism F37's design could not have seen.
+
+**P44.2 — it does not fully reach 46.8 within 12 minutes.** The recovery from
+40.4 to 42.8 took roughly two minutes, so the remaining 4 tok/s should take
+longer than the window if the process is asymptotic.
+
+**P44.3 — if instead the curve is flat at 42-43**, then this is not
+time-recovery at all and the slow state is something the machine entered and is
+holding. That would make it look much more like the page-cache/standby-list
+candidate the audit names, since the builds wrote hundreds of megabytes and
+would have pushed the 840 MB model out of cache.
+
+**The measurement is the only thing running.** Each probe is one `llama-bench`
+invocation, `-p 0 -n 64 -t 8 -r 3`, 55 seconds apart, 13 of them.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
