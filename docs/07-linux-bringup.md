@@ -61,6 +61,56 @@ RAM matters too: the standard test model is ~840 MB and the harness wants
 
 ---
 
+## 2b. The machine this was written for: i7-1255U
+
+Recorded so the next reader can calibrate. `lscpu` says:
+
+```
+12th Gen Intel(R) Core(TM) i7-1255U
+CPU(s): 12    Core(s) per socket: 10    Thread(s) per core: 2
+MAXMHZ: 4700.0000  and  3500.0000       <- two values = hybrid
+15 GB RAM, 13 free
+```
+
+So: **2 P-cores (4 threads, SMT) + 8 E-cores (8 threads, no SMT) = 12 logical**,
+and it is **hybrid, not homogeneous**.
+
+**What that changes, honestly:**
+
+| | |
+|---|---|
+| **G1 (Linux/GCC/libgomp)** | **Fully served.** This is the main prize and it does not care about topology |
+| **F27 on a second machine** | **Fully served.** Different CPU, different OS, different OpenMP runtime |
+| **G6 (SMT vs heterogeneity)** | **Still not solved.** Both machines are hybrid, so a no-SMT arm still drags in E-cores. The confound remains in the hardware |
+| **F10 / F14** | **A genuinely different test, and a good one.** The P:E ratio is far more extreme here — **2:8** against the Windows machine's **8:12** — so if F14's mechanism is right, the scaling ceiling should arrive *sooner and lower*. That is a real prediction, not a repeat |
+
+**The thermal caveat, which corrects an earlier expectation in this document.**
+This is a **15 W U-series ultrabook part in a thin chassis**. It will throttle
+harder and faster under sustained all-core load than the 14700HX did, so do
+**not** expect the quiet machine this project has been wanting. What Linux gives
+is not a quieter machine but a **legible** one: `sensors`, `cpupower` and
+`/proc/cpuinfo` will show the throttling that Windows refused to report. That is
+still the more useful outcome for M10.
+
+**Thread counts to use here:** 1, 2, 4, 8, 12. Not 28 — F27's headline −54.17%
+was at 28 threads on a 28-thread machine, and the comparable figure on this one
+is whatever `-t 12` gives. F27's 8-thread row (**−2.15%**) is the directly
+comparable number.
+
+**Before pinning experiments, get the full topology**, because the sorted output
+above collapses it:
+
+```bash
+lscpu -e=CPU,CORE,MAXMHZ        # full listing, not sorted -u
+```
+
+Logical CPUs with `MAXMHZ 4700` are the P-cores (expect 0-3, two cores x two
+SMT threads); `3500` are the E-cores (expect 4-11). **A clean SMT test exists
+here at 2 threads**: two SMT siblings of one P-core against one thread on each
+of the two P-cores — both arms P-cores only, so core type is held constant.
+
+---
+
 ## 3. Bring-up, with a verification ladder
 
 Each step is checkable, and a failure at step *n* means do not bother with *n+1*.
