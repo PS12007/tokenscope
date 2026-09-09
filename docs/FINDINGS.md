@@ -6515,6 +6515,91 @@ that.
 
 ---
 
+## F46 — the slow regime is not load-induced, not idle-reversible, and not the page cache. It is also not controllable from software.
+
+**Workload:** ten minutes with **nothing running on the machine at all**, then
+five `llama-bench` probes 30 seconds apart. `mid.gguf`, `-p 0 -n 64 -t 8 -r 3`.
+[`P46`](#p46--does-idling-restore-the-fast-regime) holds the predictions.
+
+```
+  after 10 minutes of true idle:
+    41.15   41.05   40.25   41.00   41.30
+```
+
+Median **41.05**, squarely in F44's slow band (40.92). **Ten minutes of complete
+quiet changed nothing.**
+
+### Scoring
+
+| | claim | outcome |
+|---|---|---|
+| **P46.1** | the first probe after ten idle minutes reads ≥44 tok/s | **failed.** 41.15 |
+| **P46.2** | if fast, it stays fast for five probes | **vacuous** — it never went fast. Recorded as unanswerable rather than held, which is F25's category |
+| **P46.3** | still ~40 ⇒ idling is not the lever | **held** |
+
+### What this eliminates, including a candidate this session was about to chase
+
+**Load is not the lever, in either direction.** The slow state began right after
+six rebuilds, which made "sustained work pushes it down" the obvious story. But
+ten minutes of zero work does not bring it back, and — the other half, which was
+already in the data — **F40 and F41 ran four consecutive 25-minute measurement
+runs entirely in the fast regime**. Heavy work does not reliably push it down and
+idleness does not reliably pull it up.
+
+**The page-cache candidate is refuted by the existing data, not by a new test.**
+The audit has named page-cache and standby-list state as M10's most promising
+untested candidate since session 6, and the rebuilds writing hundreds of
+megabytes made it look stronger than ever. But the 840 MB model has now been
+read by **dozens of `llama-bench` invocations across more than an hour** with
+**6 GB free** throughout. It is certainly resident. If a cold cache were holding
+throughput down, the first few probes would have warmed it and the rest would
+have been fast. They were not. **The candidate can be dropped**, and no
+`EmptyStandbyList` download is needed to drop it — which is worth saying,
+because that download has been on the "ask first" list for two sessions.
+
+**Temperature cannot be read.** `MSAcpi_ThermalZoneTemperature` returns *Not
+supported* on this chassis, so the one remaining candidate — firmware or EC
+thermal/power policy — is also the one this project has no instrument for.
+
+### The candidate list after F37, F44 and F46
+
+| candidate | verdict | from |
+|---|---|---|
+| thermal (cooldown response) | refuted | F37 |
+| thread placement / pinning | refuted | F37 |
+| CPU frequency counter | refuted (wrong sign) | F37 |
+| `-p 0` vs `-p 512` workload | refuted | F37 |
+| battery vs AC | refuted (on AC) | F44 |
+| Windows power-plan cap | refuted (`PROCTHROTTLEMAX` 100%) | F44 |
+| memory pressure | refuted (6 GB free) | F44 |
+| background processes | refuted (CPU 1%) | F44 |
+| sustained load pushing it down | refuted (F40/F41 ran 100 minutes fast) | F46 |
+| idling pulling it back up | refuted (10 minutes, nothing) | F46 |
+| **page cache / standby list** | **refuted** (model resident for an hour of probes) | **F46** |
+| firmware / EC thermal or power policy | **untested, and unreadable from here** | — |
+
+Eleven refuted. The survivor is the one below the operating system.
+
+### The protocol this forces, which is the practical output
+
+The regime cannot be arranged, only detected. So:
+
+> **Probe before measuring.** One `llama-bench` invocation costs ~8 seconds and
+> tells you which regime you are in. Start a 25-minute run only when it reads
+> ≥44 tok/s, and check the `timeline` afterwards to confirm the run stayed
+> there.
+
+That is not a workaround for a nuisance. F44 put the two regimes **12.6%** apart
+— about twenty times the effects this project measures — and F45 showed a
+50-second excursion is enough to fail the gate on a whole block. The probe is
+cheaper than the run it protects.
+
+**And it is why M6 is blocked rather than answered.** The layout arm is built and
+verified against the linker map; it needs one 50-minute window in the fast
+regime, and the machine has not offered one in the last two hours.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
