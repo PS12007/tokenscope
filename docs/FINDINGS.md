@@ -6624,6 +6624,51 @@ regime, and the machine has not offered one in the last two hours.
 
 ---
 
+## P47 — the matched design again, on a level that is actually holding still
+
+[`F45`](#f45--both-matched-runs-void-and-the-timeline-caught-a-regime-excursion-on-its-first-use)
+ran the right design at the wrong moment: the machine was on the slow level and
+kept making brief excursions off it, so both halves failed the gate. It has now
+read **43.65, 43.66, 43.29, 43.39, 43.21** across five probes over twenty
+minutes — the middle level of [`F46`](#f46--the-slow-regime-is-not-load-induced-not-idle-reversible-and-not-the-page-cache-it-is-also-not-controllable-from-software),
+and holding much flatter than anything since the rebuilds.
+
+**The matched design does not need the fast level, only a still one**, because
+the null is measured in the same window as the layout arm and the comparison
+never leaves this session. So this is worth one attempt rather than waiting for
+a 46 that may not come.
+
+Same as P45: layout arm then matched null, `--blocks 3` each, 8 threads, both
+with `--min-baseline 42.5` so the run refuses to start if the machine has
+dropped to the 40.9 level.
+
+**P47.1 — both runs pass the gate this time** (worst-block baseline IQR ≤2%).
+F45 failed at 9.37% and 5.61%, and in both cases the timeline traced it to
+excursions rather than to ordinary noise. On a level that is holding, the
+per-block IQR should look like F40/F41's 0.5–1.1%.
+
+**P47.2 — neither timeline shows an excursion**, i.e. no measurement above 44 or
+below 42 tok/s. This is the direct test of "is the machine actually still", and
+it is checkable for the first time.
+
+**P47.3 — the null does not resolve**, and its interval is between F40's
+±0.24pp (fast level, four runs) and F45's ±1.5pp (slow level, excursions). A
+middle level should give a middle floor.
+
+**P47.4 — the layout arm does not resolve either**, and lands within 0.5pp of
+the null. Unchanged in substance from P43.1 and P45.3, both of which were
+written for runs that turned out void.
+
+**P47.5 — |layout| < 1.0pp**, so a 16-byte shift cannot account for F24's
++1.62%. This is the one that matters for M6 and it has now been predicted three
+times without a usable measurement to score it against.
+
+**If both runs pass the gate, this is the first usable answer to M6.** If they
+do not, the honest conclusion is that this machine cannot currently measure a
+sub-percent layout effect, and M6 waits for a quieter one.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
