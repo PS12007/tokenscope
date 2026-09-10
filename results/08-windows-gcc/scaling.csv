@@ -1,0 +1,26 @@
+# tokenscope machine 2 (Dell Inspiron 15 3520, i7-1255U), Windows 11, GCC 16.1 UCRT64
+# llama.cpp 4d9176092 + patches 01,02 only.  model: mid.gguf 840.3 MB (24L/768e/12h/4kv/8192v)
+# every row is `llama-bench -m mid.gguf -p 0 -n 64 -t <threads> -r 5`, tg64 decode
+# sweeps A and B are the thermal control pair (ascending vs descending thread order)
+# sweep C is the paired run: openmp and threadpool measured back to back, same session
+sweep,order,threading,threads,tok_s,stddev,workload,binary
+A,ascending,openmp,1,20.09,1.04,tg64,build-ts-off
+A,ascending,openmp,2,23.78,0.35,tg64,build-ts-off
+A,ascending,openmp,4,16.03,0.26,tg64,build-ts-off
+A,ascending,openmp,8,10.67,1.46,tg64,build-ts-off
+A,ascending,openmp,12,8.67,0.36,tg64,build-ts-off
+B,descending,openmp,12,8.83,0.37,tg64,build-ts-off
+B,descending,openmp,8,10.01,0.41,tg64,build-ts-off
+B,descending,openmp,4,15.79,0.87,tg64,build-ts-off
+B,descending,openmp,2,23.07,0.66,tg64,build-ts-off
+B,descending,openmp,1,18.90,0.36,tg64,build-ts-off
+C,paired,openmp,1,18.99,1.08,tg64,build-ts-off
+C,paired,openmp,2,23.05,0.51,tg64,build-ts-off
+C,paired,openmp,4,15.57,0.63,tg64,build-ts-off
+C,paired,openmp,8,10.28,0.75,tg64,build-ts-off
+C,paired,openmp,12,8.97,0.50,tg64,build-ts-off
+C,paired,threadpool,1,18.37,0.53,tg64,build-noomp-off
+C,paired,threadpool,2,29.95,0.19,tg64,build-noomp-off
+C,paired,threadpool,4,26.09,0.40,tg64,build-noomp-off
+C,paired,threadpool,8,32.44,0.46,tg64,build-noomp-off
+C,paired,threadpool,12,21.29,7.61,tg64,build-noomp-off

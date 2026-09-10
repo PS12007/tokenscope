@@ -6,6 +6,11 @@ CPU** — the dual-boot Dell Inspiron of [`07-linux-bringup.md`](07-linux-bringu
 section 2b — measured on its **Windows** side with **GCC/MinGW-UCRT**, not on the
 Arch side that document was written for.
 
+**For the actionable version of this document — the defects to fix, the traps to
+carry forward, the complete dataset and the analysis — see
+[`09-actions-and-data.md`](09-actions-and-data.md).** This file is the narrative
+of the session; that one is what the next machine needs.
+
 That makes this an odd but useful cell of the design:
 
 | | machine 1 | **this run** | machine 2, Arch (future) |
