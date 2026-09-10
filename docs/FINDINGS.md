@@ -7129,6 +7129,79 @@ not M6.
 
 ---
 
+## P51 — F27's reversal is libgomp's Windows port, not machine 2's topology
+
+Session 8 ([`docs/08`](08-windows-gcc-bringup.md) §6b) measured
+`GGML_OPENMP=OFF` on machine 2 (i7-1255U, 2P+8E, GCC 16.1/libgomp, Windows) at
+**+204.87% [+200.16, +209.58]** on decode at 8 threads, where machine 1
+(i7-14700HX, 8P+12E, MSVC/`vcomp`, Windows) measured **−2.15%**. Docs/09 §4.2
+names two candidates — the OpenMP runtime, or the 2:8 core topology — and says
+the Arch side of machine 2 is what splits them.
+
+**Machine 1 can split them from the other side, today.** It has the *identical*
+toolchain — `gcc.exe (Rev5, Built by MSYS2 project) 16.1.0`, UCRT64, libgomp —
+so a GCC build here holds OS, compiler and runtime fixed against session 8 and
+changes only the CPU.
+
+**The hypothesis, from source rather than from the data.** libgomp's
+`configure.tgt` builds mingw32 with `config_path="mingw32 posix"`, and
+`config/mingw32/` holds only `affinity-fmt.c`, `proc.c` and `time.c`. So the
+barrier is the generic `config/posix/bar.c`: a mutex plus two semaphores
+(`sem_t` via winpthreads), **no spin phase at all**. The last thread to arrive
+posts the semaphore once per waiter and then waits for every one of them to
+acknowledge. Linux builds use `config/linux/bar.c` instead (futex, with a spin
+phase governed by `GOMP_SPINCOUNT`), and MSVC's `vcomp` spins. ggml's
+`ggml_barrier` is a bare `#pragma omp barrier` under `GGML_USE_OPENMP`, and
+this model takes **412 barriers per decode token** (824 per thread over two
+tokens in `examples/mid-24L-L3-tok10-11-f28.trace.json`). So on MinGW every
+decode token pays 412 rounds of kernel sleep/wake. Machine 2's gap at t=8 is
+97.3 − 30.8 = 66.5 ms/token, which is **~160 µs per barrier** — the scale of
+serialized kernel wakes, not of a spinning barrier.
+
+**Design.** Two arms from the stock tree (checklist passed, `nth * 4` twice),
+built together with GCC 16.1: `build-gcc-omp-off` (libgomp) and
+`build-gcc-noomp-off` (ggml threadpool), both `GGML_TOKENSCOPE=OFF`. Plus the
+MSVC `build-ts-off` / `build-ts-noomp-off` pair rebuilt in the same session as
+an anchor. `mid.gguf`, `llama-bench -p 0 -n 64 -r 5`, thread sweep interleaved
+by arm, ascending then descending; then the spin knobs; then a formal
+`ab_throughput.py` at 8 threads, 6 blocks of 10.
+
+**P51.1 — the decisive one. On machine 1, GCC/threadpool beats GCC/libgomp at
+8 threads by at least +50% on decode.** If topology drove session 8, this CPU
+— four times the P-cores — should look like its own MSVC result, within ±10%.
+
+**P51.2 — at one thread the GCC arms agree within ±5%**, as on machine 2.
+
+**P51.3 — the ratio grows monotonically through t = 2, 4, 8.**
+
+**P51.4 — the spin knobs do nothing.** `OMP_WAIT_POLICY=ACTIVE` and
+`GOMP_SPINCOUNT=INFINITE` move the libgomp arm's t=8 decode by less than 5%,
+because `config/posix/bar.c` never reads them. **If either rescues it, the
+mechanism above is wrong** even if P51.1 holds.
+
+**P51.5 — the implied per-barrier excess, (t_A − t_B)/412, lands between 20 and
+300 µs** at t=8.
+
+**P51.6 — the same-session MSVC anchor stays small**: `vcomp` against the MSVC
+threadpool within ±10% at t=8, in F27's −2.15% neighbourhood. This is what
+licenses reading the GCC gap as the runtime rather than as this machine having
+changed since session 4.
+
+**P51.7 — prefill's gap is smaller than decode's in relative terms**, as on
+machine 2 (+114% against +205%): prefill amortises each barrier over a batch.
+
+**P51.8 — for the Arch session, not testable here.** Linux libgomp spins, so on
+machine 2 under Arch `GGML_OPENMP=OFF` at 8 threads lands within ±20% on
+decode. The reversal does not survive the change of OS. Recorded now so that
+session scores it rather than writes it.
+
+**What would be interesting.** P51.1 failing — a small GCC gap on this CPU —
+would put the reversal back on topology and make machine 2's two P-cores the
+story. That would be the more surprising result, and the prediction is written
+so that it can happen.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
