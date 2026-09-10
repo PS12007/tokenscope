@@ -7200,6 +7200,30 @@ would put the reversal back on topology and make machine 2's two P-cores the
 story. That would be the more surprising result, and the prediction is written
 so that it can happen.
 
+### P51, addendum — written after the sweep, before the run that tests it
+
+The sweep ([`results/10-machine1-gcc/sweep.json`](../results/10-machine1-gcc/sweep.json))
+broke **P51.2**, and not the way P51 feared: at `-t 1` it is not the libgomp
+arm that misbehaves but **both OpenMP arms, MSVC included** — 17.39 ± 5.56 and
+17.03 ± 6.39 ascending, 10.19 ± 3.97 and 9.96 ± 3.23 descending — while both
+threadpool arms hold 20.3–21.6 ± ≤0.27. Bimodal reps at half speed look like a
+thread parked on an E-core.
+
+**Candidate, from the source.** `ggml_thread_apply_priority()` opts a thread out
+of Windows power throttling (`SetThreadInformation(..., ThreadPowerThrottling)`,
+`ggml-cpu.c:2576-2585`). The threadpool path calls it on the main thread
+unconditionally (`:3384`); the OpenMP path calls it inside the parallel region
+(`:3440`) — **only when `n_threads > 1`**. At one thread an OpenMP build never
+opts out. `patches/07-omp-single-thread-prio.patch` adds the one missing call.
+
+**P51.9 — with patch 07, the GCC OpenMP arm at `-t 1` is stable and fast**: every
+invocation's reps within ±1 tok/s, and its mean within ±5% of the GCC threadpool
+arm, while stock GCC OpenMP stays erratic in the same session. If 07 does not
+fix it, the power-throttling reading is wrong.
+
+**P51.10 — patch 07 does nothing at `-t 8`** (within ±5% of stock GCC OpenMP),
+because that path already makes the call. It is the arm's own control.
+
 ---
 
 ## Not yet measured

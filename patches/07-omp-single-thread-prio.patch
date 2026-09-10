@@ -1,0 +1,38 @@
+From: tokenscope - https://github.com/PS12007/tokenscope
+Subject: [experiment arm, do not merge] OpenMP n_threads == 1: apply thread priority like every other path
+
+This is not a proposal. It is the treatment arm for FINDINGS P51.9/P51.10,
+and it exists to be measured and then reverted.
+
+What it tests. `ggml_thread_apply_priority()` is what opts a compute thread out
+of Windows power throttling (EcoQoS). The ggml threadpool path calls it for
+the main thread unconditionally (ggml_threadpool_new_impl), and the OpenMP
+path calls it for every thread inside `#pragma omp parallel` -- but only when
+n_threads > 1. An OpenMP build asked for one thread goes straight to
+ggml_graph_compute_thread and never makes the call. F51's sweep found both
+OpenMP builds (MSVC/vcomp and GCC/libgomp) bimodal at -t 1 on this machine,
+17 +- 6 and 10 +- 4 tok/s, while both threadpool builds held ~21 +- 0.2.
+
+What this does. Adds that one call to the n_threads == 1 branch. Nothing
+changes for n_threads > 1, so -t 8 is the control.
+
+Apply on top of 01+02, measure, and revert with the inverse of THIS file only
+(it carries one hunk and nothing from 01, so -R cannot strip tokenscope):
+
+    git -C ../llama.cpp apply ../tokenscope/patches/07-omp-single-thread-prio.patch
+    ... build the arm ...
+    git -C ../llama.cpp apply -R ../tokenscope/patches/07-omp-single-thread-prio.patch
+
+then re-run the cold-start checklist (9 entries, `nth * 4` twice).
+
+diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
+--- a/ggml/src/ggml-cpu/ggml-cpu.c
++++ b/ggml/src/ggml-cpu/ggml-cpu.c
+@@ -3444,6 +3444,7 @@ enum ggml_status ggml_graph_compute(struct ggml_cgraph * cgraph, struct ggml_cplan * cplan) {
+             ggml_graph_compute_thread(&threadpool->workers[ith]);
+         }
+     } else {
++        ggml_thread_apply_priority(threadpool->prio);
+         atomic_store_explicit(&threadpool->n_graph, 1, memory_order_relaxed);
+         ggml_graph_compute_thread(&threadpool->workers[0]);
+     }
