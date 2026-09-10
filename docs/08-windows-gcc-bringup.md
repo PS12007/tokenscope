@@ -259,5 +259,196 @@ this machine the only route to M10.
 
 ---
 
-*Measurements — overhead, F27 and thread scaling — follow in section 6, appended
-after this bring-up commit.*
+## 6. Measurements
+
+Order deviates from doc 07 section 4 deliberately: thread scaling ran **first**,
+because `--min-baseline` and the overhead thread count both need this machine's
+own numbers, and the project's calibration constants (40.9 / 43.5 / 46.0 tok/s)
+are machine-1 specific and meaningless here.
+
+### W7 — doc 07 section 4(a)'s overhead command does not run
+
+```
+python tools/bench_overhead.py -m ../models/mid.gguf -n 20 -t 8 --levels 3 \
+    --blocks 6 --reps 10 --pair static=...
+```
+
+Two errors:
+
+- **`-m` does not exist** on `bench_overhead.py` — the option is `--model` only
+  (`-m` is `ab_throughput.py`'s spelling). The command exits with
+  `error: the following arguments are required: --model` having measured
+  nothing.
+- **`-n 20` and `--reps 10` are the same argparse option** (`-n, --reps`). The
+  `-n 20` is silently overridden. Harmless, since 10 is what F49 wants, but the
+  line reads as if it sets two different things.
+
+### 6a. Thread scaling — F10 / F14, and doc 07's written prediction
+
+`build-ts-off`, `-n 64 -r 5`, run **three times**: ascending, descending, and
+again paired against the no-OpenMP arm. The descending pass is a thermal
+control.
+
+| threads | ascending | descending | paired run | mean | vs 1 thread |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 20.09 ± 1.04 | 18.90 ± 0.36 | 18.99 ± 1.08 | 19.33 | 1.00× |
+| **2** | **23.78 ± 0.35** | **23.07 ± 0.66** | **23.05 ± 0.51** | **23.30** | **1.21× ← peak** |
+| 4 | 16.03 ± 0.26 | 15.79 ± 0.87 | 15.57 ± 0.63 | 15.80 | 0.82× |
+| 8 | 10.67 ± 1.46 | 10.01 ± 0.41 | 10.28 ± 0.75 | 10.32 | 0.53× |
+| 12 | 8.67 ± 0.36 | 8.83 ± 0.37 | 8.97 ± 0.50 | 8.82 | 0.46× |
+
+Three independent replications agree closely. **Scaling peaks at 2 threads at
+1.21× and then goes negative — 12 threads is 2.2× slower than one thread.**
+
+Doc 07 section 2b predicted: *"the scaling ceiling should arrive sooner and
+lower. That is a real prediction, not a repeat."* Against machine 1's 2.2×
+around four threads, **1.21× at two threads is sooner and lower. The prediction
+holds.**
+
+**The thermal control matters.** If throttling drove the collapse, `t=12`
+measured first (cold) should beat `t=12` measured last (hot). It does not —
+**8.83 cold against 8.67 hot, inside noise.** The only order effect is at `t=1`
+(20.09 cold, 18.90 hot, ~6%). So the collapse is not thermal, which is worth
+having given W6 means Windows cannot show us temperature.
+
+### 6b. F27 — and it reverses
+
+This is the biggest result of the session, and it is a **failure to reproduce,
+in the strong sense: the sign flips.**
+
+```
+ldd build-ts-off/bin/llama-bench    -> libgomp-1.dll
+ldd build-noomp-off/bin/llama-bench -> no libgomp        (arms verified distinct)
+```
+
+| | machine 1 (MSVC/`vcomp`, 8P+12E) | **machine 2 (GCC/`libgomp`, 2P+8E)** |
+|---|---|---|
+| 8 threads | **-2.15%** | **+204.87%  [+200.16, +209.58]** |
+| all threads | **-54.17%** (at 28) | **+216.71%  [+175.17, +258.26]** (at 12) |
+
+Both machine-2 figures are `--blocks 3`, resolved, between-block interval
+excludes zero. The 8-thread run is exceptionally tight — **3.78 pp** spread
+across blocks.
+
+On machine 1, turning OpenMP off **cost** more than half of decode. On this
+machine, turning OpenMP off **more than triples it**.
+
+### 6c. The control that makes 6b interpretable
+
+`ab_throughput.py` warns that a control workload which also moves means the
+comparison is wrong. Prefill did also move (+113.67% at 8 threads), so the
+warning fires — but for `GGML_OPENMP` that is *expected*, since the flag changes
+the barrier for all compute, not one path. The real control is **thread count**:
+
+| threads | OpenMP (libgomp) | no-OpenMP (ggml threadpool) | ratio |
+|---:|---:|---:|---:|
+| 1 | 18.99 ± 1.08 | 18.37 ± 0.53 | **1.00× — agree** |
+| 2 | 23.05 ± 0.51 | 29.95 ± 0.19 | 1.30× |
+| 4 | 15.57 ± 0.63 | 26.09 ± 0.40 | 1.68× |
+| 8 | 10.28 ± 0.75 | **32.44 ± 0.46** | **3.16×** |
+| 12 | 8.97 ± 0.50 | 21.29 ± 7.61 | 2.37× |
+
+**At one thread the two binaries are the same speed**, as they must be with no
+barrier to take. The divergence is therefore threading, not codegen, and it
+grows monotonically with thread count to 8. That is the shape a barrier-cost
+story predicts and a compiler-difference story does not.
+
+### W8 — the scaling collapse is libgomp's, not this CPU's
+
+**This corrects the reading of 6a.** With ggml's own threadpool the same
+silicon scales *positively* to eight threads:
+
+| | peak | at peak | at 12 threads |
+|---|---|---|---|
+| libgomp | **t=2** | 1.21× | 0.46× |
+| ggml threadpool | **t=8** | **1.77×** | 1.16× |
+
+So F14's core-heterogeneity mechanism is **confounded with the OpenMP runtime on
+this machine, and the runtime is the larger term.** 6a's ceiling — and the
+tempting reading that it tracks the P-core count — is a property of the
+*libgomp build*, not of the CPU. Machine 1's 2.2× was measured on an
+OpenMP build too, so the comparable machine-2 number is **1.21×**, and this
+machine's actual best is **1.77×** on a path machine 1 never used for scaling.
+
+One oddity, recorded rather than explained: the threadpool curve is
+**non-monotonic** — 29.95 at t=2, *down* to 26.09 at t=4, then up to 32.44 at
+t=8. Repeatable within this session. A P-core/E-core placement effect is the
+obvious guess; Windows gives no way to check, and `t=12` also carries a huge
+±7.61, consistent with oversubscribing 12 logical CPUs.
+
+### 6d. Overhead — G1's headline, and it does not resolve here
+
+**No overhead number from this machine is quotable.** The harness's baseline
+gate failed at both thread counts and said so:
+
+> `baseline IQR [static] is 7.50% of median` ... `that is wider than the 2%
+> budget being tested` ... **`DO NOT QUOTE ANY OF THE ABOVE`**
+
+A prediction was written before the second run: *t=8 fails because it sits deep
+in 6a's negative-scaling regime, where time is barrier wait and variance
+explodes; at t=2, the scaling peak, the gate should pass.* **Partially
+confirmed** — everything tightened by 3-5×, but the gate still failed:
+
+| | t=8 | t=2 |
+|---|---|---|
+| A-arm IQR, worst block | 7.50% | **4.02%** |
+| A-arm IQR, pooled | 5.34% | **1.88%** ← under the 2% budget |
+| decode, level 3 | +1.50% [-0.03, +3.14] | **+0.28% [-0.16, +0.60]** |
+| decode, per-block mean | +1.56 [-0.34, +3.46] | **-0.02 [-0.76, +0.73]** |
+| between-block spread | 4.97 pp | **2.00 pp** |
+| prefill, level 3 | +0.58% [-0.75, +1.18] | -0.35% [-1.22, +0.48] |
+| elapsed | 2325 s | 1313 s |
+
+**Pooled IQR passes the 2% budget at t=2; worst-block IQR does not**, and the
+gate keys off the worst block. One bad block per run is the whole problem — the
+signature of an unpredictable throttle excursion on a 15 W chassis that
+Windows refuses to report (W6).
+
+Recorded as *not resolved*, not as a result. For calibration only, and not to be
+quoted: the t=2 point estimates straddle zero and are comfortably inside
+machine 1's `+0.56% [-0.05, +1.16]`, which is weakly encouraging for G1's
+headline without being evidence for it.
+
+---
+
+## 7. What this session did and did not establish
+
+**Established:**
+
+1. **`bootstrap.py` is broken for any fresh clone** (W1), and the documented
+   check cannot detect it (W1b). Anyone bringing up machine 3 hits this first.
+2. **tokenscope builds and passes its own tests under GCC** — a fourth toolchain
+   for F22, and the first GCC build of the shared-library arm anywhere (§3).
+3. **Zero-overhead-when-compiled-out holds on GCC** — 84 `ts_` symbols against
+   0 (W3) — though the documented command cannot show it.
+4. **`threading=openmp` on GCC** (W4), so F26's conclusion carries and the
+   barrier numbers stay comparable in kind.
+5. **F10/F14's prediction held** as written: sooner and lower (6a) — but see 8.
+6. **F27 reverses sign**, hugely and tightly (6b), with a t=1 control that rules
+   out codegen (6c).
+7. **On this machine the OpenMP runtime dominates core heterogeneity** (W8),
+   which reframes 6a and is the most interesting thing here.
+8. **M10's thermal blindness is a Windows pattern, not one chassis** (W6).
+
+**Not established:**
+
+- **G1 is not closed.** This is GCC, not Linux. The overhead headline that the
+  upstream conversation needs did not resolve here (6d).
+- **Which variable drives 6b.** Machine 1 is MSVC/`vcomp` on 8P+12E; this is
+  GCC/`libgomp` on 2P+8E. Runtime *and* CPU differ. The Arch side of this same
+  laptop holds CPU constant and is the experiment that separates them.
+- **G6 is untouched**, as doc 07 said it would be — both machines are hybrid.
+
+**What the Arch side should do first**, in light of the above:
+
+1. **Re-run 6b on the same silicon.** Same CPU, same libgomp, different OS. If
+   the +205% survives, it is libgomp; if it moves, it is Windows' scheduler.
+   This is now the highest-value single measurement in the project.
+2. **Pin the governor and re-run 6d.** `cpupower frequency-set -g performance`
+   plus visible `sensors` is the difference between a failed gate and G1's
+   headline. 6d says the gate fails on *one bad block*, which is exactly what a
+   pinned governor should remove.
+3. **Re-run 6a on both threading paths.** W8 means any scaling claim must say
+   which barrier it was measured on.
+4. **Fix W1 before anything else**, or measure a contaminated baseline.
+
