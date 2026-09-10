@@ -17,6 +17,16 @@ Raw artifacts live in [`../results/08-windows-gcc/`](../results/08-windows-gcc/)
 **Nothing in `src/`, `patches/`, `tools/` or `scripts/` was modified this
 session.** Everything below is a proposal, not a change already made.
 
+> **Status, session 9 (machine 1, 2026-09-10): A1-A6 are all fixed.** Each was
+> reproduced on machine 1 before being changed. A1: `bootstrap.py` applies only
+> 01+02, lists the arms as skipped, takes `--arm NAME` to apply one on purpose,
+> and **refuses** a tree where `nth * 4` does not occur twice -- tested on a
+> fresh local clone, including one deliberately contaminated with 03. A2/A4/A6:
+> doc 07 carries the threshold grep, the `\bts_` predicate and `python-yaml`.
+> A3: `bench_overhead.py` accepts `-m`, and doc 07 drops the redundant `-n 20`.
+> A5: `#ifndef NOMINMAX`; a GCC rebuild on machine 1 emits zero warnings and
+> selftest + dlltest pass.
+
 ---
 
 ## Part 1 — Things to CHANGE (defects, in priority order)
@@ -426,11 +436,10 @@ Session 8 measured the Windows/GCC side. That means **CPU and compiler family ar
 held constant and only the OS changes**, which is the comparison the project has
 never been able to make.
 
-**Do `A1` first.** `scripts/bootstrap.py` applies every `patches/*.patch`,
-but 03-06 are hand-applied experiment arms, so a fresh bootstrap puts F24's
-treatment into the baseline and then dies on a 05/06 conflict. Fix it or work
-around it, then verify the tree with the grep in A2 — **not** with the 9-entry
-`git status` check, which passes on a contaminated tree.
+**`A1` is fixed (session 9)** — `scripts/bootstrap.py` now applies only 01 and
+02 and refuses a contaminated tree. Pull first so you have the fix, and still
+verify the tree with the grep in A2 — **not** with the 9-entry `git status`
+check, which passes on a contaminated tree.
 
 **Then work section 5's order:** governor-pinned overhead at the scaling peak
 (not at `-t 8` — see K2), then F27 on **both** threading paths at t = 1, 2, 4, 8,

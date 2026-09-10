@@ -374,7 +374,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description="measure tokenscope overhead",
         formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
-    ap.add_argument("--model", required=True)
+    ap.add_argument("-m", "--model", required=True)   # -m matches ab_throughput.py
     ap.add_argument("--bin-off", help="bin dir of the TOKENSCOPE_ENABLED=OFF build")
     ap.add_argument("--bin-on", help="bin dir of the TOKENSCOPE_ENABLED=ON build")
     ap.add_argument("--pair", action="append", metavar="NAME=OFF_DIR,ON_DIR",

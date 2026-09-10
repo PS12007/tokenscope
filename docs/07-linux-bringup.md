@@ -118,7 +118,7 @@ Each step is checkable, and a failure at step *n* means do not bother with *n+1*
 ### Prerequisites (Arch)
 
 ```bash
-sudo pacman -S --needed base-devel cmake ninja git python python-numpy
+sudo pacman -S --needed base-devel cmake ninja git python python-numpy python-yaml
 gcc --version && cmake --version && ninja --version
 ```
 
@@ -146,7 +146,15 @@ ctest --test-dir build-shared --output-on-failure
 ```bash
 python scripts/bootstrap.py --dest ../llama.cpp
 git -C ../llama.cpp status --short     # MUST be 8 modified files + ?? ggml/src/tokenscope/
+grep -c 'nchunk0 \* nchunk1 < nth \* 4' ../llama.cpp/ggml/src/ggml-cpu/ggml-cpu.c
+                                       # MUST print 2 -- this is the real gate
 ```
+
+**The grep is the check that matters, not the count.** Before session 9,
+bootstrap applied every `patches/*.patch`, including F24's treatment and the
+layout arms, and a tree built that way *also* shows 9 status entries (docs/09,
+A1/A2). Bootstrap now applies only 01 and 02 and runs this check itself, but
+a tree bootstrapped by an older copy will not have been checked.
 
 Then the two static arms, **both from one tree in one session** - this is the
 trap that has caught this project twice:
@@ -166,9 +174,13 @@ cmake --build ../llama.cpp/build-ts-off --target llama-bench
 been checked against MSVC's symbol table:
 
 ```bash
-nm -C ../llama.cpp/build-ts-off/bin/llama-bench | grep -i tokenscope   # expect NOTHING
-nm -C ../llama.cpp/build-ts-on/bin/llama-bench  | grep -i tokenscope   # expect symbols
+nm -C ../llama.cpp/build-ts-off/bin/llama-bench | grep -cE '\bts_'   # expect 0
+nm -C ../llama.cpp/build-ts-on/bin/llama-bench  | grep -cE '\bts_'   # expect > 0 (84 on GCC)
 ```
+
+Grep for `ts_`, not `tokenscope`: under GCC no symbol contains the string
+`tokenscope`, so the older `grep -i tokenscope` returned nothing for *both* arms
+and could not tell them apart (docs/09, A4).
 
 ### Step 3 - a model, generated not downloaded
 
@@ -201,7 +213,7 @@ documents got this wrong for four sessions; check it, do not assume it.
 ### (a) Overhead on GCC - the G1 headline
 
 ```bash
-python tools/bench_overhead.py -m ../models/mid.gguf -n 20 -t 8 --levels 3 \
+python tools/bench_overhead.py -m ../models/mid.gguf -t 8 --levels 3 \
     --blocks 6 --reps 10 \
     --pair static=../llama.cpp/build-ts-off/bin,../llama.cpp/build-ts-on/bin
 ```

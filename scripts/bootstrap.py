@@ -8,14 +8,20 @@ So instead:
 
     1. clone llama.cpp at a pinned commit (or reuse an existing checkout)
     2. copy tokenscope's sources into ggml/src/tokenscope/
-    3. apply patches/*.patch, which contain ONLY the surgical edits to
+    3. apply the BASELINE patches, which contain ONLY the surgical edits to
        existing upstream files
 
 Step 2 keeps the profiler single-sourced in this repo. Step 3 keeps the patch
 small enough that a maintainer can read the whole thing.
 
+Only 01 and 02 are the instrumented tree. Every other patches/*.patch is an
+experiment arm (F24's scheduler change, the M6 layout controls) that exists to
+be measured and reverted -- 05 and 06 are alternatives on the same region and
+cannot even coexist. Applying them all put F24's treatment into what every
+later step calls "stock" (docs/09, A1). Pass --arm to apply one on purpose.
+
 Usage:
-    python scripts/bootstrap.py [--dest ../llama.cpp] [--no-clone]
+    python scripts/bootstrap.py [--dest ../llama.cpp] [--no-clone] [--arm 03]
     python scripts/bootstrap.py --make-patch --dest ../llama.cpp
 
 SPDX-License-Identifier: MIT
@@ -38,6 +44,16 @@ PATCHES = os.path.join(HERE, "patches")
 
 # Files copied verbatim into the upstream tree.
 COPY = ["tokenscope.h", "tokenscope-ggml.h", "tokenscope.cpp"]
+
+# The instrumented tree. Anything else in patches/ is an experiment arm.
+BASELINE = ["01-instrument.patch", "02-name-attn-output.patch"]
+
+# Stock mul_mat and mul_mat_id both chunk at `nth * 4`. Patches 03 and 04 each
+# change one of them; the layout arms 05/06 change neither. This is the check
+# that catches a contaminated baseline -- `git status` shows 9 entries either
+# way, because the arms edit files 01 already touches (docs/09, A2).
+CPU_C = os.path.join("ggml", "src", "ggml-cpu", "ggml-cpu.c")
+STOCK_THRESHOLD = "nchunk0 * nchunk1 < nth * 4"
 
 # Upstream files the patches touch. Listed here so --make-patch produces a
 # stable, reviewable diff instead of whatever happens to be dirty.
@@ -77,11 +93,26 @@ def copy_sources(dest: str) -> None:
         print(f"    ggml/src/tokenscope/{f}")
 
 
-def apply_patches(dest: str) -> None:
+def resolve_arm(name: str) -> str:
+    """`03`, `03-mulmat-chunk-threshold` or the full filename -> the filename."""
+    arms = sorted(f for f in os.listdir(PATCHES)
+                  if f.endswith(".patch") and f not in BASELINE)
+    hits = [f for f in arms if f == name or f.startswith(name)]
+    if len(hits) != 1:
+        raise SystemExit(f"--arm {name!r} matches {hits or 'nothing'}; "
+                         f"arms are: {', '.join(arms)}")
+    return hits[0]
+
+
+def apply_patches(dest: str, arm: str | None) -> None:
     if not os.path.isdir(PATCHES):
         print("    no patches/ directory")
         return
-    files = sorted(f for f in os.listdir(PATCHES) if f.endswith(".patch"))
+    files = [f for f in BASELINE if os.path.isfile(os.path.join(PATCHES, f))]
+    if arm:
+        files.append(arm)
+    skipped = sorted(f for f in os.listdir(PATCHES)
+                     if f.endswith(".patch") and f not in files)
     if not files:
         print("    no patches to apply")
         return
@@ -99,6 +130,21 @@ def apply_patches(dest: str) -> None:
                 "different revision the patch will need rebasing.")
         run(["git", "apply", path], cwd=dest)
         print(f"    {f}: applied")
+    for f in skipped:
+        print(f"    {f}: experiment arm, not applied")
+
+
+def verify_thresholds(dest: str, arm: str | None) -> None:
+    with open(os.path.join(dest, CPU_C), encoding="utf-8") as fh:
+        n = fh.read().count(STOCK_THRESHOLD)
+    print(f"    `{STOCK_THRESHOLD}` occurs {n}x in {CPU_C.replace(os.sep, '/')}")
+    if arm:
+        print(f"    (arm {arm} requested -- stock is 2, so read this against it)")
+    elif n != 2:
+        raise SystemExit(
+            f"STOCK IS 2, FOUND {n}. An experiment arm is compiled into what "
+            "will be treated as the baseline. Reset the checkout to the pin, "
+            "re-run bootstrap, and do not measure anything from this tree.")
 
 
 def make_patch(dest: str) -> None:
@@ -121,26 +167,32 @@ def main() -> int:
                     help="use an existing checkout at --dest")
     ap.add_argument("--make-patch", action="store_true",
                     help="regenerate the patch from --dest instead of applying it")
+    ap.add_argument("--arm", metavar="NAME",
+                    help="also apply one experiment arm, e.g. 03 (default: none)")
     args = ap.parse_args()
 
     dest = os.path.abspath(args.dest)
+    arm = resolve_arm(args.arm) if args.arm else None
 
     if args.make_patch:
         make_patch(dest)
         return 0
 
     print(f"tokenscope bootstrap -> {dest}\n")
-    print("[1/3] upstream checkout")
+    print("[1/4] upstream checkout")
     if not args.no_clone:
         clone(dest)
     elif not os.path.isdir(dest):
         raise SystemExit(f"--no-clone given but {dest} does not exist")
 
-    print("[2/3] copying tokenscope sources")
+    print("[2/4] copying tokenscope sources")
     copy_sources(dest)
 
-    print("[3/3] applying patches")
-    apply_patches(dest)
+    print("[3/4] applying patches")
+    apply_patches(dest, arm)
+
+    print("[4/4] checking the scheduler thresholds")
+    verify_thresholds(dest, arm)
 
     ex = ".exe" if os.name == "nt" else ""
     print(f"""

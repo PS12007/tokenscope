@@ -24,7 +24,9 @@
 #include <thread>
 
 #if defined(_WIN32)
-#  define NOMINMAX
+#  ifndef NOMINMAX                  // MinGW's os_defines.h already sets it
+#    define NOMINMAX
+#  endif
 #  define WIN32_LEAN_AND_MEAN
 #  include <windows.h>
 #else
