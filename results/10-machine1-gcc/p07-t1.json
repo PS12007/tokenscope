@@ -1,0 +1,421 @@
+{
+ "model": "../models/mid.gguf",
+ "arms": {
+  "gcc-omp": "../llama.cpp/build-gcc-omp-off/bin\\llama-bench.exe",
+  "gcc-omp-p07": "../llama.cpp/build-gcc-omp-prio-off/bin\\llama-bench.exe",
+  "gcc-noomp": "../llama.cpp/build-gcc-noomp-off/bin\\llama-bench.exe"
+ },
+ "n_gen": 64,
+ "reps": 5,
+ "sweep": [
+  {
+   "avg_ts": 9.546769,
+   "stddev_ts": 3.369896,
+   "samples_ts": [
+    15.5563,
+    8.10042,
+    8.05181,
+    8.3849,
+    7.64046
+   ],
+   "n_threads": 1,
+   "t_start": 1789082491.190043,
+   "elapsed_s": 36.99,
+   "pass": "asc",
+   "arm": "gcc-omp",
+   "threads": 1
+  },
+  {
+   "avg_ts": 21.028713,
+   "stddev_ts": 0.25823,
+   "samples_ts": [
+    21.3843,
+    20.9698,
+    21.0255,
+    21.0985,
+    20.6655
+   ],
+   "n_threads": 1,
+   "t_start": 1789082528.1769679,
+   "elapsed_s": 16.24,
+   "pass": "asc",
+   "arm": "gcc-omp-p07",
+   "threads": 1
+  },
+  {
+   "avg_ts": 21.84775,
+   "stddev_ts": 1.621354,
+   "samples_ts": [
+    24.0042,
+    23.1616,
+    20.8443,
+    20.4034,
+    20.8253
+   ],
+   "n_threads": 1,
+   "t_start": 1789082544.4151008,
+   "elapsed_s": 15.3,
+   "pass": "asc",
+   "arm": "gcc-noomp",
+   "threads": 1
+  },
+  {
+   "avg_ts": 20.477962,
+   "stddev_ts": 0.402533,
+   "samples_ts": [
+    21.1325,
+    20.5649,
+    20.327,
+    20.2694,
+    20.096
+   ],
+   "n_threads": 1,
+   "t_start": 1789082559.7126706,
+   "elapsed_s": 16.2,
+   "pass": "asc",
+   "arm": "gcc-omp-p07",
+   "threads": 1
+  },
+  {
+   "avg_ts": 20.370155,
+   "stddev_ts": 0.472438,
+   "samples_ts": [
+    20.1917,
+    20.0105,
+    20.422,
+    20.0606,
+    21.1659
+   ],
+   "n_threads": 1,
+   "t_start": 1789082575.9099836,
+   "elapsed_s": 16.29,
+   "pass": "asc",
+   "arm": "gcc-noomp",
+   "threads": 1
+  },
+  {
+   "avg_ts": 17.44574,
+   "stddev_ts": 5.39715,
+   "samples_ts": [
+    15.8848,
+    8.63333,
+    21.4261,
+    20.3741,
+    20.9103
+   ],
+   "n_threads": 1,
+   "t_start": 1789082592.2034893,
+   "elapsed_s": 21.19,
+   "pass": "asc",
+   "arm": "gcc-omp",
+   "threads": 1
+  },
+  {
+   "avg_ts": 20.771501,
+   "stddev_ts": 0.421672,
+   "samples_ts": [
+    20.4696,
+    20.7944,
+    21.1899,
+    21.1681,
+    20.2356
+   ],
+   "n_threads": 1,
+   "t_start": 1789082613.3887825,
+   "elapsed_s": 15.99,
+   "pass": "asc",
+   "arm": "gcc-noomp",
+   "threads": 1
+  },
+  {
+   "avg_ts": 9.340083,
+   "stddev_ts": 3.580997,
+   "samples_ts": [
+    15.7447,
+    7.85348,
+    7.7209,
+    7.72889,
+    7.65249
+   ],
+   "n_threads": 1,
+   "t_start": 1789082629.3781655,
+   "elapsed_s": 37.87,
+   "pass": "asc",
+   "arm": "gcc-omp",
+   "threads": 1
+  },
+  {
+   "avg_ts": 20.641149,
+   "stddev_ts": 0.34572,
+   "samples_ts": [
+    20.6115,
+    20.3108,
+    20.3817,
+    20.7175,
+    21.1842
+   ],
+   "n_threads": 1,
+   "t_start": 1789082667.243484,
+   "elapsed_s": 16.09,
+   "pass": "asc",
+   "arm": "gcc-omp-p07",
+   "threads": 1
+  },
+  {
+   "avg_ts": 16.75465,
+   "stddev_ts": 0.082458,
+   "samples_ts": [
+    16.6321,
+    16.7121,
+    16.8097,
+    16.835,
+    16.7843
+   ],
+   "n_threads": 8,
+   "t_start": 1789082683.3301556,
+   "elapsed_s": 19.52,
+   "pass": "asc",
+   "arm": "gcc-omp",
+   "threads": 8
+  },
+  {
+   "avg_ts": 16.419532,
+   "stddev_ts": 0.130285,
+   "samples_ts": [
+    16.4799,
+    16.4367,
+    16.3236,
+    16.5939,
+    16.2635
+   ],
+   "n_threads": 8,
+   "t_start": 1789082702.845245,
+   "elapsed_s": 19.91,
+   "pass": "asc",
+   "arm": "gcc-omp-p07",
+   "threads": 8
+  },
+  {
+   "avg_ts": 41.968642,
+   "stddev_ts": 1.203387,
+   "samples_ts": [
+    40.8134,
+    40.7591,
+    41.889,
+    43.2158,
+    43.1658
+   ],
+   "n_threads": 8,
+   "t_start": 1789082722.7593598,
+   "elapsed_s": 8.03,
+   "pass": "asc",
+   "arm": "gcc-noomp",
+   "threads": 8
+  },
+  {
+   "avg_ts": 16.536797,
+   "stddev_ts": 0.218174,
+   "samples_ts": [
+    16.6397,
+    16.7918,
+    16.3409,
+    16.2779,
+    16.6336
+   ],
+   "n_threads": 8,
+   "t_start": 1789082730.788279,
+   "elapsed_s": 19.78,
+   "pass": "desc",
+   "arm": "gcc-omp",
+   "threads": 8
+  },
+  {
+   "avg_ts": 16.506925,
+   "stddev_ts": 0.254131,
+   "samples_ts": [
+    16.0793,
+    16.7018,
+    16.6148,
+    16.6645,
+    16.4743
+   ],
+   "n_threads": 8,
+   "t_start": 1789082750.569761,
+   "elapsed_s": 19.82,
+   "pass": "desc",
+   "arm": "gcc-omp-p07",
+   "threads": 8
+  },
+  {
+   "avg_ts": 41.747696,
+   "stddev_ts": 0.21972,
+   "samples_ts": [
+    41.4636,
+    41.8269,
+    41.6647,
+    42.0616,
+    41.7217
+   ],
+   "n_threads": 8,
+   "t_start": 1789082770.3919823,
+   "elapsed_s": 8.09,
+   "pass": "desc",
+   "arm": "gcc-noomp",
+   "threads": 8
+  },
+  {
+   "avg_ts": 20.519494,
+   "stddev_ts": 0.171936,
+   "samples_ts": [
+    20.3203,
+    20.3941,
+    20.4988,
+    20.6544,
+    20.7298
+   ],
+   "n_threads": 1,
+   "t_start": 1789082778.4830785,
+   "elapsed_s": 16.17,
+   "pass": "desc",
+   "arm": "gcc-omp-p07",
+   "threads": 1
+  },
+  {
+   "avg_ts": 20.63123,
+   "stddev_ts": 0.27609,
+   "samples_ts": [
+    20.3338,
+    21.0814,
+    20.5945,
+    20.5201,
+    20.6263
+   ],
+   "n_threads": 1,
+   "t_start": 1789082794.654567,
+   "elapsed_s": 16.1,
+   "pass": "desc",
+   "arm": "gcc-noomp",
+   "threads": 1
+  },
+  {
+   "avg_ts": 9.282403,
+   "stddev_ts": 3.350568,
+   "samples_ts": [
+    15.2735,
+    7.78488,
+    7.82817,
+    7.62999,
+    7.89544
+   ],
+   "n_threads": 1,
+   "t_start": 1789082810.7526472,
+   "elapsed_s": 37.83,
+   "pass": "desc",
+   "arm": "gcc-omp",
+   "threads": 1
+  },
+  {
+   "avg_ts": 20.738048,
+   "stddev_ts": 0.206498,
+   "samples_ts": [
+    20.5278,
+    20.6708,
+    20.5775,
+    20.9641,
+    20.9501
+   ],
+   "n_threads": 1,
+   "t_start": 1789082848.5850744,
+   "elapsed_s": 16.0,
+   "pass": "desc",
+   "arm": "gcc-noomp",
+   "threads": 1
+  },
+  {
+   "avg_ts": 9.08378,
+   "stddev_ts": 4.029,
+   "samples_ts": [
+    16.2727,
+    7.73313,
+    6.92961,
+    7.24222,
+    7.24124
+   ],
+   "n_threads": 1,
+   "t_start": 1789082864.5803993,
+   "elapsed_s": 39.85,
+   "pass": "desc",
+   "arm": "gcc-omp",
+   "threads": 1
+  },
+  {
+   "avg_ts": 20.428052,
+   "stddev_ts": 0.236293,
+   "samples_ts": [
+    20.2477,
+    20.3009,
+    20.7853,
+    20.2519,
+    20.5545
+   ],
+   "n_threads": 1,
+   "t_start": 1789082904.427594,
+   "elapsed_s": 16.25,
+   "pass": "desc",
+   "arm": "gcc-omp-p07",
+   "threads": 1
+  },
+  {
+   "avg_ts": 9.262791,
+   "stddev_ts": 3.427927,
+   "samples_ts": [
+    15.3766,
+    7.44083,
+    7.79892,
+    7.56384,
+    8.13374
+   ],
+   "n_threads": 1,
+   "t_start": 1789082920.6748447,
+   "elapsed_s": 38.01,
+   "pass": "desc",
+   "arm": "gcc-omp",
+   "threads": 1
+  },
+  {
+   "avg_ts": 21.31276,
+   "stddev_ts": 0.1253,
+   "samples_ts": [
+    21.1754,
+    21.1928,
+    21.3604,
+    21.469,
+    21.3663
+   ],
+   "n_threads": 1,
+   "t_start": 1789082958.6845546,
+   "elapsed_s": 15.57,
+   "pass": "desc",
+   "arm": "gcc-omp-p07",
+   "threads": 1
+  },
+  {
+   "avg_ts": 21.347385,
+   "stddev_ts": 0.162935,
+   "samples_ts": [
+    21.2758,
+    21.1631,
+    21.6064,
+    21.3424,
+    21.3493
+   ],
+   "n_threads": 1,
+   "t_start": 1789082974.2527122,
+   "elapsed_s": 15.55,
+   "pass": "desc",
+   "arm": "gcc-noomp",
+   "threads": 1
+  }
+ ],
+ "env_test": []
+}

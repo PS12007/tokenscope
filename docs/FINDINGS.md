@@ -7226,6 +7226,199 @@ because that path already makes the call. It is the arm's own control.
 
 ---
 
+## F51 — F27's reversal is the OpenMP runtime: GCC/libgomp loses 2.5× at 8 threads on this CPU too, and nothing in the environment can rescue it
+
+**Workload:** machine 1 (i7-14700HX, 8P+12E, Windows 11 26200), `mid.gguf`, four
+`GGML_TOKENSCOPE=OFF` arms built in one session from the stock tree (checklist
+passed, `nth * 4` twice), OpenMP linkage verified from each PE import table:
+
+| arm | toolchain | barrier | imports |
+|---|---|---|---|
+| `msvc-omp` | MSVC 14.44 | `vcomp` (spins) | `VCOMP140.DLL` |
+| `msvc-noomp` | MSVC 14.44 | ggml threadpool | — |
+| `gcc-omp` | GCC 16.1 Rev5 UCRT64 — **session 8's exact toolchain** | libgomp, `config/posix/bar.c` | `libgomp-1.dll` |
+| `gcc-noomp` | GCC 16.1 Rev5 UCRT64 | ggml threadpool | — |
+
+`tools/runtime_sweep.py`, `llama-bench -p 0 -n 64 -r 5`, arms interleaved with
+rotated order, ascending then descending. Raw:
+[`results/10-machine1-gcc/sweep.json`](../results/10-machine1-gcc/sweep.json).
+[`P51`](#p51--f27s-reversal-is-libgomps-windows-port-not-machine-2s-topology)
+holds the predictions, pushed before any GCC measurement here.
+
+### The result
+
+Throughput ratio, threadpool ÷ OpenMP, **within a pass** — the machine changed
+level between passes (MSVC's t=8 cells read 44.5 ascending and 37.3
+descending, M10's familiar jump), and a within-pass ratio is immune to that:
+
+| threads | GCC asc | GCC desc | MSVC asc | MSVC desc |
+|---:|---:|---:|---:|---:|
+| 1 | 1.24 | 2.03 | 1.24 | 1.99 |
+| 2 | 1.40 | 1.38 | 1.05 | 0.98 |
+| 4 | 1.92 | 1.75 | 1.01 | 1.04 |
+| **8** | **2.64** | **2.48** | **0.995** | **1.014** |
+| 16 | 3.82 | 3.50 | 0.88 | 0.90 |
+| 28 | 4.41 | 4.64 | 0.67 | 0.68 |
+
+The t=1 row is not the runtime — both *OpenMP* arms misbehave there, MSVC
+included; that is [F52](#f52--openmp-builds-on-windows-run-single-threaded-at-half-speed-the-n_threads--1-path-never-opts-out-of-power-throttling).
+
+**Same CPU, same OS, same model, and the sign of F27 is set by the runtime.**
+On MSVC the threadpool ties OpenMP to eight threads and loses a third at 28 —
+F27's direction, reproduced in the same session. On GCC the threadpool wins
+at every thread count, by 2.5× at eight and 4.5× at 28. Session 8 saw the GCC
+column on a 2P+8E part; this is the GCC column on an 8P+12E part, and it has the
+same shape. **Topology is not needed to explain the reversal.**
+
+### The formal A/B
+
+`ab_throughput.py`, `gcc-omp` against `gcc-noomp`, 8 threads, **6 blocks of 10
+rounds**, `--reps 3`, `--min-baseline 15` (probe 16.11). Raw:
+[`results/10-machine1-gcc/f51-t8.json`](../results/10-machine1-gcc/f51-t8.json).
+
+| | A (libgomp) median | B (threadpool) median | **B vs A, t over 6 blocks** | block estimates |
+|---|---:|---:|---|---|
+| decode tg64 | 16.92 | 43.88 | **+165.15% [+157.74, +172.57]** | +155.0 +158.0 +172.3 +169.1 +170.3 +166.3 |
+| prefill pp64 | 638.85 | 1155.94 | **+79.03% [+73.88, +84.17]** | +72.2 +73.5 +82.5 +80.6 +83.6 +81.8 |
+
+**Tier B**, not D: the decode interval is ~700× the 8-thread false-positive
+floor (±0.24pp), so the things that would void a Tier D run are recorded rather
+than disqualifying — block 2's A arm had a 7.7% within-block IQR, and the
+`timeline` shows the machine on a faster level for blocks 3–4 (B arm ~47 against
+~43 elsewhere; M10). The harness's control warning fires because prefill moved
+too; for this flag that is expected (docs/08 §6c) — it changes the barrier under
+*all* compute — and what P51.7 asks is whether prefill moves *less*.
+
+Session 8's figure on machine 2 was +204.87% [+200.16, +209.58] decode and
++113.67% prefill, same tool, 3 blocks of 6. **The two machines agree in sign,
+in shape (prefill about half of decode), and within ~40pp in size** — on CPUs
+that share nothing but the toolchain and the OS.
+
+### The per-barrier cost is linear in thread count
+
+Dividing the per-token gap by the 412 barriers a decode token takes
+(`examples/mid-24L-L3-tok10-11-f28.trace.json`):
+
+| threads | 2 | 4 | 8 | 16 | 28 |
+|---|---:|---:|---:|---:|---:|
+| excess µs / barrier (mean of passes) | 26 | 50 | 89 | 155 | 252 |
+
+About **9 µs per additional thread**, straight-line from 2 to 28. That is the
+structure of `config/posix/bar.c`: the last thread to arrive posts the
+semaphore once per waiter and then waits for every one of them to acknowledge,
+so each barrier costs one kernel wake per thread, serialised. Machine 2 fits the
+same picture to 8 threads (≈24 / 63 / 161 µs at 2 / 4 / 8, from docs/09 §3.3)
+and then flattens — 157 µs at 12, its full width, where the threadpool arm is
+itself at ±7.6 and the division is least trustworthy.
+
+### It is already known upstream — say so
+
+**ggml-org/llama.cpp#26200** (open, 2026-07-27, labelled `stale`, no comments)
+reports the same mechanism with symbol-level evidence — `bar.o` has no
+reference to `gomp_spin_count_var` — on an i5-7600K (4C/4T) with an MoE model:
+**+40%** from `GGML_OPENMP=OFF`, ~19 µs per barrier. **P51's mechanism is a
+reproduction, not a discovery**, and this entry should not be read as claiming
+it. What this project adds to that issue:
+
+- **The effect is much larger on hybrid CPUs, not smaller on dense models.** The
+  issue expects dense models to suffer "less so". A dense 220 M model here loses
+  **2.5–3×** at 8 threads on two different hybrid CPUs (+165% machine 1,
+  +205% machine 2), against +40% on its 4-core part.
+- **The cost scales linearly with threads on machine 1**, which is consistent
+  with the gap — though comparing across CPUs and models is suggestive only:
+  19 µs at 4 threads on the issue's homogeneous part, ~50–63 µs at 4 and
+  ~90–160 µs at 8 on these.
+- **The environment knobs are behaviourally dead**, not just absent from the
+  symbol table (P51.4 below).
+
+### Scoring
+
+| | claim | outcome |
+|---|---|---|
+| **P51.1** | GCC threadpool beats GCC libgomp at t=8 by ≥ +50% | **held** — **+165.15% [+157.74, +172.57]** formal; +164% and +148% in the sweep |
+| **P51.2** | GCC arms agree within ±5% at t=1 | **failed** — +24% and +103%. Not the runtime: both *OpenMP* arms, MSVC included, are erratic at t=1. Led to F52 |
+| **P51.3** | ratio grows monotonically through t = 2, 4, 8 | **held** in both passes, and keeps growing to 28 |
+| **P51.4** | spin knobs move t=8 by < 5% | **held.** Mean of three rotated rounds against default (16.61): `OMP_WAIT_POLICY=ACTIVE` −3.2%, `GOMP_SPINCOUNT=INFINITE` +0.5%, `OMP_WAIT_POLICY=PASSIVE` +0.0%. A 2.5× gap needed rescuing; nothing moved it 5%. ACTIVE's −3.2% is its rotation slot: it ran first in round 2, just before the machine stepped from 15.9 to 17.3 |
+| **P51.5** | per-barrier excess 20–300 µs at t=8 | **held** — 87 and 90 µs |
+| **P51.6** | MSVC anchor within ±10% at t=8 | **held** — −0.5% and +1.4%, on two different machine levels |
+| **P51.7** | prefill's gap smaller than decode's | **held** — +79.03% against +165.15%, the same ~½ ratio as machine 2 (+114 / +205) |
+| **P51.8** | Arch reverses nothing (±20%) | open — for the Arch session to score |
+
+**Eight predictions: six held, one failed, one open.** The failure (P51.2) was
+the productive one, and it failed because its frame was too narrow: it assumed
+anything odd at t=1 would be the runtime's, and the anomaly belonged to both
+runtimes. That is F52.
+
+### What this does to earlier claims
+
+- **F27 is a comparison of barrier implementations, not of "OpenMP vs ggml".**
+  Its −2.15% / −54% are vcomp against the ggml threadpool. With libgomp on
+  Windows the same flag is worth +148% to +364% (8 to 28 threads). Any F27-style statement must
+  name the runtime, which is K3 (docs/09) generalised from scaling to barriers.
+- **docs/09 §4.3's retraction was right, and this closes it.** GCC/libgomp
+  peaks at **t=2 on this 8-P-core CPU** (26.3 / 25.1 tok/s), exactly where it
+  peaked on machine 2's 2-P-core part. The early ceiling is libgomp's, not the
+  P-core count's.
+- **F10 stands.** Its t=1 of 20.25 tok/s is the fast mode (F52), and its t=28 of
+  39.33 matches this session's MSVC/vcomp 39.9 / 39.0 — six days and many
+  rebuilds apart.
+- **An aside, recorded not explained:** the *threadpool* arms differ by compiler
+  at high thread counts — GCC 42.6 / 40.7 against MSVC 36.8 / 36.5 at t=16, and
+  33–35 against 26–27 at t=28. Same ggml source; the spin loop and atomics
+  compile differently. Not investigated.
+
+---
+
+## F52 — OpenMP builds on Windows run single-threaded at half speed: the `n_threads == 1` path never opts out of power throttling
+
+**Workload:** as F51; three GCC arms — stock OpenMP, OpenMP +
+`patches/07-omp-single-thread-prio.patch`, threadpool — six interleaved rounds
+at `-t 1` and two at `-t 8`. Raw:
+[`results/10-machine1-gcc/p07-t1.json`](../results/10-machine1-gcc/p07-t1.json).
+Predictions P51.9/P51.10 in P51's addendum, pushed before the arm was built.
+
+`ggml_thread_apply_priority()` is the function that tells Windows a compute
+thread must not be power-throttled (`ThreadPowerThrottling`, added upstream in
+PR #12995). With `GGML_SCHED_PRIO_NORMAL` — llama-bench's default — that is
+*all* it does; it returns before `SetThreadPriority`. The threadpool path calls
+it for the main thread unconditionally. The OpenMP path calls it inside the
+parallel region, which only exists when `n_threads > 1`.
+
+| `-t 1`, six rounds | tok/s per invocation | within-invocation spread |
+|---|---|---|
+| GCC OpenMP, stock | 9.55 · 17.45 · 9.34 · 9.28 · 9.08 · 9.26 | ±3.4 – ±5.4 |
+| **GCC OpenMP + patch 07** | 21.03 · 20.48 · 20.64 · 20.52 · 20.43 · 21.31 — **mean 20.74** | ±0.13 – ±0.40 |
+| GCC threadpool | 21.85 · 20.37 · 20.77 · 20.63 · 20.74 · 21.35 — **mean 20.95** | ±0.16 – ±1.62 |
+
+At `-t 8`, patch 07 against stock: **−2.0% and −0.2%.**
+
+| | claim | outcome |
+|---|---|---|
+| **P51.9** | with 07, t=1 is stable (±1) and within ±5% of the threadpool | **held.** Every invocation within ±0.40; mean −1.0% from the threadpool |
+| **P51.10** | 07 does nothing at t=8 (±5%) | **held.** −2.0%, −0.2% |
+
+**One missing call halves single-thread throughput on OpenMP builds on this
+machine**, MSVC and GCC alike, and adding it restores the threadpool's speed
+exactly. The stock arm's bimodal reps — some at ~21, most at ~9 — are the
+thread being placed on an E-core or clocked down, and they stop the moment the
+thread opts out.
+
+**Scope, honestly.** One machine. Machine 2 did *not* show it: its libgomp t=1
+reads 20.09 / 18.90 / 18.99 against a threadpool 18.37 (docs/09 §3.3). Why one
+Windows 11 laptop throttles a single-threaded console process and the other
+does not is open — foreground state, power plan and the scheduler's view of a
+2P+8E part are all candidates, none tested. `-t 1` is also not a common way to
+run llama.cpp. So: a real, clean, one-line defect with a large effect where it
+occurs, whose reach is unknown.
+
+**Upstream:** nothing found in issues or PRs for it. Open PR #16014 goes the
+*other* way — it would compile the whole power-throttling block out of non-MSVC
+builds — and this entry is a measurement of what that block is worth on MinGW.
+**Nothing has been filed and no text drafted**; `AGENTS.md` reserves that for
+a person.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
