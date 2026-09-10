@@ -383,3 +383,89 @@ tokenscope.
    number came from (K3).
 5. Only then revisit M6, M10 and the layout arms — with `sensors` available, M10
    is finally answerable.
+
+---
+
+## Part 6 — Starting the Arch session
+
+**This supersedes doc 07 section 8.** That prompt tells the session to run
+`scripts/bootstrap.py` and verify 9 entries, which A1 and A2 show is exactly the
+path that produces a contaminated tree and a check that cannot see it.
+
+### Prerequisites
+
+```bash
+sudo pacman -S --needed base-devel cmake ninja git \
+                        python python-numpy python-yaml \
+                        cpupower lm_sensors
+```
+
+`python-yaml` is A6. `cpupower` is not optional — section 4.5 says the overhead
+gate fails on throttle excursions, and pinning the governor is the fix aimed at
+exactly that.
+
+```bash
+sudo cpupower frequency-set -g performance
+sudo sensors-detect --auto && sensors     # M10: Linux will actually answer
+```
+
+### The prompt — copy from here
+
+I want to bring up tokenscope on the Arch side of this laptop. It is a
+deterministic scope-timing profiler compiled into llama.cpp, plus eight sessions
+of measurements about where CPU inference time goes.
+
+**Read `docs/09-actions-and-data.md` first** — it is the actionable handoff and
+it supersedes `docs/07-linux-bringup.md` section 8. Then read `docs/08` for the
+narrative of the previous session, `docs/06-overview.md` for what the project is,
+and `docs/04-project-audit.md` before quoting any number.
+
+This is the **same laptop** as session 8 — Dell Inspiron 15 3520, i7-1255U,
+2 P-cores + 8 E-cores, 12 logical — but booted into **Arch instead of Windows**.
+Session 8 measured the Windows/GCC side. That means **CPU and compiler family are
+held constant and only the OS changes**, which is the comparison the project has
+never been able to make.
+
+**Do `A1` first.** `scripts/bootstrap.py` applies every `patches/*.patch`,
+but 03-06 are hand-applied experiment arms, so a fresh bootstrap puts F24's
+treatment into the baseline and then dies on a 05/06 conflict. Fix it or work
+around it, then verify the tree with the grep in A2 — **not** with the 9-entry
+`git status` check, which passes on a contaminated tree.
+
+**Then work section 5's order:** governor-pinned overhead at the scaling peak
+(not at `-t 8` — see K2), then F27 on **both** threading paths at t = 1, 2, 4, 8,
+12, then the scaling sweep on both paths.
+
+**The headline to test:** session 8 measured `GGML_OPENMP=OFF` at **+204.87%
+[+200.16, +209.58]** on 8 threads, where machine 1 measured **-2.15%**. The sign
+reversed. Section 4.2 explains that this run cannot say whether that is libgomp
+or the 2:8 topology, and that **this machine's Arch side is the experiment that
+splits them.** That is the single most valuable measurement available.
+
+**Measurement discipline, all of it learned the hard way:**
+
+- **pin the governor before anything**, and record `sensors` alongside each run —
+  Windows could not see throttling and section 4.5 says that is what broke the
+  overhead gate
+- **measure at this machine's scaling peak**, and know that the peak differs by
+  threading path (t=2 on libgomp, t=8 on the threadpool)
+- probe first and set `--min-baseline` from the probe; the values in the docs
+  are machine-1 values and are meaningless here (K1)
+- gate first, physical plausibility second, interval third — and if the gate
+  fails, say so and do not quote the number
+- **name the threading path in every scaling claim** (K3)
+- close background work; do not run anything while a measurement is in flight
+- **write predictions down and commit them before the run that tests them**,
+  then score them honestly including the failures. Session 8 got W8 wrong first
+  and had to retract it; that retraction is in `docs/09` section 4.3
+
+Commit regularly with real commit messages, and push. Put raw output under
+`results/` with `--json-out` as session 8 did, so the runs can be compared
+across machines without re-reading prose.
+
+Ask me before downloading anything large. **Do not write any upstream issue, PR
+or comment text** — llama.cpp's `AGENTS.md` marks that non-overridable and the
+penalty is a contributor ban; `docs/05-f24-filing-kit.md` explains what is
+allowed instead.
+
+### Copy to here
