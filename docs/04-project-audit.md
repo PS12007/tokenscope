@@ -39,6 +39,17 @@ two sections, read those.
 > enforces it), and check the new `timeline` afterwards. M6's layout arm is
 > **built and verified** (F42, `patches/05`) and blocked on catching the right
 > level for fifty minutes.
+>
+> **Updated in session 9 (2026-09-10, machine 1, after session 8 on machine 2).**
+> Session 8 found F27's sign **reversed** on a second CPU under GCC/libgomp
+> (+205%). **F51** split the two candidates on this machine with session 8's
+> exact toolchain: the reversal follows the **runtime**, not the topology —
+> GCC/libgomp loses 2.5× at 8 threads here too, while MSVC/vcomp ties in the
+> same session. The mechanism (libgomp's mingw port has no spinning barrier) is
+> **already reported upstream as #26200**; F51 reproduces and extends it rather
+> than discovering it. **F52** is new: OpenMP builds on Windows skip the
+> power-throttling opt-out at `-t 1` and run at half speed; one line
+> (`patches/07`) fixes it. Session 8's bootstrap defect (**D10**) is fixed.
 
 ---
 
@@ -62,8 +73,10 @@ time actually goes on CPU inference.
 **What it is not:**
 
 - Not a sampling profiler, so it cannot find cost in code with no scope in it.
-- Not cross-platform-validated. **Everything is MSVC on one Windows machine.**
-  No Linux, no GCC, no clang on a real workload, no ARM, no NUMA hardware.
+- Not cross-platform-validated. **Almost everything is MSVC on one Windows
+  machine.** Since sessions 8–9 there is GCC/MinGW data on two Windows machines
+  (docs/08, F51/F52), but still no Linux, no clang on a real workload, no ARM,
+  no NUMA hardware.
 - Not upstreamed. Nothing has been filed. `llama.cpp`'s `AGENTS.md` forbids an
   agent writing issue or PR text, so [`03`](03-upstream-issue-draft.md) holds an
   evidence pack rather than a draft to paste.
@@ -224,7 +237,9 @@ is known to be wrong even though its direction may stand.
 | **F15** | Fusion removes 10.6% of barriers and buys nothing — **F9's recommendation was wrong** | B |
 | **F23** | ggml already solves core heterogeneity for big matmuls via work stealing, and a thread count can turn it off | C (n=12) |
 | **F26** | **Every measurement in the project was on the OpenMP path, and five documents said the opposite** | A |
-| **F27** / **F41** | ggml's own barrier is not the cheap one: −54% of decode at 28 threads | **B for the large rows, D re-measured for the rest.** −54.17%, −78.64% and −13.07% are 13–78× the drift term and safe. **F41 re-measured the 8-thread rows over six blocks: decode confirmed at −2.15% [−2.28, −2.02]** (9× the floor), **prefill corrected from −1.15% to −0.43% [−0.65, −0.21]** — F27's prefill estimate is *outside* the new interval, so that row was wrong rather than merely over-precise |
+| **F27** / **F41** | ggml's own barrier is not the cheap one: −54% of decode at 28 threads | **B for the large rows, D re-measured for the rest.** −54.17%, −78.64% and −13.07% are 13–78× the drift term and safe. **F41 re-measured the 8-thread rows over six blocks: decode confirmed at −2.15% [−2.28, −2.02]** (9× the floor), **prefill corrected from −1.15% to −0.43% [−0.65, −0.21]** — F27's prefill estimate is *outside* the new interval, so that row was wrong rather than merely over-precise. **Scope narrowed by F51:** every row is `vcomp` against the ggml threadpool. Under GCC/libgomp on Windows the same flag is worth **+148% to +364%**, so quote F27 only with its runtime named |
+| **F51** | **F27's reversal is the OpenMP runtime, not the CPU.** Same machine, session 8's exact GCC: threadpool ÷ libgomp = 2.64 / 2.48 at 8 threads, 4.4–4.6 at 28, while MSVC's pair ties (0.995 / 1.014) in the same session. Per-barrier excess linear in threads, ~26 → 252 µs from 2 → 28. Spin knobs dead (≤3%). **The mechanism is upstream's #26200, reproduced, not discovered** | **B for the sweep** (two passes, interleaved, ratios immune to M10's level jumps; the effect is 100× the noise). **Formal A/B, 6 blocks: decode +165.15% [+157.74, +172.57], prefill +79.03% [+73.88, +84.17]** |
+| **F52** | **OpenMP builds on Windows run `-t 1` at half speed**: the `n_threads == 1` branch never calls `ggml_thread_apply_priority`, so the thread keeps power throttling. Stock 9–17 tok/s bimodal; `patches/07` (one line) 20.74 against the threadpool's 20.95; no effect at t=8 | **B on machine 1** (six rounds, predicted, controlled). **Machine 2 does not show it**, so its reach is unknown. Not filed |
 | **F37** | Four candidate causes for M10 tested and all refuted — thermal, thread placement, CPU frequency, workload. Confirms the logical-processor numbering is interleaved, so `0x5555` **is** one thread per P-core | A (they are facts about tests that were run). **Corrects a claim this document published**, and eliminates F14's first candidate |
 | **F28** | The barrier this profiler blamed on ggml was **its own allocator**, 76–83% of all release latency | B |
 
@@ -336,7 +351,7 @@ unknown fraction of it unattributed.
 
 | # | Gap | Why it matters |
 |---|---|---|
-| **G1** | **No Linux, no GCC, ever.** All numbers are MSVC/Windows | The blocker for the main upstream conversation. F26 narrowed it: the barrier path measured here *is* Linux's default (OpenMP), so what is untested is `libgomp` and GCC, not a different algorithm |
+| **G1** | **No Linux, ever.** GCC now has data: session 8 on machine 2 (tests, zero-overhead-when-off, F27 reversal; overhead gate failed), session 9 on machine 1 (F51/F52) — both **MinGW on Windows** | Still the blocker for the main upstream conversation. **F26's narrowing was wrong in one respect:** "the barrier path measured here *is* Linux's default (OpenMP)" holds at ggml's level, but the runtime underneath differs by port — `vcomp` spins, mingw libgomp sleeps (F51), Linux libgomp is futex + spin. So Linux is a *third* barrier algorithm, not the one measured here. P51.8 predicts it behaves like `vcomp` |
 | **G2** | **No MoE model at all** | The clearest hole in the byte law. MoE is exactly where "bytes streamed per token" stops being a property of the file and starts depending on the router — the law as stated should be **wrong** there, which makes it the most informative test available. Needs a download; **ask first** |
 | **G3** | No NUMA hardware | `nth*4` was tuned for NUMA (PR #6915). F24 argues about a constant whose justifying case cannot be tested here |
 | **G4** | `mul_mat_id` untested and unchanged | Identical threshold, MoE path. Tied to G2 |
@@ -359,6 +374,8 @@ unknown fraction of it unattributed.
 | **D7** | Five documents stated the barrier path was ggml's own when every measurement was OpenMP | F26 |
 | **D8** | Fixed arm order in the overhead harness, biasing whichever arms ran first | F30 → fixed `9ec7c82` |
 | **D9** | **The baseline gate was computed on data pooled across blocks**, so it absorbed the between-block drift the `t` interval already carries and charged a `--blocks` run twice for the same variance. 2.02% pooled against 1.46% within-block on the same 60 samples | F39 → fixed `c18a580`; gates on the worst single block, prints the pooled figure beside it, `--blocks 1` unchanged |
+| **D10** | **`bootstrap.py` applied every `patches/*.patch`**, putting F24's treatment and two layout arms into the "stock" baseline of any fresh clone, then dying on the 05/06 conflict. Invisible on machine 1, whose tree predates the arms. `git status` shows 9 entries either way | Session 8 (docs/09 A1/A2) → fixed session 9 `831bf8a`: applies 01+02 only, `--arm NAME` for one arm, refuses a tree without two `nth * 4` |
+| **D11** | Doc 07's bring-up commands: `bench_overhead.py -m` did not exist, `grep -i tokenscope` finds no symbols under GCC, `python-yaml` missing; plus a MinGW `NOMINMAX` warning | Session 8 (docs/09 A3–A6) → fixed session 9 `831bf8a` |
 
 **D6 and D7 are the instructive pair.** Both are the profiler being wrong *about
 itself* in a way that looked like a finding about llama.cpp. D6 in particular
@@ -371,6 +388,8 @@ allocator to ggml.
 |---|---|---|
 | **U1** | **F20** — `build_attn`'s output projection is unnamed in every llama.cpp graph; it is 7% of decode and shows up as `~attn` | Fixed locally in `patches/02-name-attn-output.patch`, applied to the working tree. **Not filed upstream** |
 | **U2** | **F24** — `nth*4` chunking threshold; adding threads can disable ggml's own load balancer for a model's largest matmuls | `patches/03-mulmat-chunk-threshold.patch`, **not applied**. Not filed |
+| **U3** | **F51** — `GGML_OPENMP=ON` (the default) under MinGW puts every `ggml_barrier` through libgomp's sleep-only POSIX barrier | **Already filed by someone else: #26200** (open, `stale`, 0 comments, 4-core MoE data, +40%). F51's dense-model, hybrid-CPU numbers (+148–205% at 8 threads, linear per-thread cost) are evidence that issue lacks. Adding them is a comment, which `AGENTS.md` reserves for a person |
+| **U4** | **F52** — OpenMP `n_threads == 1` path skips `ggml_thread_apply_priority`, so the thread keeps Windows power throttling | `patches/07-omp-single-thread-prio.patch` (experiment arm, not applied). Nothing found upstream. Open PR #16014 would remove the throttling opt-out from MinGW builds entirely, which F52 measures as worth up to 2×. Not filed |
 
 Neither can be filed by an agent — `AGENTS.md` forbids it and requires the
 contributor be able to defend the change unaided. That constraint turned out to
@@ -420,6 +439,15 @@ Each of these cost real time at least once.
 - **Three trees, one source of truth.** `tokenscope/src/tokenscope.*` is
   authoritative; `llama.cpp/ggml/src/tokenscope/` are copies. `diff` them before
   believing a build.
+- **GCC/MinGW binaries run from Git Bash load the wrong `libstdc++`.** Git for
+  Windows puts `/mingw64/bin` — an older `libstdc++-6.dll` — ahead of
+  `C:\msys64\ucrt64\bin`, and Windows shows the user a modal *"Entry Point Not
+  Found"* dialog for every launch (session 9, twice). `export
+  PATH="/c/msys64/ucrt64/bin:$PATH"` first; `runtime_sweep.py` prepends it for
+  its children, `ab_throughput.py` inherits the caller's PATH.
+- **The stale-binary trap, a third time.** Session 9 found `build-ts-off` and
+  `build-ts-noomp-off` relinking `ggml-cpu` on a routine rebuild — almost
+  certainly still carrying F50's layout arm. Rebuild every arm, every session.
 
 ---
 

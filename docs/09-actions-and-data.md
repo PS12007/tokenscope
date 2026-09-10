@@ -447,9 +447,14 @@ check, which passes on a contaminated tree.
 
 **The headline to test:** session 8 measured `GGML_OPENMP=OFF` at **+204.87%
 [+200.16, +209.58]** on 8 threads, where machine 1 measured **-2.15%**. The sign
-reversed. Section 4.2 explains that this run cannot say whether that is libgomp
-or the 2:8 topology, and that **this machine's Arch side is the experiment that
-splits them.** That is the single most valuable measurement available.
+reversed. **Session 9 (FINDINGS F51) has since split runtime from topology on
+machine 1**: the same GCC reverses F27 there too, so it is the runtime — the
+mingw port of libgomp has a sleep-only barrier (also upstream as #26200).
+Linux libgomp uses a different, spinning barrier, so **score P51.8 first**: it
+predicts `GGML_OPENMP=OFF` lands within ±20% of OpenMP on decode at 8 threads
+here. Run F27 on both paths at t = 1, 2, 4, 8, 12 with `tools/runtime_sweep.py`
+and a formal `ab_throughput.py` at 8, and record the outcome in FINDINGS
+whichever way it goes.
 
 **Measurement discipline, all of it learned the hard way:**
 

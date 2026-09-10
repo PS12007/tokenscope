@@ -6,6 +6,30 @@ it up; see [`07-linux-bringup.md`](07-linux-bringup.md). Everything here is eith
 a fact about the current tree or an explicit next step. Read this first when
 picking the project back up.
 
+> **Session 9 (2026-09-10, machine 1) — read this block, then section 5.**
+> Session 8 ran on machine 2's **Windows** side (Arch would not boot) and left
+> [`docs/08`](08-windows-gcc-bringup.md) and [`docs/09`](09-actions-and-data.md).
+> Session 9, back on machine 1:
+>
+> - **Fixed all six of session 8's defects** (docs/09 A1–A6; audit D10/D11).
+>   `bootstrap.py` no longer applies experiment arms and refuses a tree without
+>   two `nth * 4` lines.
+> - **F51 — F27's reversal is the runtime.** With session 8's exact GCC on this
+>   CPU, the ggml threadpool beats libgomp **2.5× at 8 threads and 4.5× at 28**,
+>   while MSVC/vcomp ties it in the same session. libgomp's mingw barrier sleeps
+>   in the kernel (no spin, knobs dead), at ~9 µs per thread per barrier.
+>   **Already reported upstream as #26200** — this is a reproduction with larger,
+>   dense-model, hybrid-CPU numbers, not a discovery.
+> - **F52 — new.** OpenMP builds on Windows run `-t 1` at half speed because
+>   that branch never opts out of power throttling. `patches/07` (one line)
+>   fixes it. Not seen on machine 2; not filed.
+> - **New tool:** `tools/runtime_sweep.py` (thread survey across builds).
+>   **New trap:** GCC binaries from Git Bash need `/c/msys64/ucrt64/bin` first
+>   on PATH, or the user gets *Entry Point Not Found* dialogs.
+> - **New build dirs** in `../llama.cpp`: `build-gcc-omp-off`,
+>   `build-gcc-noomp-off`, `build-gcc-omp-prio-off` (the last carries patch 07;
+>   the tree does not).
+
 **Read [`04-project-audit.md`](04-project-audit.md) first if you want the whole
 picture in one place** -- what every number is worth, every known defect, every
 gap and every trap. This file is the "what to do next"; that one is the "what is
@@ -786,6 +810,13 @@ went undetected for a session purely because nothing here ever built a DLL.
 
 ## 5. Next steps, in the order I would do them
 
+**Session 9 changed group B.** Item 6 (F27 on a second machine) is answered —
+by session 8 on machine 2 and by F51 on this one — and the answer reframes
+item 4: Linux is now the test of a *third* barrier algorithm (futex + spin),
+with a written prediction waiting for it (**P51.8**: `GGML_OPENMP=OFF` within
+±20% on Arch at 8 threads). The Arch session should score that first; docs/09
+part 6 has its prompt.
+
 **Session 7 closed all of group A except item 2.** The null control was
 measured (F39), repeated at 8 threads where it corrected F39 (F40), and F27's
 last unchecked row was re-measured (F41). What is left in group A is **item 2,
@@ -872,11 +903,10 @@ ladder and the issue register (M1–M14) that the items below refer to.
    **Ask before downloading** — sessions 4 and 5 both asked and were told not to.
    It would also make `mul_mat_id` testable, which is item 2's other half.
 
-6. **F27 on a second machine.** The biggest unexploited result in the repo and
-   meaningless as a general claim until someone runs the same protocol on a
-   homogeneous part with `libgomp`. The protocol is `ab_throughput.py --blocks 3`
-   plus `imbalance_repeat.py --metric release`, n≥12, on two builds differing
-   only in `GGML_OPENMP`.
+6. ~~**F27 on a second machine.**~~ **ANSWERED — session 8 + F51.** Machine 2
+   reversed it (+205% under GCC/libgomp); F51 showed that follows the runtime,
+   not the CPU: same reversal here under GCC, none under MSVC. What is left is
+   Linux libgomp (item 4, P51.8) and a homogeneous part, which nobody has.
 
 ### C. Needs a person, not an agent
 
@@ -898,6 +928,15 @@ ladder and the issue register (M1–M14) that the items below refer to.
    does not name the output projection at current `master`, that
    `CONTRIBUTING.md` has not changed, and that nobody has filed it already.
 
+7b. **Two session-9 decisions, both yours.** (a) **#26200** already reports
+   F51's mechanism, with no replies and a `stale` label; F51's numbers (+148–205%
+   on a dense model, two hybrid CPUs, linear per-thread cost) are evidence it
+   lacks. Adding them is a *comment*, which `AGENTS.md` reserves for a person.
+   (b) **F52** is unreported; `patches/07` is the whole change, but machine 2
+   does not reproduce it, so its reach is the first thing a maintainer would
+   ask. Open PR #16014 would remove the opt-out from MinGW builds — F52 is a
+   measurement of what that costs.
+
 ### D. The one that would change how everything else is measured
 
 8. **Explain M10** — decode on this machine wanders between **38.6 and 46.0
@@ -909,6 +948,11 @@ ladder and the issue register (M1–M14) that the items below refer to.
    **r = −0.423**, the wrong sign), not the `-p 0`/`-p 512` workload difference
    (−0.91%). Untested and still live: page-cache and standby-list state for an
    840 MB model read once per invocation, and per-process power throttling.
+   **Session 9 update on the last:** F52 proves *thread-level* power throttling
+   is active on this machine and worth 2× to a thread that does not opt out —
+   but every multi-thread arm already opts out, and F51's sweep caught a level
+   jump (44.5 → 37.3 tok/s on MSVC at t=8) that hit opted-out arms equally. So
+   thread throttling is not M10. Process-level policy remains untested.
 
    Until it is explained, the practical rule stands and needs no mechanism:
    **the compiled-out arm's absolute median identifies which state the machine
@@ -1160,6 +1204,9 @@ Added by session 5, in rough order of how much they would have saved:
 | Upstream patch size | 174 lines, 7 files | `patches/01-instrument.patch` |
 | F20 naming fix size | 8 added, 13 removed, 1 file | `patches/02-name-attn-output.patch` |
 | Per-scope cost | 52.8 ns (2 clock reads + 1 store) | `ts_selftest` |
+| ...same, GCC 16.1 / MinGW | 78.5 ns machine 1 (one run), 62.8 ns machine 2 | `ts_selftest`, session 9 / docs/09 |
+| `GGML_OPENMP=OFF` under **GCC/libgomp**, 8 threads, machine 1 | decode **+165.15% [+157.74, +172.57]**, prefill **+79.03% [+73.88, +84.17]**, 6 blocks. Machine 2: +204.87%. Same session, MSVC/vcomp: −0.5% / +1.4%. **Mechanism already upstream as #26200** | [`FINDINGS`](FINDINGS.md) F51 |
+| OpenMP build at `-t 1` on Windows, machine 1 | stock 9–17 tok/s bimodal; + one line (`patches/07`) **20.74**; threadpool 20.95. Not seen on machine 2 | [`FINDINGS`](FINDINGS.md) F52 |
 | Level 3 overhead, static, 8 threads | **+0.56% [-0.05, +1.16]**, `t` over 3 blocks. Spans zero, so bounded rather than resolved | [`FINDINGS`](FINDINGS.md) F36 |
 | ...same, session 1 | +0.67% [+0.12, +1.67] | [`02`](02-overhead-methodology.md) |
 | Level 3 overhead, ninja-shared | **+0.92% [+0.38, +1.46]**, `t` over 3 blocks | [`FINDINGS`](FINDINGS.md) F36 |

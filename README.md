@@ -356,6 +356,20 @@ waiters pounding one cache line across a hybrid CPU's P-core and E-core clusters
 is a different object. Nobody on defaults is affected — but nothing in the build
 output tells you that this option is worth half your decode.
 
+**Then the sign flipped, and it was not the hardware.** A second machine built
+with GCC/MinGW measured the same flag at **+205%**. Rebuilt here with that exact
+toolchain, it is **+148–164% at 8 threads and 4.5x at 28**, while the MSVC pair
+ties in the same session ([F51](docs/FINDINGS.md)). The difference is the OpenMP
+runtime underneath `#pragma omp barrier`: MSVC's `vcomp` spins, and mingw
+libgomp's barrier puts every thread to sleep in the kernel, about 9 µs per
+thread per barrier, 412 barriers a token. **On MinGW the default is the slow
+build.** (That mechanism is already reported upstream as
+[ggml-org/llama.cpp#26200](https://github.com/ggml-org/llama.cpp/issues/26200);
+F51 adds dense-model, hybrid-CPU numbers to it.) The same sweep turned up
+something new: OpenMP builds on Windows run **single-threaded at half speed**,
+because that one branch never opts out of power throttling
+([F52](docs/FINDINGS.md), one-line fix in `patches/07`).
+
 `--outliers` ranks the slowest tokens and attributes each one's *excess over
 median* to a category — because on a slow token everything is large, and the
 question is which thing is large **for that token**. `--diff` compares two
@@ -542,7 +556,8 @@ Built in the open. `docs/` is the engineering log, in order — and
 - [x] [Shared-library builds](docs/FINDINGS.md) — broken in F18, fixed in F22, now tested on three platforms
 - [x] [ggml's matmul already load-balances, until a thread count takes it away](docs/FINDINGS.md)
 - [x] [A one-line ggml change worth +1.62% [+1.10, +2.15] decode, re-measured over six blocks — and its code-layout confound closed by two control patches](docs/FINDINGS.md)
-- [ ] Linux/GCC
+- [x] [GCC on Windows, two machines](docs/08-windows-gcc-bringup.md) — tests pass, zero-overhead-when-off holds, and [F27 reverses under libgomp](docs/FINDINGS.md) (F51)
+- [ ] Linux
 - [ ] [Upstream issue](docs/03-upstream-issue-draft.md), then a PR
 
 ## Repository layout
