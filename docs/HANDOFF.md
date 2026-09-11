@@ -23,6 +23,10 @@ picking the project back up.
 > - **F52 — new.** OpenMP builds on Windows run `-t 1` at half speed because
 >   that branch never opts out of power throttling. `patches/07` (one line)
 >   fixes it. Not seen on machine 2; not filed.
+> - **F53 — overhead under GCC**, first run to pass the gate: level 3 **+0.70%
+>   [+0.30, +1.10]**, level 0 free (MinGW, threadpool, 8 threads). Not Linux.
+> - **[`docs/10-filing-guide.md`](10-filing-guide.md)** — how to take F51/F52
+>   upstream, for a first-time contributor. No draft text (`AGENTS.md`).
 > - **New tool:** `tools/runtime_sweep.py` (thread survey across builds).
 >   **New trap:** GCC binaries from Git Bash need `/c/msys64/ucrt64/bin` first
 >   on PATH, or the user gets *Entry Point Not Found* dialogs.
