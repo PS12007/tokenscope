@@ -7449,6 +7449,58 @@ estimate between 0 and +1.5%, and its interval **overlaps F36's** [−0.05,
 
 ---
 
+## F53 — tokenscope's overhead under GCC: +0.70% [+0.30, +1.10] at level 3, and free when compiled in but off
+
+**Workload:** as [P53](#p53--tokenscopes-overhead-under-gcc-on-the-path-where-gcc-is-sane) —
+machine 1, GCC 16.1 MinGW, ggml threadpool, static, `mid.gguf`, 8 threads,
+pp256 / tg128, **6 blocks of 10 reps**, 649 s. Raw:
+[`results/10-machine1-gcc/f53-overhead-t8.json`](../results/10-machine1-gcc/f53-overhead-t8.json).
+
+| decode | median tok/s | `t` over 6 blocks | block estimates |
+|---|---:|---|---|
+| A — compiled out | 46.89 | — | — |
+| B — compiled in, level 0 | 47.00 | **−0.21% [−0.74, +0.32]** | +0.41 −0.55 −1.02 −0.16 −0.02 +0.09 |
+| **C — level 3** | 46.57 | **+0.70% [+0.30, +1.10]** | +0.82 +1.22 +0.04 +0.72 +0.60 +0.79 |
+
+Prefill, same run: level 0 −0.15% [−0.51, +0.21], level 3 −0.13% [−0.51, +0.25].
+**Gate: 1.23% worst-block baseline IQR on decode, 1.47% on prefill — PASS.** The
+A arm's 46.89 is the machine's fast level; block 1 sat ~43 and the per-block
+gate absorbs that, which is what it was redesigned for (D9, F49).
+
+### Scoring
+
+| | claim | outcome |
+|---|---|---|
+| **P53.1** | the gate passes | **held** — 1.23% / 1.47% |
+| **P53.2** | level 0 within ±0.5% | **held** on the point estimate (−0.21%); its interval reaches −0.74, so "within ±0.5%" is true of the estimate, not yet of the interval |
+| **P53.3** | level 3 under 2%, estimate in [0, +1.5], overlapping F36 | **held** — +0.70% [+0.30, +1.10], inside F36's [−0.05, +1.16] |
+
+### What it establishes
+
+- **The README's "under 2% when active" holds on GCC**, on the first GCC run
+  that passed the gate — session 8's two attempts on machine 2 under libgomp
+  did not.
+- **It is the first level-3 overhead in the project that resolves** — F36's
+  MSVC figure spans zero. That is not GCC being worse: the point estimates are
+  0.14pp apart and the intervals overlap almost entirely. Six blocks against
+  F36's three is most of the difference in width, and GCC's per-scope cost
+  (78.5 ns against 52.8 ns) is consistent with the estimate being slightly
+  higher.
+- **Compiled-in-but-off is free on GCC too**, adding a runtime measurement to
+  session 8's symbol-table check (84 `ts_` symbols against 0).
+
+### What it does not
+
+- **Tier D.** The effect is ~3× the 8-thread false-positive floor — and that
+  floor (F40) was measured on MSVC binaries. A GCC null pair has not been run,
+  so the floor under GCC is assumed, not measured.
+- **Not Linux, and not the default GCC path.** This is MinGW on Windows, on the
+  threadpool. G1's headline still needs Linux, where the default OpenMP path is
+  a different (spinning) barrier. The number here is the best available
+  prediction for it.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:

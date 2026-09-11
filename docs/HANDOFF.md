@@ -928,7 +928,10 @@ ladder and the issue register (M1–M14) that the items below refer to.
    does not name the output projection at current `master`, that
    `CONTRIBUTING.md` has not changed, and that nobody has filed it already.
 
-7b. **Two session-9 decisions, both yours.** (a) **#26200** already reports
+7b. **Two session-9 decisions, both yours — start with
+   [`10-filing-guide.md`](10-filing-guide.md)**, which explains both from zero,
+   says how to file, and was checked against master `df03399b8` (F52 still
+   present, #26200 still unanswered). (a) **#26200** already reports
    F51's mechanism, with no replies and a `stale` label; F51's numbers (+148–205%
    on a dense model, two hybrid CPUs, linear per-thread cost) are evidence it
    lacks. Adding them is a *comment*, which `AGENTS.md` reserves for a person.
@@ -1206,6 +1209,7 @@ Added by session 5, in rough order of how much they would have saved:
 | Per-scope cost | 52.8 ns (2 clock reads + 1 store) | `ts_selftest` |
 | ...same, GCC 16.1 / MinGW | 78.5 ns machine 1 (one run), 62.8 ns machine 2 | `ts_selftest`, session 9 / docs/09 |
 | `GGML_OPENMP=OFF` under **GCC/libgomp**, 8 threads, machine 1 | decode **+165.15% [+157.74, +172.57]**, prefill **+79.03% [+73.88, +84.17]**, 6 blocks. Machine 2: +204.87%. Same session, MSVC/vcomp: −0.5% / +1.4%. **Mechanism already upstream as #26200** | [`FINDINGS`](FINDINGS.md) F51 |
+| Level 3 overhead, **GCC** (MinGW, threadpool, static), 8 threads | **+0.70% [+0.30, +1.10]**, `t` over 6 blocks, gate passed; level 0 −0.21% [−0.74, +0.32]. Not Linux | [`FINDINGS`](FINDINGS.md) F53 |
 | OpenMP build at `-t 1` on Windows, machine 1 | stock 9–17 tok/s bimodal; + one line (`patches/07`) **20.74**; threadpool 20.95. Not seen on machine 2 | [`FINDINGS`](FINDINGS.md) F52 |
 | Level 3 overhead, static, 8 threads | **+0.56% [-0.05, +1.16]**, `t` over 3 blocks. Spans zero, so bounded rather than resolved | [`FINDINGS`](FINDINGS.md) F36 |
 | ...same, session 1 | +0.67% [+0.12, +1.67] | [`02`](02-overhead-methodology.md) |
