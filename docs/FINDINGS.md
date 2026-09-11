@@ -7419,6 +7419,36 @@ a person.
 
 ---
 
+## P53 — tokenscope's overhead under GCC, on the path where GCC is sane
+
+G1's headline question is what tokenscope costs outside MSVC. Session 8 tried on
+machine 2 under GCC/libgomp and the gate failed at both thread counts
+(docs/09 §3.5). F51 says why that configuration was hard: under mingw libgomp
+at 8 threads, decode is mostly kernel barrier waits, so the baseline is noisy
+and the scopes are timed against the wrong thing. **This run measures the GCC
+build on ggml's own threadpool**, which on this machine decodes at MSVC speed.
+
+**Arms:** `build-gcc-noomp-off` (baseline, 0 `ts_` symbols) and
+`build-gcc-noomp-on` (84 `ts_` symbols, trace provenance
+`threading=ggml-threadpool`), rebuilt together in session 9 from the stock
+tree. `bench_overhead.py --levels 3 --blocks 6 --reps 10 -t 8`, pp256/tg128,
+static linkage. **Reference:** MSVC static, 8 threads, F36: **+0.56% [−0.05,
++1.16]**. GCC's per-scope cost is higher here (78.5 ns against 52.8 ns), so the
+honest expectation is somewhat above MSVC's number, not equal to it.
+
+**P53.1 — the gate passes** (worst-block baseline IQR under 2%), as the 6×10
+design did four times in a row in session 7. If it fails, nothing below is
+quoted.
+
+**P53.2 — compiled-in-but-off costs nothing measurable**: level 0 against the
+compiled-out arm, |decode| within ±0.5%.
+
+**P53.3 — level 3 costs under 2% on decode** (the README's budget), point
+estimate between 0 and +1.5%, and its interval **overlaps F36's** [−0.05,
++1.16]. A result above 2% would mean the README's claim is MSVC-only.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
