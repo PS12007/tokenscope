@@ -7548,6 +7548,55 @@ four. Credence **~55%**. Scored against that null, not just as a count.
 
 ---
 
+## F54 — M14 is mostly sampling: gate-passing runs with no level switch give 3-block widths 17× apart
+
+**Tool:** [`tools/m14_width.py`](../tools/m14_width.py), on the committed JSON
+P54 names. No new measurement. Predictions in P54, committed first (`1d82f10`).
+
+| window | a tok/s | shift % | gate % | mean pp | width pp |
+|---|---|---|---|---|---|
+| f45-layout-void | 40.92 | 1.53 | 9.37 | −0.34 | 0.45 |
+| **f45-null-void** | 40.84 | **5.30** | 5.61 | +0.04 | **3.01** |
+| f47-layout | 44.80 | 0.47 | 2.21 | −0.00 | 0.36 |
+| f47-null | 44.89 | 0.33 | 2.31 | −0.11 | 0.16 |
+| f49-layout [0–2] | 46.65 | 0.20 | 0.79 | −0.10 | 0.59 |
+| f49-layout [3–5] | 46.75 | 0.08 | 0.45 | −0.06 | 0.16 |
+| f49-null [0–2] | 46.79 | 0.09 | 0.41 | −0.10 | 0.52 |
+| f49-null [3–5] | 46.80 | 0.26 | 0.46 | −0.05 | 0.70 |
+| **f50-layout48 [0–2]** | 46.62 | 0.73 | 0.88 | +0.11 | **1.18** |
+| **f50-layout48 [3–5]** | 46.70 | 0.18 | 0.44 | +0.01 | **0.07** |
+| f50-null [0–2] | 46.83 | 0.23 | 0.57 | −0.17 | 0.35 |
+| f50-null [3–5] | 46.89 | 0.23 | 0.62 | +0.00 | 0.98 |
+
+| | claim | outcome |
+|---|---|---|
+| **P54.1** | ρ(shift, width) ≥ +0.5 | **refuted by the letter: +0.490** (one-sided permutation p = 0.055). And fragile: dropping any one window moves it between +0.34 and +0.59 |
+| **P54.2** | the gate predicts width better than the shift | **refuted.** ρ(gate, width) = +0.33, below the shift's +0.49 |
+| **P54.3** | a 6×10 run's halves differ in width by > 3× at least once | **held, 2 of 4** (3.6×, 17.0×), against 0.8 expected under the i.i.d. null |
+
+**What this says about M14.** The eight 6×10 halves all sit on one throughput
+level — baseline ranges 0.08–0.73%, against the ~12% between M10's levels —
+and they alone span widths from **0.07 to 1.18 pp, 17×**. F41's 7× needs no
+level switch. The standing remedy (pool to six blocks) is the right one;
+`--min-baseline` does not address it.
+
+**What it does not say.** That shifts are harmless. The one window with a large
+shift (f45-null, 5.30%) has by far the widest interval (3.01 pp), and inside
+the eight quiet halves the rank correlation is +0.71 (n = 8, descriptive — not
+predicted). A shift plausibly *adds* width on top of sampling; twelve windows
+cannot separate the two, and P54.1 missed its line by 0.01 either way.
+
+**One loose thread.** Under i.i.d. normal block points, a 17× ratio between two
+df=2 standard deviations has probability 2/(1+17²) = **0.7%**; across four runs
+~2.7%. So the block points are probably heavier-tailed than normal, or the halves
+are not exchangeable. Suggestive on one observation, not a finding.
+
+**Practical.** Nothing changes: 6 blocks × 10 rounds, pooled, remains the rule.
+A reader of any *single* 3-block interval should treat its width as known to
+within an order of magnitude, not a factor of two.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:

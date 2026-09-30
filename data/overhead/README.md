@@ -51,6 +51,10 @@ fast = [e for e in tl if e["ts"] >= 44]
 print(len(fast), "of", len(tl), "in the fast regime")
 ```
 
+**M14 on this data:** `python tools/m14_width.py` recomputes F54 from the
+F45/F47/F49/F50 files — width against baseline shift over twelve 3-block
+windows.
+
 ## Re-deriving a published interval
 
 ```python
