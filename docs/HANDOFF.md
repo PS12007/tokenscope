@@ -944,6 +944,14 @@ ladder and the issue register (M1–M14) that the items below refer to.
    ask. Open PR #16014 would remove the opt-out from MinGW builds — F52 is a
    measurement of what that costs.
 
+   **2026-09-14 update:** #26200 was closed by the stale bot on 2026-09-11.
+   F52's fix is **verified on master `1bc7a5a`** with MSVC and GCC, including a
+   deterministic repro (forced EcoQoS) and `ctest` 43/43 —
+   [`11-f52-master-verification.md`](11-f52-master-verification.md). The edit
+   sits **uncommitted** in `C:\-CS\llama.cpp-pr` (shallow clone of the fork
+   PS12007/llama.cpp); the user will commit, push and file. The user's draft
+   issue/PR/commit text and a review of it: [`12-f52-draft-review.md`](12-f52-draft-review.md).
+
 ### D. The one that would change how everything else is measured
 
 8. **Explain M10** — decode on this machine wanders between **38.6 and 46.0

@@ -1,0 +1,36 @@
+llama-bench runs, commit 1bc7a5a, i7-14700HX, mid.gguf, -p 0 -n 64, 5 reps per run
+avg_ts +/- stddev_ts, taken from `llama-bench -o jsonl` output (f52-matrix.jsonl)
+
+t=1
+normal msvc-stock  8.51 +/- 2.61  9.85 +/- 3.41
+normal msvc-fixed  19.46 +/- 0.21  19.11 +/- 0.44
+normal msvc-noomp  19.66 +/- 0.28  19.60 +/- 0.26
+normal gcc-stock   9.49 +/- 3.23  12.78 +/- 6.01
+normal gcc-fixed   19.38 +/- 0.30  19.39 +/- 0.24
+normal gcc-noomp   19.72 +/- 0.21  19.03 +/- 0.43
+ecoqos msvc-stock  7.89 +/- 0.25  8.06 +/- 1.45  8.06 +/- 0.42
+ecoqos msvc-fixed  20.04 +/- 0.19  21.52 +/- 1.75  19.44 +/- 0.19
+ecoqos msvc-noomp  19.69 +/- 0.32  20.34 +/- 1.07  19.44 +/- 0.35
+ecoqos gcc-stock   7.48 +/- 0.16  7.54 +/- 0.15  7.92 +/- 0.19
+ecoqos gcc-fixed   19.45 +/- 0.20  19.17 +/- 0.62  19.14 +/- 0.30
+ecoqos gcc-noomp   19.96 +/- 0.60  19.15 +/- 0.44  19.18 +/- 0.40
+
+t=8
+normal msvc-stock  45.89 +/- 0.68  44.10 +/- 1.91
+normal msvc-fixed  43.21 +/- 0.96  42.59 +/- 2.28
+normal gcc-stock   16.80 +/- 0.48  16.25 +/- 0.56
+normal gcc-fixed   16.60 +/- 0.72  16.51 +/- 0.27
+ecoqos msvc-stock  45.07 +/- 1.35  41.45 +/- 2.20
+ecoqos msvc-fixed  37.59 +/- 1.56  41.70 +/- 2.91
+ecoqos gcc-stock   16.60 +/- 0.58  16.27 +/- 0.23
+ecoqos gcc-fixed   16.69 +/- 0.38  16.91 +/- 0.54
+
+t=8, ABBA re-run, 10 reps per run (f52-t8-abba.jsonl)
+msvc-stock         41.34  39.83  39.32  43.99  39.47  43.16  43.34  42.81
+msvc-fixed         43.10  42.56  43.43  43.73  41.93  42.76  42.40  43.01
+
+one full row as llama-bench emitted it:
+{"build_commit": "1bc7a5a", "build_number": 1, "cpu_info": "Intel(R) Core(TM) i7-14700HX", "gpu_info": "", "backends": "CPU", "model_filename": "C:/-CS/TLI profiler/models/mid.gguf", "model_type": "llama ?B all F32", "model_size": 880954368, "model_n_params": 220238592, "n_batch": 2048, "n_ubatch": 512, "n_threads": 1, "cpu_mask": "0x0", "cpu_strict": false, "poll": 50, "type_k": "f16", "type_v": "f16", "n_gpu_layers": -1, "n_cpu_moe": 0, "split_mode": "layer", "main_gpu": 0, "no_kv_offload": false, "flash_attn": -1, "devices": "auto", "tensor_split": "0.00", "tensor_buft_overrides": "none", "load_mode": "auto", "lazy_mode": "auto", "embeddings": false, "no_op_offload": 0, "no_host": false, "fit_target": 0, "fit_min_ctx": 0, "n_prompt": 0, "n_gen": 64, "n_depth": 0, "test_time": "2026-09-15T01:04:03Z", "avg_ns": 8118551420, "stddev_ns": 262255849, "avg_ts": 7.889766, "stddev_ts": 0.254914, "samples_ns": [8013073200, 7789183800, 8015236800, 8390917100, 8384346200], "samples_ts": [7.98695, 8.21652, 7.98479, 7.62729, 7.63327]}
+
+ctest (MSVC, full build of the fixed tree):
+100% tests passed out of 43

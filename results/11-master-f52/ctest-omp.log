@@ -1,0 +1,96 @@
+Test project C:/-CS/llama.cpp-pr/build-omp
+      Start 24: test-download-model
+      Start 42: test-eval-callback-download-model
+      Start  1: test-tokenizer-0-bert-bge
+      Start  2: test-tokenizer-0-command-r
+      Start  3: test-tokenizer-0-deepseek-coder
+      Start  4: test-tokenizer-0-deepseek-llm
+      Start  5: test-tokenizer-0-falcon
+      Start  6: test-tokenizer-0-gemma-4
+ 1/43 Test  #1: test-tokenizer-0-bert-bge ...........   Passed    0.08 sec
+      Start  7: test-tokenizer-0-gpt-2
+ 2/43 Test  #3: test-tokenizer-0-deepseek-coder .....   Passed    0.09 sec
+      Start  8: test-tokenizer-0-llama-bpe
+ 3/43 Test  #5: test-tokenizer-0-falcon .............   Passed    0.15 sec
+      Start  9: test-tokenizer-0-llama-spm
+ 4/43 Test  #7: test-tokenizer-0-gpt-2 ..............   Passed    0.12 sec
+      Start 10: test-tokenizer-0-mpt
+ 5/43 Test  #9: test-tokenizer-0-llama-spm ..........   Passed    0.08 sec
+      Start 11: test-tokenizer-0-phi-3
+ 6/43 Test  #4: test-tokenizer-0-deepseek-llm .......   Passed    0.26 sec
+      Start 12: test-tokenizer-0-qwen2
+ 7/43 Test #10: test-tokenizer-0-mpt ................   Passed    0.12 sec
+      Start 13: test-tokenizer-0-qwen35
+ 8/43 Test #11: test-tokenizer-0-phi-3 ..............   Passed    0.08 sec
+      Start 14: test-tokenizer-0-refact
+ 9/43 Test #14: test-tokenizer-0-refact .............   Passed    0.12 sec
+      Start 15: test-tokenizer-0-starcoder
+10/43 Test  #8: test-tokenizer-0-llama-bpe ..........   Passed    0.46 sec
+      Start 16: test-chat-peg-parser
+11/43 Test #15: test-tokenizer-0-starcoder ..........   Passed    0.17 sec
+      Start 17: test-jinja
+12/43 Test #12: test-tokenizer-0-qwen2 ..............   Passed    0.44 sec
+      Start 18: test-jinja-py
+13/43 Test #16: test-chat-peg-parser ................   Passed    0.13 sec
+      Start 19: test-json-schema
+14/43 Test #13: test-tokenizer-0-qwen35 .............   Passed    0.46 sec
+      Start 20: test-chat-auto-parser
+15/43 Test  #2: test-tokenizer-0-command-r ..........   Passed    0.82 sec
+      Start 21: test-chat-template
+16/43 Test #19: test-json-schema ....................   Passed    0.17 sec
+17/43 Test #17: test-jinja ..........................   Passed    0.27 sec
+      Start 22: test-log
+      Start 23: test-peg-parser
+18/43 Test #22: test-log ............................   Passed    0.10 sec
+      Start 26: test-arg-parser
+19/43 Test  #6: test-tokenizer-0-gemma-4 ............   Passed    1.06 sec
+      Start 27: test-model-resolution
+20/43 Test #23: test-peg-parser .....................   Passed    0.19 sec
+      Start 28: test-opt
+21/43 Test #21: test-chat-template ..................   Passed    0.36 sec
+      Start 29: test-model-load-cancel
+22/43 Test #29: test-model-load-cancel ..............   Passed    0.04 sec
+      Start 30: test-autorelease
+23/43 Test #30: test-autorelease ....................   Passed    0.05 sec
+      Start 31: test-backend-sampler
+24/43 Test #28: test-opt ............................   Passed    0.22 sec
+      Start 33: test-barrier
+25/43 Test #31: test-backend-sampler ................   Passed    0.08 sec
+      Start 34: test-quantize-fns
+26/43 Test #27: test-model-resolution ...............   Passed    0.97 sec
+27/43 Test #26: test-arg-parser .....................   Passed    1.04 sec
+      Start 35: test-quantize-perf
+      Start 36: test-rope
+28/43 Test #20: test-chat-auto-parser ...............   Passed    1.84 sec
+      Start 37: test-col2im-1d
+29/43 Test #35: test-quantize-perf ..................   Passed    0.60 sec
+      Start 38: test-mtmd-c-api
+30/43 Test #36: test-rope ...........................   Passed    0.56 sec
+      Start 39: test-mtmd-impl
+31/43 Test #38: test-mtmd-c-api .....................   Passed    0.16 sec
+      Start 40: test-gguf
+32/43 Test #42: test-eval-callback-download-model ...   Passed    3.34 sec
+      Start 41: test-alloc
+33/43 Test #39: test-mtmd-impl ......................   Passed    0.31 sec
+34/43 Test #37: test-col2im-1d ......................   Passed    0.47 sec
+      Start 43: test-eval-callback
+35/43 Test #41: test-alloc ..........................   Passed    0.10 sec
+36/43 Test #34: test-quantize-fns ...................   Passed    1.94 sec
+37/43 Test #43: test-eval-callback ..................   Passed    0.33 sec
+38/43 Test #40: test-gguf ...........................   Passed    0.54 sec
+39/43 Test #33: test-barrier ........................   Passed    2.41 sec
+40/43 Test #24: test-download-model .................   Passed    5.08 sec
+      Start 25: test-thread-safety
+      Start 32: test-state-restore-fragmented
+41/43 Test #32: test-state-restore-fragmented .......   Passed    0.20 sec
+42/43 Test #25: test-thread-safety ..................   Passed    0.35 sec
+43/43 Test #18: test-jinja-py .......................   Passed   42.46 sec
+
+100% tests passed out of 43
+
+Label Time Summary:
+main      =  17.23 sec*proc (35 tests)
+model     =   0.38 sec*proc (4 tests)
+python    =  42.46 sec*proc (1 test)
+
+Total Test time (real) =  43.48 sec
