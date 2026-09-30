@@ -7501,6 +7501,53 @@ gate absorbs that, which is what it was redesigned for (D9, F49).
 
 ---
 
+## P54 — M14 from data already on disk: does a 3-block interval's width follow a baseline shift?
+
+**No new measurement.** M14 (F41) is that two runs of one comparison gave `t`
+intervals 7× apart in width. Its open question is whether that is a *shift*
+phenomenon (the run straddled one of M10's throughput levels) or plain
+sampling (three block points give a standard deviation with 2 degrees of
+freedom). Every `ab_throughput` run since F44 carries a `timeline`, so the
+question can be asked of committed data. Written and committed before any of
+the numbers below were computed.
+
+**Sample — twelve independent 3-block windows**, all machine 1, MSVC,
+`mid.gguf`, 8 threads, `tg64`:
+
+- **W1–W4:** the four native 3×20 runs with a timeline — `f45-layout-void`,
+  `f45-null-void`, `f47-layout`, `f47-null`. F45's two are VOID for quoting
+  but kept here deliberately: they are the runs most likely to contain a shift.
+- **W5–W12:** blocks 0–2 and blocks 3–5 of each 6×10 run — `f49-layout`,
+  `f49-null`, `f50-layout48`, `f50-null`.
+
+Machine 2 (`results/08`) and F51 (+150% effect, GCC) are excluded: different
+machine or a different effect scale. F41 itself has no timeline.
+
+**Definitions.** *Width* = `hi − lo` of `between_block_ci` on the window's three
+block points, in pp. *Shift* = range of the three per-block medians of arm `a`
+`tg64`, as % of their mean. *Gate* = worst within-block IQR of arm `a` `tg64`, %
+(what `bench_overhead.py` gates on since D9).
+
+**Prior, stated so it can be wrong.** The harness alternates which arm leads
+every round, so a level switch lands on both arms and should largely cancel in
+the per-block ratio. I expect width to be mostly sampling.
+
+**P54.1 — the M14 hypothesis:** Spearman ρ(shift, width) ≥ +0.5 over W1–W12.
+Credence **~35%**. If it holds, M14 is a shift effect and `--min-baseline` plus
+a timeline check is its remedy; if not, it is sampling and the standing rule
+(pool to six blocks) is the remedy.
+
+**P54.2 — the gate beats the shift as a predictor:** ρ(gate, width) >
+ρ(shift, width). Credence **~55%**.
+
+**P54.3 — M14's instability reproduces without needing a shift:** in at least
+one of the four 6×10 runs, the two halves' widths differ by more than 3×. Under
+i.i.d. normal block points the ratio of two df=2 variances is F(2,2), so
+P(width ratio > 3) = 2/(1+9) = 0.20 per run and **59%** for at least one of
+four. Credence **~55%**. Scored against that null, not just as a count.
+
+---
+
 ## Not yet measured
 
 Listed so the gaps are explicit rather than implied:
