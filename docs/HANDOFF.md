@@ -6,6 +6,33 @@ it up; see [`07-linux-bringup.md`](07-linux-bringup.md). Everything here is eith
 a fact about the current tree or an explicit next step. Read this first when
 picking the project back up.
 
+> **2026-09-30 — desk session, no measurements (machine 1).** Everything here
+> was done without a quiet machine:
+>
+> - **Committed** the 2026-09-14/16 F52 work that had been left in the tree:
+>   [`11`](11-f52-master-verification.md) (fix verified on master `1bc7a5a`),
+>   [`12`](12-f52-draft-review.md) (the user's drafts plus review notes),
+>   `results/11-master-f52/`, doc 10's PR walkthrough.
+> - **F54 — M14 mostly answered from committed data** (`tools/m14_width.py`,
+>   predictions P54 committed first). 3-block widths vary 17× inside gate-passing
+>   runs that never leave one throughput level, so M14 is sampling; P54.1
+>   (width follows shift) missed at ρ = +0.49 against +0.5, P54.2 refuted, P54.3
+>   held. Pool-to-six stands.
+> - **CI now re-derives fifteen published intervals** from `data/overhead/`.
+> - **Upstream re-checked at master `4f31296a9`.** F52 still present and
+>   unreported, fix still applies. F20 unchanged, `patches/02` still applies.
+>   **New for F24:** open PR **#16882** edits the same line (approved by
+>   ggerganov 2025-11, never merged), and the tiled K-quant path (#27851,
+>   merged 2026-09-26) bypasses the threshold for K-quant prefill. Details in
+>   [`05`](05-f24-filing-kit.md). `CONTRIBUTING.md` gained a review-time rule
+>   for AI-assisted PRs (doc 10's box).
+> - **Nothing filed, nothing pushed to the llama.cpp fork**; `C:\-CS\llama.cpp-pr`
+>   is untouched (edit still uncommitted, as the user asked).
+>
+> **Still needs a quiet machine or a person:** Linux/GCC (G1, P51.8), an MoE
+> model (G2, ask first), M10, the three MSVC arms for F52 tables (~15 min), and
+> every filing decision (7, 7b).
+
 > **Session 9 (2026-09-10, machine 1) — read this block, then section 5.**
 > Session 8 ran on machine 2's **Windows** side (Arch would not boot) and left
 > [`docs/08`](08-windows-gcc-bringup.md) and [`docs/09`](09-actions-and-data.md).
