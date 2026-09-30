@@ -302,3 +302,61 @@ jobs:
               sys.exit(f"{len(bad)} token(s) over-attributed")
           print(f"ok: {n} tokens across all reference traces, none over-attributed")
           PY
+
+      # Every quoted Tier D interval, re-derived from the committed raw data.
+      # The findings argue about the intervals themselves (F31, F39, M14), so a
+      # number in the docs that the data no longer produces -- an edited JSON, a
+      # changed between_block_ci, a transcription slip -- is a defect, and this
+      # is where it surfaces. F24's pooled +1.62% cannot be checked: its run A
+      # predates --json-out, so only run B (+1.33%) is here.
+      - name: published intervals re-derive from data/overhead
+        run: |
+          python - <<'PY'
+          import json, statistics, sys
+          sys.path.insert(0, "tools")
+          from bench_overhead import between_block_ci
+
+          def load(n):
+              with open(f"data/overhead/{n}.json", encoding="utf-8") as f:
+                  return json.load(f)
+
+          def ab(names, test):
+              return sum((load(n)["block_points"][test] for n in names), [])
+
+          def f36(link):
+              d = load("f36")
+              a, c = f"A: compiled out [{link}]", f"C3: active level 3 [{link}]"
+              return [100 * (statistics.median(b[a]["tg"]) / statistics.median(b[c]["tg"]) - 1)
+                      for b in d["blocks"]]
+
+          CASES = [  # finding, points, published (mean, lo, hi)
+              ("F33 run B tg",      ab(["f33b"], "tg64"),                (+1.33, +0.19, +2.48)),
+              ("F36 static",        f36("static"),                       (+0.56, -0.05, +1.16)),
+              ("F36 ninja-shared",  f36("nshared"),                      (+0.92, +0.38, +1.46)),
+              ("F36 msbuild-shared", f36("shared"),                      (+0.77, +0.05, +1.48)),
+              ("F39 tg (16t)",      ab(["f39a", "f39b"], "tg64"),        (-0.04, -0.49, +0.42)),
+              ("F39 pp (16t)",      ab(["f39a", "f39b"], "pp64"),        (+0.59, +0.01, +1.16)),
+              ("F40 tg (8t)",       ab(["f40a", "f40b"], "tg64"),        (+0.02, -0.21, +0.26)),
+              ("F40 pp (8t)",       ab(["f40a", "f40b"], "pp64"),        (-0.01, -0.12, +0.11)),
+              ("F41 tg",            ab(["f41a", "f41b"], "tg64"),        (-2.15, -2.28, -2.02)),
+              ("F41 pp",            ab(["f41a", "f41b"], "pp64"),        (-0.43, -0.65, -0.21)),
+              ("F47 layout",        ab(["f47-layout"], "tg64"),          (-0.00, -0.18, +0.18)),
+              ("F49 layout",        ab(["f49-layout"], "tg64"),          (-0.08, -0.16, +0.00)),
+              ("F49 null",          ab(["f49-null"], "tg64"),            (-0.08, -0.20, +0.04)),
+              ("F50 layout48",      ab(["f50-layout48"], "tg64"),        (+0.06, -0.11, +0.22)),
+              ("F50 null",          ab(["f50-null"], "tg64"),            (-0.08, -0.25, +0.09)),
+          ]
+          bad = []
+          for name, pts, want in CASES:
+              got = between_block_ci(pts)[:3]
+              ok = all(abs(g - w) <= 0.005 + 1e-9 for g, w in zip(got, want))
+              print("%-20s %+.2f [%+.2f, %+.2f]  %s" % ((name,) + tuple(got) + ("ok" if ok else "MISMATCH",)))
+              if not ok:
+                  bad.append(name)
+          if bad:
+              sys.exit("published numbers no longer re-derive: " + ", ".join(bad))
+          print("ok: %d published intervals re-derive from committed data" % len(CASES))
+          PY
+
+      - name: F54 - M14 analysis runs on committed data
+        run: python tools/m14_width.py

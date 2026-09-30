@@ -613,6 +613,7 @@ python tools/spinup_probe.py -m M.gguf --windows 1:2,40:41
 python tools/model_bytes.py M.gguf                          # the byte law
 python tools/bench_overhead.py --pair NAME=OFF,ON [--pair ...] --blocks 3
 python tools/ab_throughput.py --a X.exe --b Y.exe --blocks 3
+python tools/m14_width.py                                   # F54, from committed data
 ```
 
 `--barriers` requires `TOKENSCOPE_LEVEL=3`. It matches the k-th barrier across
@@ -621,11 +622,18 @@ alternation ever stops holding.
 
 ### What CI mechanizes
 
-Three platforms × three configurations, and **five claims that fail the build if
+Three platforms × three configurations, and **six claims that fail the build if
 they stop being true**: attribution never exceeds 100% (inside-slice only);
 every barrier is matched by `--barriers`; F9 (elementwise nodes serial in
-decode, parallel in prefill); F16 (shifts visible, `find_slot` small); and F22
-(two modules, one buffer per thread).
+decode, parallel in prefill); F16 (shifts visible, `find_slot` small); F22
+(two modules, one buffer per thread); and F28 (no single barrier dominates
+after-arrival time, with the pre-fix trace kept to prove the check can fail).
+
+**Since 2026-09-30 CI also re-derives fifteen published Tier D intervals** —
+F33 run B, F36's three, F39, F40, F41, F47, F49, F50 — from `data/overhead/`
+and fails if any drifts by more than rounding, and runs `m14_width.py` (F54).
+F24's pooled +1.62% is the one headline number it cannot check: run A predates
+`--json-out`.
 
 **Nine reference traces** in `examples/`, 1164 decode tokens, ~21 MB, all
 exercised by CI.
