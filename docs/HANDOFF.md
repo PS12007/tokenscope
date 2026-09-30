@@ -11,8 +11,8 @@ picking the project back up.
 >
 > - **Committed** the 2026-09-14/16 F52 work that had been left in the tree:
 >   [`11`](11-f52-master-verification.md) (fix verified on master `1bc7a5a`),
->   [`12`](12-f52-draft-review.md) (the user's drafts plus review notes),
->   `results/11-master-f52/`, doc 10's PR walkthrough.
+>   `results/11-master-f52/`, doc 10's PR walkthrough. The user's own
+>   issue/PR drafts and their review stay **outside the repo**, deliberately.
 > - **F54 — M14 mostly answered from committed data** (`tools/m14_width.py`,
 >   predictions P54 committed first). 3-block widths vary 17× inside gate-passing
 >   runs that never leave one throughput level, so M14 is sampling; P54.1
@@ -976,8 +976,8 @@ ladder and the issue register (M1–M14) that the items below refer to.
    deterministic repro (forced EcoQoS) and `ctest` 43/43 —
    [`11-f52-master-verification.md`](11-f52-master-verification.md). The edit
    sits **uncommitted** in `C:\-CS\llama.cpp-pr` (shallow clone of the fork
-   PS12007/llama.cpp); the user will commit, push and file. The user's draft
-   issue/PR/commit text and a review of it: [`12-f52-draft-review.md`](12-f52-draft-review.md).
+   PS12007/llama.cpp); the user will commit, push and file. The user's own
+   issue/PR/commit drafts are kept outside the repo, deliberately.
 
 ### D. The one that would change how everything else is measured
 

@@ -7,8 +7,8 @@ fall to 8–11 tok/s; with the fix they hold 19–20 tok/s, the same as the
 `ctest` passes 43/43. **Nothing is committed or pushed.**
 
 Raw data, the launcher source and the benchmark script:
-[`results/11-master-f52/`](../results/11-master-f52/). The draft issue, PR
-and commit message, with review notes: [`12-f52-draft-review.md`](12-f52-draft-review.md).
+[`results/11-master-f52/`](../results/11-master-f52/). The issue, PR and
+commit text are the contributor's own and are deliberately not in this repo.
 
 ---
 
@@ -210,8 +210,8 @@ normal 16.53 → 16.55, EcoQoS 16.43 → 16.80.
 ## 6. Leftovers
 
 - `C:\-CS\llama.cpp-pr` (209 MB) stays until you commit and push, then delete it.
-- `results/11-master-f52/` and this doc are uncommitted in the tokenscope repo,
-  as are the doc 10 edits and doc 12.
+- `results/11-master-f52/`, this doc and the doc 10 edits were committed on
+  2026-09-30.
 - `results/11-master-f52/llama-bench-runs.txt` (added 2026-09-16) is the
   pasteable log output for the issue's required "Relevant log output" field:
   per-run numbers for every arm, the ABBA re-run, one raw jsonl row, the ctest

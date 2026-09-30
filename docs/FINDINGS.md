@@ -7560,7 +7560,7 @@ four. Credence **~55%**. Scored against that null, not just as a count.
 ## F54 — M14 is mostly sampling: gate-passing runs with no level switch give 3-block widths 17× apart
 
 **Tool:** [`tools/m14_width.py`](../tools/m14_width.py), on the committed JSON
-P54 names. No new measurement. Predictions in P54, committed first (`1d82f10`).
+P54 names. No new measurement. Predictions in P54, committed first (`b57ed00`).
 
 | window | a tok/s | shift % | gate % | mean pp | width pp |
 |---|---|---|---|---|---|
