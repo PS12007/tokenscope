@@ -8,6 +8,17 @@
 > change to a reviewer without AI assistance, which is the real bar and the
 > reason the measurements below matter more than the wording.
 
+> **Re-checked 2026-09-30 against master `4f31296a9`.**
+> **F20** still stands: `build_attn` still has seven overloads, three of them
+> still carry the commented-out `//cb(cur, "kqv_wo", il);`, and none names the
+> `wo` projection. `patches/02` still applies (`git apply --check`, offset +98
+> lines). No issue or PR found for `kqv_wo` or for naming the attention output.
+> **F24**: the constant is unchanged, but an **open, approved-but-unmerged PR
+> (#16882) edits the same line**, and a new tiled K-quant path bypasses it for
+> prefill — details in [`05`](05-f24-filing-kit.md)'s re-check box. **GCC** has
+> now been built and measured (MinGW, F51–F53); the paragraph below predates that.
+> Linux is still untested.
+
 
 Not filed yet. Filed **before** proposing a PR, because writing code a
 maintainer did not ask for and then asking them to review it is a way of

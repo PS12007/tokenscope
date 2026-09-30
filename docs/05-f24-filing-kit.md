@@ -15,6 +15,44 @@ and the questions a maintainer will ask. **Every sentence that goes upstream has
 to be yours.** [`03-upstream-issue-draft.md`](03-upstream-issue-draft.md) is the
 longer evidence pack behind it.
 
+> **Re-checked 2026-09-30 against master `4f31296a9`.** Facts only; what to do
+> with them is your call.
+>
+> - **The constant is unchanged**: `nchunk0 * nchunk1 < nth * 4` at lines 1433
+>   (`mul_mat`) and 1701 (`mul_mat_id`).
+> - **An open PR edits the same line: [#16882](https://github.com/ggml-org/llama.cpp/pull/16882)**
+>   "Disable NUMA-specific chunking for high-core-count HPC systems" (opened
+>   2025-10-31, 8+/1-). It changes the condition to `nth <= 128 && (...)`, i.e.
+>   skips the re-chunk-by-thread fallback above 128 threads, from measurements on
+>   a 2-socket, 192-core ARM64 machine (Graviton4-class, clang, Llama-3.3-70B
+>   Q4_K_M). **ggerganov approved it on 2025-11-03** but it was never merged; the
+>   last activity is the author asking for a merge on 2026-05-13. In review
+>   ggerganov asked why the change could matter between 64 and 128 threads and
+>   said he did not see a reason; the reply was only "we observed it in the table".
+>   F24's mechanism (the threshold contains `nth`, so more threads push the
+>   largest matmuls out of work-stealing, measured as arrival imbalance) is a
+>   candidate answer to that question, at 16 threads on a hybrid laptop CPU.
+> - **Why it matters for the process:** `CONTRIBUTING.md` item 2 says "Check for
+>   an existing PR addressing the same change; if one exists, comment there to
+>   work with its author instead of opening a duplicate." #16882 is not the same
+>   change (it gates on `nth`, F24 lowers the multiplier) but it is the same
+>   line and the same symptom, so a maintainer will link the two. Read it in
+>   full before deciding between a new issue and a comment there.
+> - **New since 2026-09-26: the tiled K-quant path ([#27851](https://github.com/ggml-org/llama.cpp/pull/27851)).**
+>   `ggml_compute_forward_mul_mat` now first tries `ggml_compute_forward_mul_mat_tiled`,
+>   which takes Q2_K–Q6_K and several IQ types when `src1` has at least 8 rows,
+>   and returns before the threshold. Its own chunking *shrinks* the chunk size
+>   while `nchunk0 * nchunk1 < nth * 4` instead of falling back to one chunk per
+>   thread (`tiled/tiled.cpp` ~line 1104). **F24 is unaffected** — its model is
+>   F32, and decode has one row — but a K-quant *prefill* on master no longer
+>   reaches the line F24 changes. `GGML_CPU_TILED_MM=0` turns the tiled path off.
+> - **`CONTRIBUTING.md` changed on 2026-09-15** (#28945): AI-assisted
+>   contributors must spend "at least" about one hour per 200-400 lines on manual
+>   review, and must be prepared to explain every line.
+> - No issue or PR found for `mul_mat chunk threshold`, `nchunk nth`,
+>   `chunking threshold` or `nth * 4` other than #16882 and #6915 (the PR that
+>   introduced the threshold).
+
 ---
 
 ## 0. Process, per AGENTS.md
@@ -43,6 +81,7 @@ direct — "verbose, AI-sounding responses will not be well-received."
 gh search issues --repo ggml-org/llama.cpp "mul_mat chunk threshold"
 gh search issues --repo ggml-org/llama.cpp "nchunk nth"
 gh search prs    --repo ggml-org/llama.cpp "chunking threshold"
+gh pr view 16882 --repo ggml-org/llama.cpp     # same line, open since 2025-10
 
 # 2. is the constant still nth*4 at current master?
 #    (this repo is pinned at 4d91760, where it is)
@@ -50,7 +89,8 @@ gh api repos/ggml-org/llama.cpp/contents/ggml/src/ggml-cpu/ggml-cpu.c \
   --jq '.content' | base64 -d | grep -n 'nchunk0 \* nchunk1 <'
 
 # 3. has CONTRIBUTING.md or AGENTS.md changed since you last read them?
-gh api repos/ggml-org/llama.cpp/commits --jq '.[0].sha' -f path=CONTRIBUTING.md
+# (-f would turn this into a POST; the path filter goes in the query string)
+gh api "repos/ggml-org/llama.cpp/commits?path=CONTRIBUTING.md&per_page=1" \n  --jq '.[0] | .sha[0:9] + " " + .commit.committer.date'
 ```
 
 If the constant has already been changed upstream, stop - the finding is
