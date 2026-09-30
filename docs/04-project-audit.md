@@ -50,6 +50,15 @@ two sections, read those.
 > than discovering it. **F52** is new: OpenMP builds on Windows skip the
 > power-throttling opt-out at `-t 1` and run at half speed; one line
 > (`patches/07`) fixes it. Session 8's bootstrap defect (**D10**) is fixed.
+>
+> **Updated 2026-09-30 (desk work only, no measurement).** F52's fix was
+> re-verified on master `1bc7a5a` on 2026-09-14 with MSVC and GCC
+> ([`11`](11-f52-master-verification.md)) and still applies to `4f31296a9`;
+> the user holds it uncommitted and will file it. #26200 was closed by the stale
+> bot on 2026-09-11. **F54** answers most of M14 from committed data: 3-block
+> interval widths vary 17× with no level switch, so it is sampling. Upstream
+> re-checks for F20/F24 found an open, approved-but-unmerged PR (#16882) on
+> F24's exact line — see [`05`](05-f24-filing-kit.md).
 
 ---
 
@@ -388,9 +397,9 @@ allocator to ggml.
 | | Defect | Status |
 |---|---|---|
 | **U1** | **F20** — `build_attn`'s output projection is unnamed in every llama.cpp graph; it is 7% of decode and shows up as `~attn` | Fixed locally in `patches/02-name-attn-output.patch`, applied to the working tree. **Not filed upstream** |
-| **U2** | **F24** — `nth*4` chunking threshold; adding threads can disable ggml's own load balancer for a model's largest matmuls | `patches/03-mulmat-chunk-threshold.patch`, **not applied**. Not filed |
-| **U3** | **F51** — `GGML_OPENMP=ON` (the default) under MinGW puts every `ggml_barrier` through libgomp's sleep-only POSIX barrier | **Already filed by someone else: #26200** (open, `stale`, 0 comments, 4-core MoE data, +40%). F51's dense-model, hybrid-CPU numbers (+148–205% at 8 threads, linear per-thread cost) are evidence that issue lacks. Adding them is a comment, which `AGENTS.md` reserves for a person |
-| **U4** | **F52** — OpenMP `n_threads == 1` path skips `ggml_thread_apply_priority`, so the thread keeps Windows power throttling | `patches/07-omp-single-thread-prio.patch` (experiment arm, not applied). Nothing found upstream. Open PR #16014 would remove the throttling opt-out from MinGW builds entirely, which F52 measures as worth up to 2×. Not filed |
+| **U2** | **F24** — `nth*4` chunking threshold; adding threads can disable ggml's own load balancer for a model's largest matmuls | `patches/03-mulmat-chunk-threshold.patch`, **not applied**. Not filed. **Open PR #16882 edits the same line** (skips the fallback above 128 threads; approved 2025-11, unmerged) — see [`05`](05-f24-filing-kit.md) |
+| **U3** | **F51** — `GGML_OPENMP=ON` (the default) under MinGW puts every `ggml_barrier` through libgomp's sleep-only POSIX barrier | **Already filed by someone else: #26200** (4-core MoE data, +40%), **closed by the stale bot 2026-09-11 as not planned**, no human reply; not locked. F51's dense-model, hybrid-CPU numbers (+148–205% at 8 threads, linear per-thread cost) are evidence that issue lacks. Doc 10 Part 2 now suggests a new issue linking #26200 rather than a comment on a closed one. Either is for a person, not an agent |
+| **U4** | **F52** — OpenMP `n_threads == 1` path skips `ggml_thread_apply_priority`, so the thread keeps Windows power throttling | `patches/07-omp-single-thread-prio.patch` (experiment arm, not applied here). **Verified on master `1bc7a5a`** with MSVC and GCC, forced-EcoQoS repro, `ctest` 43/43 ([`11`](11-f52-master-verification.md)); still present and the fix still applies at `4f31296a9` (2026-09-30). Nothing found upstream. Open PR #16014 would remove the throttling opt-out from MinGW builds entirely, which F52 measures as worth up to 2×. **Not filed; the user holds the edit and their own drafts ([`12`](12-f52-draft-review.md))** |
 
 Neither can be filed by an agent — `AGENTS.md` forbids it and requires the
 contributor be able to defend the change unaided. That constraint turned out to
@@ -673,9 +682,9 @@ exercised by CI.
    the byte law should *fail* there. Needs a download and a RAM check; **ask.**
 7. **Decide whether to raise F20 and F24 upstream.** Needs a person, not an
    agent. F20 is the smaller, unblocked one and should go first.
-8. **F27 on a second machine** — the biggest unexploited result in the repo, and
-   meaningless as a general claim until someone runs the same protocol on a
-   homogeneous part with `libgomp`.
+8. ~~**F27 on a second machine**~~ **Answered** by session 8 and F51: the sign
+   follows the OpenMP runtime (vcomp vs mingw libgomp), not the CPU. What is
+   left is Linux libgomp (P51.8) and a homogeneous part.
 9. **A Perfetto screenshot**, the one thing `trace_svg.py` cannot replace, for a
    post that wants to show the UI.
 
@@ -695,6 +704,8 @@ exercised by CI.
 | [`05-f24-filing-kit.md`](05-f24-filing-kit.md) | **Pre-flight checks, numbers and anticipated questions for raising F24 upstream. Contains no draft text, deliberately** — `AGENTS.md` forbids an agent writing PR or comment prose, non-overridably |
 | [`08-windows-gcc-bringup.md`](08-windows-gcc-bringup.md) | Session 8 on machine 2's Windows side: the GCC bring-up narrative, F27's reversal |
 | [`09-actions-and-data.md`](09-actions-and-data.md) | Session 8's actionable half — defects A1–A6 (now fixed), traps, full dataset, and the prompt for the Arch session |
+| [`11-f52-master-verification.md`](11-f52-master-verification.md) | F52's fix verified on llama.cpp master `1bc7a5a`, MSVC and GCC, with the raw data in `results/11-master-f52/` |
+| [`12-f52-draft-review.md`](12-f52-draft-review.md) | The user's own F52 issue/PR/commit drafts, verbatim, with review notes (facts and pointers, no replacement text) |
 | [`10-filing-guide.md`](10-filing-guide.md) | **Taking F51/F52 upstream, written for someone who has never filed an issue** — plain-language explanations, how GitHub issues work, what to include with every number sourced, a self-test. **No draft text**, for the same `AGENTS.md` reason as `05` |
 | [`FINDINGS.md`](FINDINGS.md) | Every finding and prediction, chronological, with scoring |
 | [`HANDOFF.md`](HANDOFF.md) | Cold-start checklist and what to do next |

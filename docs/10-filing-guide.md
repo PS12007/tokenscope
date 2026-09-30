@@ -19,6 +19,16 @@ click that sends something to GitHub, have to be yours. Short and plain is
 better than polished — `AGENTS.md` says "verbose, AI-sounding responses will not
 be well-received".
 
+> **Last re-checked 2026-09-30 against master `4f31296a9`.** Nothing below
+> changed: F52's `else` branch is still at lines 3439–3441 without the call and
+> the fix applies cleanly; `ggml_barrier` and the `GGML_OPENMP` default are
+> unchanged; #26200 is still closed with only the bot's comment; PR #16014 has
+> not moved; no issue or PR mentions F52. **One rule changed:** on 2026-09-15
+> `CONTRIBUTING.md` (#28945) added that AI-assisted contributors should spend
+> "at least" roughly one hour per 200–400 lines on manual review, and must be
+> ready to explain every line they submit. For a one-line change that is not a
+> time burden, but it is the bar a reviewer will hold you to.
+>
 > **Re-checked on 2026-09-14 against llama.cpp master `1bc7a5af0`** (first
 > checked 2026-09-10 on `df03399b8`). Re-check again just before posting:
 >

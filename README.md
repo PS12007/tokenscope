@@ -365,10 +365,12 @@ libgomp's barrier puts every thread to sleep in the kernel, about 9 µs per
 thread per barrier, 412 barriers a token. **On MinGW the default is the slow
 build.** (That mechanism is already reported upstream as
 [ggml-org/llama.cpp#26200](https://github.com/ggml-org/llama.cpp/issues/26200);
-F51 adds dense-model, hybrid-CPU numbers to it.) The same sweep turned up
+F51 adds dense-model, hybrid-CPU numbers to it; the stale bot closed it unanswered
+on 2026-09-11.) The same sweep turned up
 something new: OpenMP builds on Windows run **single-threaded at half speed**,
 because that one branch never opts out of power throttling
-([F52](docs/FINDINGS.md), one-line fix in `patches/07`).
+([F52](docs/FINDINGS.md), one-line fix in `patches/07`, verified on current
+llama.cpp master in [docs/11](docs/11-f52-master-verification.md)).
 
 `--outliers` ranks the slowest tokens and attributes each one's *excess over
 median* to a category — because on a slow token everything is large, and the

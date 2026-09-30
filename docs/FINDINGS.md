@@ -7417,6 +7417,15 @@ builds — and this entry is a measurement of what that block is worth on MinGW.
 **Nothing has been filed and no text drafted**; `AGENTS.md` reserves that for
 a person.
 
+**Addendum, 2026-09-14 and 2026-09-30.** Re-verified on llama.cpp master
+`1bc7a5a` with MSVC and GCC, including a deterministic repro (a launcher that
+forces EcoQoS on the process), the `-t 1`/`-t 8` matrix, an ABBA re-run at
+`-t 8` and `ctest` 43/43: [`docs/11`](11-f52-master-verification.md), raw data
+in [`results/11-master-f52/`](../results/11-master-f52/). On 2026-09-30 the
+`else` branch is unchanged at master `4f31296a9` (lines 3439–3441) and the fix
+still applies. Still unreported upstream; the user holds the edit and will
+file it.
+
 ---
 
 ## P53 — tokenscope's overhead under GCC, on the path where GCC is sane

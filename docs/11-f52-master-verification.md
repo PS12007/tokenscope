@@ -14,6 +14,12 @@ and commit message, with review notes: [`12-f52-draft-review.md`](12-f52-draft-r
 
 ## 1. Where things stand
 
+> **2026-09-30:** master is now `4f31296a9` (333 commits on). `ggml-cpu.c` has
+> changed, but not this block: `fix.diff` still applies (`git apply --check`),
+> at the same line. The clone is still at `1bc7a5a` with the edit uncommitted.
+> Rebasing a one-line change is trivial, but the numbers below were measured on
+> `1bc7a5a` — say which commit you tested in the PR.
+
 | item | state |
 |---|---|
 | fork | `github.com/PS12007/llama.cpp`, identical to ggml-org master `1bc7a5a` on 2026-09-14 |
